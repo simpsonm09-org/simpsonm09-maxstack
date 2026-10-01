@@ -8,17 +8,17 @@
       "source": "https://github.com/simpsonm09-org/pstack-opencode-plugin.git"
     },
     {
-      "name": "org-opencode-plugin",
+      "name": "simpsonm09-org-opencode",
       "kind": "config",
       "path": "projects/repos/simpsonm09-org-opencode-plugin",
-      "pluginTarget": "org-opencode",
+      "pluginTarget": "simpsonm09-org-opencode",
       "source": "https://github.com/simpsonm09-org/simpsonm09-org-opencode-plugin.git"
     },
     {
-      "name": "personal-opencode-plugin",
+      "name": "simpsonm09-personal-opencode",
       "kind": "config",
       "path": "projects/repos/simpsonm09-personal-opencode-plugin",
-      "pluginTarget": "personal-opencode",
+      "pluginTarget": "simpsonm09-personal-opencode",
       "source": "https://github.com/simpsonm09-org/simpsonm09-personal-opencode-plugin.git"
     }
   ]
