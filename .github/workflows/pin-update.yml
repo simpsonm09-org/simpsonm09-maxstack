@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   pin:
+    if: github.repository_owner == 'simpsonm09-org'
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
