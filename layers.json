@@ -1,0 +1,25 @@
+{
+  "layers": [
+    {
+      "name": "pstack-opencode-plugin",
+      "kind": "plugin",
+      "path": "projects/repos/pstack-opencode-plugin",
+      "pluginTarget": "pstack-opencode",
+      "source": "https://github.com/simpsonm09-org/pstack-opencode-plugin.git"
+    },
+    {
+      "name": "org-opencode-plugin",
+      "kind": "config",
+      "path": "projects/repos/simpsonm09-org-opencode-plugin",
+      "pluginTarget": "org-opencode",
+      "source": "https://github.com/simpsonm09-org/simpsonm09-org-opencode-plugin.git"
+    },
+    {
+      "name": "personal-opencode-plugin",
+      "kind": "config",
+      "path": "projects/repos/simpsonm09-personal-opencode-plugin",
+      "pluginTarget": "personal-opencode",
+      "source": "https://github.com/simpsonm09-org/simpsonm09-personal-opencode-plugin.git"
+    }
+  ]
+}

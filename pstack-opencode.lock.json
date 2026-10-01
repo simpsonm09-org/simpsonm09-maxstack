@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/simpsonm09-org/pstack-opencode-plugin.git",
+  "commit": "38ab0bd3d832dcf192466c009d983e9befae7995",
+  "path": "projects/repos/pstack-opencode-plugin",
+  "notes": "The plugin package is its own repository. Install-Workspace.ps1 copies it from this checkout into the workspace .opencode/plugins directory. Regenerate skills/ with the package repo's scripts/build.ps1; do not hand-edit the installed copy."
+}

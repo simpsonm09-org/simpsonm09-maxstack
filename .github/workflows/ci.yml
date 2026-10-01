@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@52061d685bfca4cf0c2ac28926acdcb313680bc4 # repo-standard main
+  aislop:
+    permissions:
+      contents: read
+      security-events: write
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@52061d685bfca4cf0c2ac28926acdcb313680bc4 # repo-standard main
+  security:
+    permissions:
+      contents: read
+      security-events: write
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@52061d685bfca4cf0c2ac28926acdcb313680bc4 # repo-standard main
+  standard:
+    permissions:
+      contents: read
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@52061d685bfca4cf0c2ac28926acdcb313680bc4 # repo-standard main
+
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate the workspace manifests
+        run: python3 scripts/verify-manifests.py

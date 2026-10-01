@@ -1,0 +1,45 @@
+name: pin-update
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  pin:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STANDARD: simpsonm09-org/simpsonm09-repo-standard
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare the pinned standard ref to main
+        id: drift
+        run: |
+          latest="$(gh api "repos/${STANDARD}/commits/main" --jq .sha)"
+          stale="$(grep -ohE "${STANDARD}/\.github/workflows/[a-z0-9-]+\.yml@[0-9a-f]{40}" .github/workflows/ci.yml | grep -v "@${latest}$" || true)"
+          if [ -z "$stale" ]; then
+            echo "pin is current at ${latest}"
+            exit 0
+          fi
+          echo "stale=1" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          printf 'stale pin: %s\n' "$stale"
+      - name: Open a tracking issue
+        if: steps.drift.outputs.stale == '1'
+        env:
+          LATEST: ${{ steps.drift.outputs.latest }}
+        run: |
+          title="Bump the repo-standard pin"
+          if [ "$(gh issue list --state open --search "${title} in:title" --json number --jq 'length')" != "0" ]; then
+            echo "tracking issue already open"
+            exit 0
+          fi
+          gh issue create --title "${title}" --body "The caller CI pins ${STANDARD} to a commit older than main (\`${LATEST}\`). Bump the pin in \`.github/workflows/ci.yml\`."

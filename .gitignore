@@ -1,0 +1,23 @@
+.env
+.env.*
+!.env.example
+*.local.json
+*.local.yaml
+*.local.yml
+auth.json
+credentials.json
+token.json
+*.db
+*.sqlite*
+*.log
+node_modules/
+
+# Local scan output
+*.sarif
+aislop.sarif
+trivy.sarif
+
+# Local tool state
+.aislop/history.jsonl
+.aislop/agent/
+.DS_Store
