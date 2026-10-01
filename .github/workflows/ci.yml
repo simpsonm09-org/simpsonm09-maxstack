@@ -8,25 +8,29 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@52061d685bfca4cf0c2ac28926acdcb313680bc4 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@6a43063513c5ff363fde876b8d10ab0cad91430f # repo-standard main
   aislop:
     permissions:
       contents: read
       security-events: write
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@52061d685bfca4cf0c2ac28926acdcb313680bc4 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@6a43063513c5ff363fde876b8d10ab0cad91430f # repo-standard main
   security:
     permissions:
       contents: read
       security-events: write
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@52061d685bfca4cf0c2ac28926acdcb313680bc4 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@6a43063513c5ff363fde876b8d10ab0cad91430f # repo-standard main
   standard:
     permissions:
       contents: read
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@52061d685bfca4cf0c2ac28926acdcb313680bc4 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@6a43063513c5ff363fde876b8d10ab0cad91430f # repo-standard main
 
-  validate:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
