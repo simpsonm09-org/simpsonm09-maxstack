@@ -15,24 +15,24 @@ concurrency:
 jobs:
   lint:
     if: github.repository_owner == 'simpsonm09-org'
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@ff73db7e9c71bb56643138a5addabc87f7e586b2 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@77dcba9b4c86d4e9aaae577313c96aceead1789c # repo-standard main
   aislop:
     if: github.repository_owner == 'simpsonm09-org'
     permissions:
       contents: read
       security-events: write
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@ff73db7e9c71bb56643138a5addabc87f7e586b2 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@77dcba9b4c86d4e9aaae577313c96aceead1789c # repo-standard main
   security:
     if: github.repository_owner == 'simpsonm09-org'
     permissions:
       contents: read
       security-events: write
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@ff73db7e9c71bb56643138a5addabc87f7e586b2 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@77dcba9b4c86d4e9aaae577313c96aceead1789c # repo-standard main
   standard:
     if: github.repository_owner == 'simpsonm09-org'
     permissions:
       contents: read
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@ff73db7e9c71bb56643138a5addabc87f7e586b2 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@77dcba9b4c86d4e9aaae577313c96aceead1789c # repo-standard main
 
   test:
     if: github.repository_owner == 'simpsonm09-org'
