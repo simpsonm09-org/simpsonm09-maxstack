@@ -8,7 +8,7 @@ This is the OpenCode V2 shape. V2 config uses `mcp.servers`, keeps a configured 
 
 ## Default servers
 
-The workspace is CLI-first. No MCP server is installed by default. Every service is reached through a CLI owner: `gh` for GitHub, `gh search code` and the local `grep` tool for code search, `postman` for Postman, `npx ctx7` for library docs, `@playwright/cli` for browser automation, the `chrome-devtools` CLI for performance and debugging, `acli` for Jira, `discli` for Discord, and `just` for repository tasks. The `service-integrations` skill in `org-opencode-plugin` is the registry.
+The workspace is CLI-first. No MCP server is installed by default. Every service is reached through a CLI owner: `gh` for GitHub, `gh search code` and the local `grep` tool for code search, `postman` for the Postman cloud and `newman` for local and CI collection runs, `npx ctx7` for library docs, `@playwright/cli` for browser automation, the `chrome-devtools` CLI for performance and debugging, `acli` for Jira, `kubectl` and `helm` for Kubernetes, the Jenkins CLI for Jenkins, `vault` for Vault, and `just` for repository tasks. The `service-integrations` skill in `simpsonm09-org-opencode-plugin` is the general registry. It defers accounts, boards, workspaces, clusters, and personal services such as Discord, email, notifications, and texting to the personal layer.
 
 `mcp.timeout.startup` stays at 120 seconds for the case where a server is added later, because a local server's first run downloads its npm package before the MCP handshake.
 
@@ -64,13 +64,16 @@ Remote secrets use `{env:NAME}`. Never write a secret into the config.
 
 ## Layer plugin entries
 
-A config layer can also register skills through an OpenCode plugin. `org-opencode-plugin` and `personal-opencode-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/org-opencode` and `.opencode/plugins/personal-opencode`, and OpenCode loads them next to `pstack-opencode`.
+A config layer can also register skills through an OpenCode plugin. `simpsonm09-org-opencode-plugin` and `simpsonm09-personal-opencode-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/simpsonm09-org-opencode` and `.opencode/plugins/simpsonm09-personal-opencode`, and OpenCode loads them next to `pstack-opencode`.
 
 | Plugin | Skill | Purpose |
 | --- | --- | --- |
-| `org-opencode` | `service-integrations` | The integration registry: which CLI owns each external-service job. |
-| `org-opencode` | `repo-tasks` | Run, build, test, or verify a repository through its justfile. |
-| `personal-opencode` | `dev-tools` | Where each personal tool's settings live and how to apply them. |
-| `personal-opencode` | `discord` | Discord through the `discli` CLI. |
+| `simpsonm09-org-opencode` | `service-integrations` | The general integration registry: which CLI owns each external-service job. It defers personal specifics to the personal layer. |
+| `simpsonm09-org-opencode` | `repo-tasks` | Run, build, test, or verify a repository through its justfile. |
+| `simpsonm09-org-opencode` | `repo-standard` | The gates, the definition of done, and the branch and pull request flow. |
+| `simpsonm09-org-opencode` | `local-services` | The container stack on the machine: Docker, Portainer, Infisical, and DbGate. |
+| `simpsonm09-personal-opencode` | `integrations-personal` | The personal concretes the registry defers to, and the `himalaya`, `ntfy`, and `smsgate` services. |
+| `simpsonm09-personal-opencode` | `dev-tools` | Where each personal tool's settings live and how to apply them. |
+| `simpsonm09-personal-opencode` | `discord` | Discord through the `discli` CLI. |
 
 Add a skill by creating `skills/<id>/SKILL.md` in the layer repository, then rerun `Install-Workspace.ps1 -Apply` and restart OpenChamber.
