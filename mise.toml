@@ -7,6 +7,7 @@
 
 # Linters
 "aqua:grafana/flint" = "0.22.14"
+biome = "2.5.14"
 
 [env]
 FLINT_CONFIG_DIR = ".github/config"
