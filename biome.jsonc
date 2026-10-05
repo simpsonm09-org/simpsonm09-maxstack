@@ -1,0 +1,13 @@
+{
+  "formatter": { "indentStyle": "space", "indentWidth": 2 },
+  "linter": {
+    "rules": {
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": { "maxAllowedComplexity": 15 }
+        }
+      }
+    }
+  }
+}

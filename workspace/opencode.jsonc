@@ -3,10 +3,26 @@
   "model": "opencode-go/deepseek-v4.1-flash",
   "default_agent": "build",
   "permissions": [
-    { "action": "external_directory", "resource": "D:/dev/simpsonm09/.opencode/*", "effect": "allow" },
-    { "action": "read", "resource": "D:/dev/simpsonm09/.opencode/*", "effect": "allow" },
-    { "action": "external_directory", "resource": "/mnt/d/dev/simpsonm09/.opencode/*", "effect": "allow" },
-    { "action": "read", "resource": "/mnt/d/dev/simpsonm09/.opencode/*", "effect": "allow" }
+    {
+      "action": "external_directory",
+      "resource": "D:/dev/simpsonm09/.opencode/*",
+      "effect": "allow"
+    },
+    {
+      "action": "read",
+      "resource": "D:/dev/simpsonm09/.opencode/*",
+      "effect": "allow"
+    },
+    {
+      "action": "external_directory",
+      "resource": "/mnt/d/dev/simpsonm09/.opencode/*",
+      "effect": "allow"
+    },
+    {
+      "action": "read",
+      "resource": "/mnt/d/dev/simpsonm09/.opencode/*",
+      "effect": "allow"
+    }
   ],
   "mcp": {
     "timeout": {
