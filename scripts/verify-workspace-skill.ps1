@@ -1,3 +1,4 @@
+# platforms: windows
 [CmdletBinding()]
 param(
     [string] $SkillId = 'poteto-mode',

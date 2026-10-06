@@ -1,3 +1,4 @@
+# platforms: windows
 [CmdletBinding()]
 param(
     [string] $Workspace = 'D:\dev\simpsonm09',
