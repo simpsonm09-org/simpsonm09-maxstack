@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# platforms: linux
 set -euo pipefail
 
 APPLY=0
