@@ -17,7 +17,6 @@ import { pathToFileURL } from 'node:url';
 // reason is one a reviewer can check against the registry.
 const EXEMPT_OWNERS = new Map([
   ['grep', 'the local grep tool is built into the agent, not installed from tools.yaml'],
-  ['java', 'the Jenkins CLI is a jar the controller serves; java comes from the base image, not tools.yaml'],
 ]);
 
 // Owner names in the registry that differ from the tool id in tools.yaml.
@@ -42,7 +41,7 @@ function firstCommandWord(commandCell) {
 }
 
 // An owner cell that names a tool in backticks uses that token. A prose cell
-// such as "the Jenkins CLI" falls back to the first command word of the row.
+// such as "the container runtime" falls back to the first command word of the row.
 export function normalizeOwner(ownerCell, commandCell = '') {
   const ticked = ownerCell.match(/`([^`]+)`/);
   return ticked ? commandWord(ticked[1]) : firstCommandWord(commandCell);

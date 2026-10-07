@@ -51,7 +51,7 @@ test('normalizeOwner drops npx and a leading at-sign, and takes the first comman
   assert.equal(normalizeOwner('`npx ctx7`', '`npx ctx7 library`'), 'ctx7');
   assert.equal(normalizeOwner('`gh search code`', '`gh search code "<p>"`'), 'gh');
   assert.equal(normalizeOwner('`@playwright/cli`', '`playwright-cli open`'), 'playwright/cli');
-  assert.equal(normalizeOwner('the Jenkins CLI', '`java -jar jenkins-cli.jar build`'), 'java');
+  assert.equal(normalizeOwner('the container runtime', '`docker ps`'), 'docker');
 });
 
 test('a missing agent tool fails and names the uncovered owner', () => {
@@ -82,7 +82,6 @@ test('aliases and exemptions cover every owner', () => {
       { job: 'Postman cloud', owner: '`postman`', command: '`postman collection get`' },
       { job: 'Browser', owner: '`@playwright/cli`', command: '`playwright-cli open`' },
       { job: 'Local search', owner: 'the `grep` tool', command: '`grep x`' },
-      { job: 'Jenkins', owner: 'the Jenkins CLI', command: '`java -jar jenkins-cli.jar build`' },
       { job: 'Containers', owner: '`docker`', command: '`docker ps`' },
     ],
   });
