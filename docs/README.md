@@ -6,6 +6,7 @@ Index for this repository.
 
 - [Install and reload](install.md) covers the model policy, the runtimes, and the installer.
 - [Layout](layout.md) describes every top-level path.
+- [Repository relationships](relationship.md) names the repository ownership, the one cross-repo edge, and the workspace definition.
 - [MCP servers](mcp.md) defines the workspace MCP servers and their default states.
 - [MCP installation guide](mcp-installation-guide-v2.md) is the original source guide, kept for provenance.
 - [Plugin publishing](plugin-publishing.md) describes how the installer assembles the plugin bundle.
