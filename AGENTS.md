@@ -1,6 +1,7 @@
 # maxstack working agreements
 
 - Keep secrets, tokens, account state, and session databases out of this repository.
+- `maxstack` owns AI composition. `dev-setup-starter` owns the machine and the human tool set, including `tools.yaml` and the secrets loaders. `docs/relationship.md` names how the repositories and the ordered plugin layers fit together.
 - `maxstack` coordinates AI tooling but does not own the plugin. The plugin package lives in the `pstack-opencode-plugin` repository. Edit it there, never the installed copy under `.opencode`.
 - PStack is scoped to `D:\dev\simpsonm09` through that workspace's `opencode.jsonc` and `.opencode` directory. Do not install it globally.
 - `models.json` is the single model policy. Apply it with `scripts/Install-Workspace.ps1`; do not hand-edit `model:` lines in the installed agent profiles.

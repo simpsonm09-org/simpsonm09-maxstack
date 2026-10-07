@@ -6,7 +6,7 @@ The original lives in `simpsonm09-org/simpsonm09-maxstack`; work happens on the 
 
 ## What it does
 
-`maxstack` is the coordinator for AI tooling in the `D:\dev\simpsonm09` workspace. It owns the workspace config fragment, the model policy, and the installer, and it pins the PStack plugin package.
+`maxstack` owns AI composition for the `D:\dev\simpsonm09` workspace. It holds the workspace config fragment, the model policy, and the installer, and it pins the PStack plugin package. `dev-setup-starter` owns the machine and the human tool set. See [`docs/relationship.md`](docs/relationship.md).
 
 PStack itself is an OpenCode plugin in [`simpsonm09-org/pstack-opencode-plugin`](https://github.com/simpsonm09-org/pstack-opencode-plugin). `maxstack` installs that package into `D:\dev\simpsonm09\.opencode\plugins` and applies the model policy to the installed agent profiles. Nothing is global.
 
