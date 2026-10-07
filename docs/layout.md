@@ -8,11 +8,13 @@
 - `pstack-opencode.lock.json` pins the plugin repository and the commit to install.
 - `workspace/opencode.jsonc` is the workspace config base: model, default agent, permissions, and the MCP startup timeout. Layer fragments supply the MCP servers.
 - `docs/mcp.md` defines the workspace MCP servers and their default states. `docs/mcp-installation-guide-v2.md` is the original source guide.
+- `docs/claude-code-models.md` records why OpenChamber's Claude Code provider list can be shorter than the CLI and how to reseed the plugin cache.
 - `docs/plugin-publishing.md` describes how the installer assembles the plugin bundle and records it in `stack.lock.json`, and how CI validates it.
 - `docs/relationship.md` names how `maxstack`, the three plugin layers, and `dev-setup-starter` fit together, and defines the workspace by behavior.
 - `scripts/Install-Workspace.ps1` merges the layer fragments, copies every layer that has a `pluginTarget` into `.opencode/plugins`, installs its dependencies, installs the agent profiles with models from `models.json`, writes the workspace config, and records the layers in `stack.lock.json`.
 - `scripts/Remove-GlobalPstack.ps1` and `scripts/remove-global-pstack.sh` remove the previous global installs on Windows and WSL.
 - `scripts/check-agent-tools.mjs` checks that the agent tool set in `dev-setup-starter` covers the service owners the org integration registry names. It is workspace-local and reads the sibling checkouts, so CI does not run it.
+- `scripts/Seed-ClaudeCodeModels.mjs` reseeds the OpenChamber Claude Code model cache from the plugin's own discovery, working around a Windows CLI-invocation bug. See `docs/claude-code-models.md`.
 - `scripts/verify-*` verify the installed workspace bundle in each runtime, including the live OpenChamber server.
 - `docs/decisions.tsv` is the append-only decision trail. `docs/setup-plan.md` is the historical setup plan.
 - `opencode/` is a frozen snapshot of the legacy global content, retained only as the global-removal match target.

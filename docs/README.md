@@ -5,6 +5,7 @@ Index for this repository.
 ## Guides
 
 - [Install and reload](install.md) covers the model policy, the runtimes, and the installer.
+- [Claude Code models](claude-code-models.md) records why OpenChamber's Claude Code list can be shorter than the CLI and how to reseed it.
 - [Layout](layout.md) describes every top-level path.
 - [Repository relationships](relationship.md) names the repository ownership, the one cross-repo edge, and the workspace definition.
 - [MCP servers](mcp.md) defines the workspace MCP servers and their default states.
