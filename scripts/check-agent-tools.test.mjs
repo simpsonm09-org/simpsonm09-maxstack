@@ -74,7 +74,7 @@ test('a missing agent tool fails and names the uncovered owner', () => {
 
 test('aliases and exemptions cover every owner', () => {
   const { base, devSetup, orgPlugin } = buildFixtures({
-    ids: ['gh', 'newman', 'ctx7', 'postman-cli', 'playwright-cli'],
+    ids: ['gh', 'newman', 'ctx7', 'postman-cli', 'playwright-cli', 'docker'],
     rows: [
       { job: 'GitHub', owner: '`gh`', command: '`gh pr view`' },
       { job: 'Collection runs', owner: '`newman`', command: '`newman run`' },
@@ -91,6 +91,21 @@ test('aliases and exemptions cover every owner', () => {
     assert.equal(run.status, 0, `expected a zero exit\n${run.stdout}\n${run.stderr}`);
     assert.match(run.stdout, /postman -> postman-cli/);
     assert.match(run.stdout, /PASS/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('docker is required, not exempt, and fails when the agent tool set lacks it', () => {
+  const { base, devSetup, orgPlugin } = buildFixtures({
+    ids: ['gh'],
+    rows: [{ job: 'Containers', owner: '`docker`', command: '`docker ps`' }],
+  });
+  try {
+    const run = runCheck(devSetup, orgPlugin);
+    assert.equal(run.status, 1, `expected a non-zero exit\n${run.stdout}\n${run.stderr}`);
+    assert.match(run.stdout, /service owner "docker" is not covered/);
+    assert.doesNotMatch(run.stdout, /docker \(exempt/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
