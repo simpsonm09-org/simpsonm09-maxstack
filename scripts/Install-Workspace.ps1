@@ -75,6 +75,11 @@ if (-not (Test-Path -LiteralPath $Workspace -PathType Container)) {
     throw "Workspace not found: $Workspace"
 }
 
+$workspaceName = Split-Path -Leaf $Workspace.TrimEnd('\', '/')
+if ([string]::IsNullOrWhiteSpace($workspaceName)) {
+    throw "Could not derive a workspace name from: $Workspace"
+}
+
 $models = Get-Content -LiteralPath $modelsFile -Raw | ConvertFrom-Json
 $lock = Get-Content -LiteralPath $lockFile -Raw | ConvertFrom-Json
 $primary = Get-RoleModel $models 'primary'
@@ -218,6 +223,7 @@ $stream = New-Object IO.MemoryStream(, $bytes)
 $configHash = (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash
 $stack = [pscustomobject]@{
     generatedAt  = (Get-Date).ToUniversalTime().ToString('o')
+    workspace    = $workspaceName
     primaryModel = $primary
     configSha256 = $configHash
     layers       = $layerRecords
