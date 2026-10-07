@@ -49,6 +49,6 @@ MIT. See [`LICENSE`](LICENSE).
 - [`pstack-opencode-plugin`](https://github.com/simpsonm09-org/pstack-opencode-plugin) owns the plugin package.
 - [`org-opencode-plugin`](https://github.com/simpsonm09-org/simpsonm09-org-opencode-plugin) owns the shared MCP servers and skills.
 - [`personal-opencode-plugin`](https://github.com/simpsonm09-org/simpsonm09-personal-opencode-plugin) owns the personal MCP servers and skills.
-- [`dev-setup-starter`](https://github.com/simpsonm09-org/dev-setup-starter) owns the machine and app setup.
+- [`dev-setup-starter`](https://github.com/simpsonm09-org/simpsonm09-dev-setup) owns the machine and app setup.
 - [`repo-standard`](https://github.com/simpsonm09-org/simpsonm09-repo-standard) owns the shared CI, linting, security, and governance.
 - [`repo-template`](https://github.com/simpsonm09-org/simpsonm09-repo-template) is the generated-repo starting point.
