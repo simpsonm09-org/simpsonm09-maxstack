@@ -39,6 +39,10 @@ check: lint validate
 check-agent-tools:
     node scripts/check-agent-tools.mjs
 
+# Reseed the OpenChamber Claude Code model cache. See docs/claude-code-models.md.
+seed-claude-models:
+    node scripts/Seed-ClaudeCodeModels.mjs
+
 # Run the Biome complexity gate over the repository.
 complexity:
     mise exec -- biome lint .

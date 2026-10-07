@@ -30,7 +30,8 @@ Seed the cache from the plugin's own discovery, run against the native
 `claude.exe` so the `.cmd` path is never used.
 
 ```powershell
-node scripts/Seed-ClaudeCodeModels.mjs
+just seed-claude-models
+# or: node scripts/Seed-ClaudeCodeModels.mjs
 ```
 
 Then restart OpenChamber. A running server resolves the plugin once per process,
@@ -39,9 +40,11 @@ Code or plugin update.
 
 ## Current list
 
-Discovery on 2026-10-07 returned 15 entries: 12 models plus 3 explicit 1M variants
-for the families the CLI exposes both ways. The set is account and provider
-dependent, because the CLI resolves it from a signed model catalog.
+The CLI picker lists 13 rows, including its Default row and an overflow section.
+Discovery drops the Default alias row and expands three families into explicit 1M
+variants, so the provider ends up with 15 entries on 2026-10-07. The set is
+account and provider dependent, because the CLI resolves it from a signed model
+catalog.
 
 | Name | Model id | Context | Output |
 | --- | --- | --- | --- |
@@ -63,6 +66,9 @@ dependent, because the CLI resolves it from a signed model catalog.
 
 ## Notes
 
+- The `[1m]` suffix on a model id is the Claude CLI's 1M-context marker, not part
+  of the API model name. The plugin's own discovery emits it, and its request
+  path resolves it before the API call.
 - The cache is machine app state under `~/.local/share/opencode-claude/`. It is
   not repository content and is never committed.
 - `scripts/Seed-ClaudeCodeModels.mjs` is the reproducible lever. It locates the
