@@ -6,7 +6,7 @@ This document names how the pieces fit together. It covers the repositories that
 
 `maxstack` owns AI composition. It holds the workspace config fragment, the model policy, the ordered layer manifest, the installer, and the pin on the plugin package. It composes the AI layer and does not own any layer it installs.
 
-`simpsonm09-dev-setup` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, and the secrets loaders. It does not own AI composition.
+`dev-setup-starter` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, and the secrets loaders. It does not own AI composition.
 
 The three plugin layers own the skills, the agents, and the MCP servers. Order matters, and each later layer builds on the one before it.
 
@@ -16,13 +16,13 @@ The three plugin layers own the skills, the agents, and the MCP servers. Order m
 | `simpsonm09-org-opencode-plugin` | general and portable | MCP servers and skills that apply to any person or machine. |
 | `simpsonm09-personal-opencode-plugin` | person and machine | MCP servers and skills that name one person and one machine. |
 | `simpsonm09-maxstack` | none | AI composition: the config fragment, the model policy, the layer manifest, the installer, and the plugin pin. |
-| `simpsonm09-dev-setup` | none | The machine and the human tool set: tool installs, `tools.yaml`, and the secrets loaders. |
+| `dev-setup-starter` | none | The machine and the human tool set: tool installs, `tools.yaml`, and the secrets loaders. |
 
 `layers.json` lists the three plugin layers in order. `maxstack` reads that order, copies each layer that carries a `pluginTarget` into `.opencode/plugins`, merges the config fragments, and installs the agent profiles. A later layer wins where two layers set the same value.
 
 ## The cross-repo edge
 
-`scripts/Install-Workspace.ps1` reads `layers.json` in `maxstack`. The machine tool list, `tools.yaml`, lives in `simpsonm09-dev-setup`. The two manifests never read each other. They meet at the workspace, where `maxstack` writes the AI config and `simpsonm09-dev-setup` installs the tools a person runs there. A change to the layer order belongs in `maxstack`; a change to the machine tool set belongs in `simpsonm09-dev-setup`.
+`scripts/Install-Workspace.ps1` reads `layers.json` in `maxstack`. The machine tool list, `tools.yaml`, lives in `dev-setup-starter`. The two manifests never read each other. They meet at the workspace, where `maxstack` writes the AI config and `dev-setup-starter` installs the tools a person runs there. A change to the layer order belongs in `maxstack`; a change to the machine tool set belongs in `dev-setup-starter`.
 
 ## The workspace
 

@@ -6,7 +6,7 @@ The original lives in `simpsonm09-org/simpsonm09-maxstack`; work happens on the 
 
 ## What it does
 
-`maxstack` owns AI composition for the `D:\dev\simpsonm09` workspace. It holds the workspace config fragment, the model policy, and the installer, and it pins the PStack plugin package. `simpsonm09-dev-setup` owns the machine and the human tool set. See [`docs/relationship.md`](docs/relationship.md).
+`maxstack` owns AI composition for the `D:\dev\simpsonm09` workspace. It holds the workspace config fragment, the model policy, and the installer, and it pins the PStack plugin package. `dev-setup-starter` owns the machine and the human tool set. See [`docs/relationship.md`](docs/relationship.md).
 
 PStack itself is an OpenCode plugin in [`simpsonm09-org/pstack-opencode-plugin`](https://github.com/simpsonm09-org/pstack-opencode-plugin). `maxstack` installs that package into `D:\dev\simpsonm09\.opencode\plugins` and applies the model policy to the installed agent profiles. Nothing is global.
 
@@ -49,6 +49,6 @@ MIT. See [`LICENSE`](LICENSE).
 - [`pstack-opencode-plugin`](https://github.com/simpsonm09-org/pstack-opencode-plugin) owns the plugin package.
 - [`org-opencode-plugin`](https://github.com/simpsonm09-org/simpsonm09-org-opencode-plugin) owns the shared MCP servers and skills.
 - [`personal-opencode-plugin`](https://github.com/simpsonm09-org/simpsonm09-personal-opencode-plugin) owns the personal MCP servers and skills.
-- [`dev-setup-starter`](https://github.com/simpsonm09-org/simpsonm09-dev-setup) owns the machine and app setup.
+- [`dev-setup-starter`](https://github.com/simpsonm09-org/dev-setup-starter) owns the machine and app setup.
 - [`repo-standard`](https://github.com/simpsonm09-org/simpsonm09-repo-standard) owns the shared CI, linting, security, and governance.
 - [`repo-template`](https://github.com/simpsonm09-org/simpsonm09-repo-template) is the generated-repo starting point.
