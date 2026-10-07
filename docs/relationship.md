@@ -1,12 +1,12 @@
 # Repository relationships
 
-This document names how the pieces fit together. It covers the repositories that own AI composition, the ordered plugin layers, the one cross-repo edge, and what the workspace is.
+This document names how the pieces fit together. It covers the repositories that own AI composition, the ordered plugin layers, the one cross-repo edge, the Agent Vault, and what the workspace is.
 
 ## Ownership
 
 `maxstack` owns AI composition. It holds the workspace config fragment, the model policy, the ordered layer manifest, the installer, and the pin on the plugin package. It composes the AI layer and does not own any layer it installs.
 
-`dev-setup-starter` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, and the secrets loaders. It does not own AI composition.
+`dev-setup-starter` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, the secrets loaders, and the Agent Vault wrappers. It does not own AI composition.
 
 The three plugin layers own the skills, the agents, and the MCP servers. Order matters, and each later layer builds on the one before it.
 
@@ -16,7 +16,7 @@ The three plugin layers own the skills, the agents, and the MCP servers. Order m
 | `simpsonm09-org-opencode-plugin` | general and portable | MCP servers and skills that apply to any person or machine. |
 | `simpsonm09-personal-opencode-plugin` | person and machine | MCP servers and skills that name one person and one machine. |
 | `simpsonm09-maxstack` | none | AI composition: the config fragment, the model policy, the layer manifest, the installer, and the plugin pin. |
-| `dev-setup-starter` | none | The machine and the human tool set: tool installs, `tools.yaml`, and the secrets loaders. |
+| `dev-setup-starter` | none | The machine and the human tool set: tool installs, `tools.yaml`, the secrets loaders, and the Agent Vault wrappers. |
 
 `layers.json` lists the three plugin layers in order. `maxstack` reads that order, copies each layer that carries a `pluginTarget` into `.opencode/plugins`, merges the config fragments, and installs the agent profiles. A later layer wins where two layers set the same value.
 
@@ -29,6 +29,16 @@ The three plugin layers own the skills, the agents, and the MCP servers. Order m
 The org integration registry in `simpsonm09-org-opencode-plugin` names one CLI owner per service. `dev-setup-starter` owns the agent tool set: the ids in `tools.yaml` whose `consumers` list names `agent`. `just check-agent-tools` reads both sibling checkouts from the workspace root and fails when an owner has no matching agent tool. It normalizes an owner to a command token, maps the few names that differ from the tool id, and exempts the owners that are built in or not installable as a tool, each with a stated reason.
 
 The check is workspace-local, not a CI gate. CI checks out `maxstack` alone, so the two sibling repositories are absent there. Run it from the workspace root, or point it at a checkout with `--dev-setup <path>` and `--org-plugin <path>`.
+
+## The Agent Vault
+
+The human and the agent reach a brokered service through a wrapper, never by putting a token in the environment. `dev-setup-starter` owns the wrappers and the vault setup, and the vault is part of the AI stack an agent runs on.
+
+`with-secrets <tool>` is the human loader path. It loads the secrets a person needs on demand, into that one command only.
+
+`with-vault --role human <tool>` and `with-vault --role agent <tool>` are the vault path. A self-hosted Infisical Agent Vault brokers the service credential, and the proxy attaches it to the request, so the tool never holds the token. `--role` is required, so a run is never silently misattributed.
+
+Discord and Postman are reached through the wrappers. The vault holds no other service credential today, so the other CLI owners in [MCP servers](mcp.md) still authenticate once per runtime with their own tooling.
 
 ## The workspace
 
