@@ -12,6 +12,10 @@ The workspace is CLI-first. No MCP server is installed by default. Every service
 
 `mcp.timeout.startup` stays at 120 seconds for the case where a server is added later, because a local server's first run downloads its npm package before the MCP handshake.
 
+## Brokered services
+
+Discord and Postman are reached through the vault wrappers, not by putting a token in the environment. Run `with-vault --role agent <tool> <args>` for an agent, `with-vault --role human <tool> <args>` for the human vault identity, or `with-secrets <tool> <args>` for the human loader path. The wrapper brokers the credential from the self-hosted Infisical Agent Vault, and the proxy attaches it to the request. See [Repository relationships](relationship.md) for the command scheme and the identities.
+
 ## Verify a server
 
 ```powershell
@@ -32,7 +36,7 @@ The live connection state is in OpenChamber, on the MCP settings page, and in th
 
 - The `github`, `postman`, and `context7` MCP servers were removed in favor of their CLIs. Authenticate the CLI once per runtime.
 - GitHub uses `gh`. Run `gh auth status`, then `gh auth login`.
-- Postman uses `postman`. Install with `npm install -g postman-cli`, then `postman login --with-api-key $env:POSTMAN_API_KEY`. The key lives in Infisical as `POSTMAN_API_KEY`; load it with `simpsonm09-dev-setup/scripts/Import-Secrets.ps1 -Apply` on Windows, or the workspace `.envrc` in WSL. See [`../../simpsonm09-dev-setup/docs/secrets.md`](../../simpsonm09-dev-setup/docs/secrets.md).
+- Postman uses `postman`. Install with `npm install -g postman-cli`. Reach the cloud through the vault wrapper, `with-vault --role agent postman <args>` for an agent or `with-secrets postman <args>` for the human, so the key is brokered rather than set in the environment. A direct `postman login --with-api-key` is the manual fallback. The key lives in Infisical as `POSTMAN_API_KEY`. See [`../../simpsonm09-dev-setup/docs/secrets.md`](../../simpsonm09-dev-setup/docs/secrets.md).
 - Library docs use `npx ctx7`. Anonymous works; `npx ctx7 login` raises the rate limit.
 - If a server is added later and reports `needs_auth`, sign in from OpenChamber on the Settings -> MCP page with the Authorize action.
 
