@@ -12,6 +12,7 @@
 - `docs/relationship.md` names how `maxstack`, the three plugin layers, and `dev-setup-starter` fit together, and defines the workspace by behavior.
 - `scripts/Install-Workspace.ps1` merges the layer fragments, copies every layer that has a `pluginTarget` into `.opencode/plugins`, installs its dependencies, installs the agent profiles with models from `models.json`, writes the workspace config, and records the layers in `stack.lock.json`.
 - `scripts/Remove-GlobalPstack.ps1` and `scripts/remove-global-pstack.sh` remove the previous global installs on Windows and WSL.
+- `scripts/check-agent-tools.mjs` checks that the agent tool set in `dev-setup-starter` covers the service owners the org integration registry names. It is workspace-local and reads the sibling checkouts, so CI does not run it.
 - `scripts/verify-*` verify the installed workspace bundle in each runtime, including the live OpenChamber server.
 - `docs/decisions.tsv` is the append-only decision trail. `docs/setup-plan.md` is the historical setup plan.
 - `opencode/` is a frozen snapshot of the legacy global content, retained only as the global-removal match target.
