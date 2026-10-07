@@ -18,7 +18,6 @@ import { pathToFileURL } from 'node:url';
 const EXEMPT_OWNERS = new Map([
   ['grep', 'the local grep tool is built into the agent, not installed from tools.yaml'],
   ['java', 'the Jenkins CLI is a jar the controller serves; java comes from the base image, not tools.yaml'],
-  ['docker', 'the container runtime is a machine service installed for the human and reached inside WSL; dev-setup marks it human-only and opt-in'],
 ]);
 
 // Owner names in the registry that differ from the tool id in tools.yaml.
