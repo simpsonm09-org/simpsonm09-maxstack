@@ -34,6 +34,11 @@ validate:
 # Run the same checks CI runs.
 check: lint validate
 
+# Check that the agent tool set covers the service owners. Workspace-local: it
+# reads the dev-setup-starter and org plugin checkouts, which CI does not have.
+check-agent-tools:
+    node scripts/check-agent-tools.mjs
+
 # Run the Biome complexity gate over the repository.
 complexity:
     mise exec -- biome lint .

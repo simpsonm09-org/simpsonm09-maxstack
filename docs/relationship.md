@@ -24,6 +24,12 @@ The three plugin layers own the skills, the agents, and the MCP servers. Order m
 
 `scripts/Install-Workspace.ps1` reads `layers.json` in `maxstack`. The machine tool list, `tools.yaml`, lives in `dev-setup-starter`. The two manifests never read each other. They meet at the workspace, where `maxstack` writes the AI config and `dev-setup-starter` installs the tools a person runs there. A change to the layer order belongs in `maxstack`; a change to the machine tool set belongs in `dev-setup-starter`.
 
+## The agent tool check
+
+The org integration registry in `simpsonm09-org-opencode-plugin` names one CLI owner per service. `dev-setup-starter` owns the agent tool set: the ids in `tools.yaml` whose `consumers` list names `agent`. `just check-agent-tools` reads both sibling checkouts from the workspace root and fails when an owner has no matching agent tool. It normalizes an owner to a command token, maps the few names that differ from the tool id, and exempts the owners that are built in or not installable as a tool, each with a stated reason.
+
+The check is workspace-local, not a CI gate. CI checks out `maxstack` alone, so the two sibling repositories are absent there. Run it from the workspace root, or point it at a checkout with `--dev-setup <path>` and `--org-plugin <path>`.
+
 ## The workspace
 
 The workspace is the tree rooted at the directory that owns the generated `opencode.jsonc` and the `.opencode/plugins` directory. It is defined by behavior, not by a stored path.
