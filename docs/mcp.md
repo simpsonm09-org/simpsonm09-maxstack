@@ -68,16 +68,16 @@ Remote secrets use `{env:NAME}`. Never write a secret into the config.
 
 ## Layer plugin entries
 
-A config layer can also register skills through an OpenCode plugin. `simpsonm09-org-ai-plugin` and `simpsonm09-personal-ai-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/simpsonm09-org-opencode` and `.opencode/plugins/simpsonm09-personal-opencode`, and OpenCode loads them next to `pstack-opencode`.
+A config layer can also register skills through an OpenCode plugin. `simpsonm09-org-ai-plugin` and `simpsonm09-personal-ai-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/simpsonm09-org-ai-plugin` and `.opencode/plugins/simpsonm09-personal-ai-plugin`, and OpenCode loads them next to `pstack-opencode`.
 
 | Plugin | Skill | Purpose |
 | --- | --- | --- |
-| `simpsonm09-org-opencode` | `service-integrations` | The general integration registry: which CLI owns each external-service job. It defers personal specifics to the personal layer. |
-| `simpsonm09-org-opencode` | `repo-tasks` | Run, build, test, or verify a repository through its justfile. |
-| `simpsonm09-org-opencode` | `repo-standard` | The gates, the definition of done, and the branch and pull request flow. |
-| `simpsonm09-org-opencode` | `local-services` | The container stack on the machine: Docker, Portainer, Infisical, and DbGate. |
-| `simpsonm09-personal-opencode` | `integrations-personal` | The personal concretes the registry defers to, and the `himalaya`, `ntfy`, and `smsgate` services. |
-| `simpsonm09-personal-opencode` | `dev-tools` | Where each personal tool's settings live and how to apply them. |
-| `simpsonm09-personal-opencode` | `discord` | Discord through the `discli` CLI. |
+| `simpsonm09-org-ai-plugin` | `service-integrations` | The general integration registry: which CLI owns each external-service job. It defers personal specifics to the personal layer. |
+| `simpsonm09-org-ai-plugin` | `repo-tasks` | Run, build, test, or verify a repository through its justfile. |
+| `simpsonm09-org-ai-plugin` | `repo-standard` | The gates, the definition of done, and the branch and pull request flow. |
+| `simpsonm09-org-ai-plugin` | `local-services` | The container stack on the machine: Docker, Portainer, Infisical, and DbGate. |
+| `simpsonm09-personal-ai-plugin` | `integrations-personal` | The personal concretes the registry defers to, and the `himalaya`, `ntfy`, and `smsgate` services. |
+| `simpsonm09-personal-ai-plugin` | `dev-tools` | Where each personal tool's settings live and how to apply them. |
+| `simpsonm09-personal-ai-plugin` | `discord` | Discord through the `discli` CLI. |
 
 Add a skill by creating `skills/<id>/SKILL.md` in the layer repository, then rerun `Install-Workspace.ps1 -Apply` and start a new T3 session.

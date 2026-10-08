@@ -17,23 +17,23 @@
       }
     },
     {
-      "name": "simpsonm09-org-opencode",
+      "name": "simpsonm09-org-ai-plugin",
       "kind": "config",
       "path": "projects/repos/simpsonm09-org-ai-plugin",
-      "pluginTarget": "simpsonm09-org-opencode",
+      "pluginTarget": "simpsonm09-org-ai-plugin",
       "source": "https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin.git",
       "claude": {
-        "plugin": "simpsonm09-org"
+        "plugin": "simpsonm09-org-ai-plugin"
       }
     },
     {
-      "name": "simpsonm09-personal-opencode",
+      "name": "simpsonm09-personal-ai-plugin",
       "kind": "config",
       "path": "projects/repos/simpsonm09-personal-ai-plugin",
-      "pluginTarget": "simpsonm09-personal-opencode",
+      "pluginTarget": "simpsonm09-personal-ai-plugin",
       "source": "https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin.git",
       "claude": {
-        "plugin": "simpsonm09-personal"
+        "plugin": "simpsonm09-personal-ai-plugin"
       }
     }
   ]
