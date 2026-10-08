@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 
 REQUIRED_SKILLS = (
@@ -131,13 +132,17 @@ def main() -> int:
     else:
         text = config.read_text(encoding="utf-8")
         for needle in (
-            '"model"',
             '"default_agent"',
             '"permissions"',
             "external_directory",
         ):
             if needle not in text:
                 failures.append(f"{config} is missing {needle}")
+        for needle in ('"model"', '"small_model"'):
+            if needle in text:
+                failures.append(
+                    f"{config} sets {needle}; maxstack sets no model. Rerun Install-Workspace.ps1 -Apply"
+                )
 
     plugin = workspace / ".opencode" / "plugins" / "pstack-opencode"
     if not (plugin / "index.ts").is_file():
@@ -157,8 +162,13 @@ def main() -> int:
 
     agents = workspace / ".opencode" / "agents"
     for name in REQUIRED_AGENTS:
-        if not (agents / name).is_file():
-            failures.append(f"missing agent profile: {agents / name}")
+        profile = agents / name
+        if not profile.is_file():
+            failures.append(f"missing agent profile: {profile}")
+        elif re.search(r"(?m)^model:", profile.read_text(encoding="utf-8")):
+            failures.append(
+                f"agent profile {profile} sets a model; Install-Workspace.ps1 -Apply removes it"
+            )
 
     check_claude(workspace, failures)
 
@@ -180,12 +190,6 @@ def main() -> int:
             failures.append(
                 f"global pstack agent profiles are still present: {', '.join(left)}"
             )
-
-    global_config = home / ".config" / "opencode" / "opencode.jsonc"
-    if global_config.is_file() and '"model"' in global_config.read_text(
-        encoding="utf-8"
-    ):
-        failures.append("global opencode.jsonc still sets a model")
 
     if failures:
         for failure in failures:

@@ -4,9 +4,9 @@ This document names how the pieces fit together. It covers the repositories that
 
 ## Ownership
 
-`maxstack` owns AI composition. It holds the workspace config fragment, the model policy, the ordered layer manifest, the installer, and the pin on the plugin package. It composes the AI layer and does not own any layer it installs.
+`maxstack` owns AI composition. It holds the workspace config fragment, the ordered layer manifest, the installer, and the pin on the plugin package. It composes the AI layer and does not own any layer it installs.
 
-`dev-setup-starter` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, the secrets loaders, and the Agent Vault wrappers. It does not own AI composition.
+`simpsonm09-dev-setup` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, the secrets loaders, and the Agent Vault wrappers. It does not own AI composition.
 
 The three plugin layers own the skills, the agents, and the MCP servers. Order matters, and each later layer builds on the one before it.
 
@@ -15,24 +15,24 @@ The three plugin layers own the skills, the agents, and the MCP servers. Order m
 | `pstack-opencode-plugin` | base | The plugin package: the PStack skills, the agent profiles, and the adapter that registers them. |
 | `simpsonm09-org-ai-plugin` | general and portable | MCP servers and skills that apply to any person or machine. |
 | `simpsonm09-personal-ai-plugin` | person and machine | MCP servers and skills that name one person and one machine. |
-| `simpsonm09-maxstack` | none | AI composition: the config fragment, the model policy, the layer manifest, the installer, and the plugin pin. |
-| `dev-setup-starter` | none | The machine and the human tool set: tool installs, `tools.yaml`, the secrets loaders, and the Agent Vault wrappers. |
+| `simpsonm09-maxstack` | none | AI composition: the config fragment, the layer manifest, the installer, and the plugin pin. |
+| `simpsonm09-dev-setup` | none | The machine and the human tool set: tool installs, `tools.yaml`, the secrets loaders, and the Agent Vault wrappers. |
 
 `layers.json` lists the three plugin layers in order. `maxstack` reads that order, copies each layer that carries a `pluginTarget` into `.opencode/plugins`, merges the config fragments, and installs the agent profiles. A later layer wins where two layers set the same value.
 
 ## The cross-repo edge
 
-`scripts/Install-Workspace.ps1` reads `layers.json` in `maxstack`. The machine tool list, `tools.yaml`, lives in `dev-setup-starter`. The two manifests never read each other. They meet at the workspace, where `maxstack` writes the AI config and `dev-setup-starter` installs the tools a person runs there. A change to the layer order belongs in `maxstack`; a change to the machine tool set belongs in `dev-setup-starter`.
+`scripts/Install-Workspace.ps1` reads `layers.json` in `maxstack`. The machine tool list, `tools.yaml`, lives in `simpsonm09-dev-setup`. The two manifests never read each other. They meet at the workspace, where `maxstack` writes the AI config and `simpsonm09-dev-setup` installs the tools a person runs there. A change to the layer order belongs in `maxstack`; a change to the machine tool set belongs in `simpsonm09-dev-setup`.
 
 ## The agent tool check
 
-The org integration registry in `simpsonm09-org-ai-plugin` names one CLI owner per service. `dev-setup-starter` owns the agent tool set: the ids in `tools.yaml` whose `consumers` list names `agent`. `just check-agent-tools` reads both sibling checkouts from the workspace root and fails when an owner has no matching agent tool. It normalizes an owner to a command token, maps the few names that differ from the tool id, and exempts the owners that are built in or not installable as a tool, each with a stated reason.
+The org integration registry in `simpsonm09-org-ai-plugin` names one CLI owner per service. `simpsonm09-dev-setup` owns the agent tool set: the ids in `tools.yaml` whose `consumers` list names `agent`. `just check-agent-tools` reads both sibling checkouts from the workspace root and fails when an owner has no matching agent tool. It normalizes an owner to a command token, maps the few names that differ from the tool id, and exempts the owners that are built in or not installable as a tool, each with a stated reason.
 
 The check is workspace-local, not a CI gate. CI checks out `maxstack` alone, so the two sibling repositories are absent there. Run it from the workspace root, or point it at a checkout with `--dev-setup <path>` and `--org-plugin <path>`.
 
 ## The Agent Vault
 
-The human and the agent reach a brokered service through a wrapper, never by putting a token in the environment. `dev-setup-starter` owns the wrappers and the vault setup, and the vault is part of the AI stack an agent runs on.
+The human and the agent reach a brokered service through a wrapper, never by putting a token in the environment. `simpsonm09-dev-setup` owns the wrappers and the vault setup, and the vault is part of the AI stack an agent runs on.
 
 `with-secrets <tool>` is the human loader path. It loads the secrets a person needs on demand, into that one command only.
 
@@ -44,7 +44,7 @@ Discord and Postman are reached through the wrappers. The vault holds no other s
 
 The workspace is the tree rooted at the directory that owns the generated `opencode.jsonc` and the `.opencode/plugins` directory. It is defined by behavior, not by a stored path.
 
-Every repository beneath that root inherits the model, the agents, and the skills, because OpenCode merges the config of each ancestor directory. A session in any repository under the root sees the same model policy and the same skills as a session at the root.
+Every repository beneath that root inherits the agents and the skills, because OpenCode merges the config of each ancestor directory. A session in any repository under the root sees the same skills as a session at the root, and the model is whichever one that session selects.
 
 The `.envrc` at the same root is the secret-loading boundary. The loaders read it when a shell enters the tree.
 

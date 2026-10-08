@@ -1,14 +1,14 @@
 # maxstack
 
-Personal AI tooling for OpenCode and Claude Code, run from T3 Code. It coordinates the workspace config, the model policy, and the installer, and it pins the PStack plugin.
+Personal AI tooling for OpenCode and Claude Code, run from T3 Code. It coordinates the workspace config and the installer, and it pins the PStack plugin. maxstack sets no model: you pick the model in the harness.
 
 The original lives in `simpsonm09-org/simpsonm09-maxstack`; work happens on the personal fork. See [`repo-standard`](https://github.com/simpsonm09-org/simpsonm09-repo-standard).
 
 ## What it does
 
-`maxstack` owns AI composition for the `D:\dev\simpsonm09` workspace. It holds the workspace config fragment, the model policy, and the installer, and it pins the PStack plugin package. `dev-setup-starter` owns the machine and the human tool set, including a self-hosted Infisical Agent Vault that brokers service credentials for the agent. A wrapper is the entry point: `with-secrets <tool>` for the human loader path, and `with-vault --role human <tool>` or `with-vault --role agent <tool>` for the vault path. See [`docs/relationship.md`](docs/relationship.md).
+`maxstack` owns AI composition for the `D:\dev\simpsonm09` workspace. It holds the workspace config fragment and the installer, and it pins the PStack plugin package. `simpsonm09-dev-setup` owns the machine and the human tool set, including a self-hosted Infisical Agent Vault that brokers service credentials for the agent. A wrapper is the entry point: `with-secrets <tool>` for the human loader path, and `with-vault --role human <tool>` or `with-vault --role agent <tool>` for the vault path. See [`docs/relationship.md`](docs/relationship.md).
 
-PStack itself is an OpenCode plugin in [`simpsonm09-org/pstack-opencode-plugin`](https://github.com/simpsonm09-org/pstack-opencode-plugin). `maxstack` installs that package into `D:\dev\simpsonm09\.opencode\plugins` and applies the model policy to the installed agent profiles. Nothing is global.
+PStack itself is an OpenCode plugin in [`simpsonm09-org/pstack-opencode-plugin`](https://github.com/simpsonm09-org/pstack-opencode-plugin). `maxstack` installs that package into `D:\dev\simpsonm09\.opencode\plugins` and strips any model line from the installed agent profiles. Nothing is global.
 
 The same installed plugin directories also serve Claude Code. The installer builds `.claude\plugins`, one folder per Claude plugin: the local plugins are junctions to the installed OpenCode copies, and pstack is a copy of its pinned upstream folder. A T3 Claude provider instance passes `--plugin-dir` for that folder. OpenCode needs nothing extra. See [`docs/t3-setup.md`](docs/t3-setup.md).
 
@@ -41,7 +41,7 @@ Start a new T3 session after an install. T3 starts OpenCode per session, and Cla
 
 ## Documentation
 
-Read [`docs/README.md`](docs/README.md) for the layout, the model policy, the MCP servers, and the installer.
+Read [`docs/README.md`](docs/README.md) for the layout, the model rule, the MCP servers, and the installer.
 
 ## License
 
@@ -52,6 +52,6 @@ MIT. See [`LICENSE`](LICENSE).
 - [`pstack-opencode-plugin`](https://github.com/simpsonm09-org/pstack-opencode-plugin) owns the plugin package.
 - [`org-ai-plugin`](https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin) owns the shared MCP servers and skills.
 - [`personal-ai-plugin`](https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin) owns the personal MCP servers and skills.
-- [`dev-setup-starter`](https://github.com/simpsonm09-org/simpsonm09-dev-setup) owns the machine and app setup.
+- [`simpsonm09-dev-setup`](https://github.com/simpsonm09-org/simpsonm09-dev-setup) owns the machine and app setup.
 - [`repo-standard`](https://github.com/simpsonm09-org/simpsonm09-repo-standard) owns the shared CI, linting, security, and governance.
 - [`repo-template`](https://github.com/simpsonm09-org/simpsonm09-repo-template) is the generated-repo starting point.

@@ -39,7 +39,7 @@ validate-online:
 check: lint validate
 
 # Check that the agent tool set covers the service owners. Workspace-local: it
-# reads the dev-setup-starter and org plugin checkouts, which CI does not have.
+# reads the simpsonm09-dev-setup and org plugin checkouts, which CI does not have.
 check-agent-tools:
     node scripts/check-agent-tools.mjs
 

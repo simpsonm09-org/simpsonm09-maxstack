@@ -183,7 +183,7 @@ withWorkspace('the lock records a workspace name and no absolute path', (ctx) =>
   }
 
   assert.equal(typeof lock.generatedAt, 'string');
-  assert.equal(typeof lock.primaryModel, 'string');
+  assert.ok(!('primaryModel' in lock), 'the lock records no model');
   assert.match(lock.configSha256, /^[0-9a-fA-F]{64}$/);
   assert.equal(lock.layers.length, LAYERS.length);
   for (const record of lock.layers) {
@@ -194,6 +194,43 @@ withWorkspace('the lock records a workspace name and no absolute path', (ctx) =>
   }
   assert.ok(!('claudeMarketplaceSha256' in lock), 'the marketplace hash is gone');
   assert.ok(!('claudeSettingsSha256' in lock), 'the settings hash is gone');
+}, {});
+
+withWorkspace('apply writes no model, and removes one from the config and the installed profiles', (ctx) => {
+  // A profile in the plugin repository carries a model line, and the workspace still
+  // holds the config and profile an older policy wrote. Apply must leave no model in
+  // either, and keep the rest of each file.
+  writeLayerFile(join(ctx.workspace, 'projects/repos/pstack-opencode-plugin'), 'agents/pstack-agent.md', '---\ndescription: worker\nmodel: opencode-go/deepseek-v4.1-flash\n---\nbody\n');
+  writeLayerFile(ctx.workspace, 'opencode.jsonc', '{\n  "model": "opencode-go/deepseek-v4.1-flash",\n  "small_model": "opencode-go/deepseek-v4.1-flash"\n}\n');
+  writeLayerFile(ctx.workspace, '.opencode/agents/pstack-agent.md', '---\nmodel: opencode-go/deepseek-v4.1-flash\n---\nold\n');
+
+  const run = runInstaller(shell, ctx);
+  assert.equal(run.status, 0, `installer exited ${run.status}\n${run.stdout}\n${run.stderr}`);
+  assert.doesNotMatch(run.stdout, /Primary model|with model/, 'the installer reports a model');
+
+  const config = readJson(join(ctx.workspace, 'opencode.jsonc'));
+  assert.ok(!('model' in config), 'the generated config sets no model');
+  assert.ok(!('small_model' in config), 'the generated config sets no small_model');
+  assert.equal(config.default_agent, 'build', 'the rest of the base config is kept');
+
+  const profile = readFileSync(join(ctx.workspace, '.opencode', 'agents', 'pstack-agent.md'), 'utf8');
+  assert.doesNotMatch(profile, /^model:/m, 'the installed profile keeps a model line');
+  assert.match(profile, /^description: worker$/m, 'the installed profile lost its other frontmatter');
+
+  const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.ok(!('primaryModel' in lock), 'the lock records a model');
+}, {});
+
+withWorkspace('audit reports a config that still sets a model as drift', (ctx) => {
+  writeLayerFile(ctx.workspace, 'opencode.jsonc', '{\n  "model": "opencode-go/deepseek-v4.1-flash"\n}\n');
+
+  const audit = runInstaller(shell, ctx, [], { apply: false });
+  assert.equal(audit.status, 0, audit.stderr);
+  assert.match(audit.stdout, /Drift: +.*opencode\.jsonc: differs/, audit.stdout);
+  assert.match(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), /"model"/, 'audit rewrote the config');
+
+  assert.equal(runInstaller(shell, ctx).status, 0);
+  assert.ok(!('model' in readJson(join(ctx.workspace, 'opencode.jsonc'))), 'apply kept the model');
 }, {});
 
 withWorkspace('local layers are junctions and pstack is a pinned sparse copy', (ctx) => {
