@@ -31,6 +31,10 @@ security:
 validate:
     {{python}} scripts/verify-manifests.py
 
+# Validate the manifests and check the Claude pin against GitHub. Needs gh and network.
+validate-online:
+    {{python}} scripts/verify-manifests.py --online
+
 # Run the same checks CI runs.
 check: lint validate
 

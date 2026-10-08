@@ -13,8 +13,8 @@ The three plugin layers own the skills, the agents, and the MCP servers. Order m
 | Repository | Layer | Owns |
 | --- | --- | --- |
 | `pstack-opencode-plugin` | base | The plugin package: the PStack skills, the agent profiles, and the adapter that registers them. |
-| `simpsonm09-org-opencode-plugin` | general and portable | MCP servers and skills that apply to any person or machine. |
-| `simpsonm09-personal-opencode-plugin` | person and machine | MCP servers and skills that name one person and one machine. |
+| `simpsonm09-org-ai-plugin` | general and portable | MCP servers and skills that apply to any person or machine. |
+| `simpsonm09-personal-ai-plugin` | person and machine | MCP servers and skills that name one person and one machine. |
 | `simpsonm09-maxstack` | none | AI composition: the config fragment, the model policy, the layer manifest, the installer, and the plugin pin. |
 | `dev-setup-starter` | none | The machine and the human tool set: tool installs, `tools.yaml`, the secrets loaders, and the Agent Vault wrappers. |
 
@@ -26,7 +26,7 @@ The three plugin layers own the skills, the agents, and the MCP servers. Order m
 
 ## The agent tool check
 
-The org integration registry in `simpsonm09-org-opencode-plugin` names one CLI owner per service. `dev-setup-starter` owns the agent tool set: the ids in `tools.yaml` whose `consumers` list names `agent`. `just check-agent-tools` reads both sibling checkouts from the workspace root and fails when an owner has no matching agent tool. It normalizes an owner to a command token, maps the few names that differ from the tool id, and exempts the owners that are built in or not installable as a tool, each with a stated reason.
+The org integration registry in `simpsonm09-org-ai-plugin` names one CLI owner per service. `dev-setup-starter` owns the agent tool set: the ids in `tools.yaml` whose `consumers` list names `agent`. `just check-agent-tools` reads both sibling checkouts from the workspace root and fails when an owner has no matching agent tool. It normalizes an owner to a command token, maps the few names that differ from the tool id, and exempts the owners that are built in or not installable as a tool, each with a stated reason.
 
 The check is workspace-local, not a CI gate. CI checks out `maxstack` alone, so the two sibling repositories are absent there. Run it from the workspace root, or point it at a checkout with `--dev-setup <path>` and `--org-plugin <path>`.
 
@@ -49,3 +49,5 @@ Every repository beneath that root inherits the model, the agents, and the skill
 The `.envrc` at the same root is the secret-loading boundary. The loaders read it when a shell enters the tree.
 
 Do not store an absolute root. The same workspace is `D:\dev\simpsonm09` on Windows and `/mnt/d/dev/simpsonm09` in WSL, so a stored path is wrong in the other runtime. Record what each tool needs relative to the workspace, or read it from an environment variable.
+
+The Claude plugin folder keeps to that rule. Its links and copies are created on each apply, and `stack.lock.json` holds only workspace-relative paths. The T3 instance's launch arguments name the folder by its absolute path, because T3 passes them as written. That string is T3 app state, not repository content. See [T3 setup](t3-setup.md).
