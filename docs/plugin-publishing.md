@@ -18,7 +18,7 @@ This repository does not own the plugin. [`simpsonm09-org/pstack-opencode-plugin
 1. Checks that each layer checkout exists and that the plugin layer has an `index.ts`. It checks each `claude` block against the layer's manifest, and for a `git` block it fetches the pinned commit into `.claude/cache` and checks it out. A pin the repository cannot supply stops the run here, before anything is written.
 2. Warns when the plugin checkout HEAD differs from the pinned commit.
 3. Merges every config layer's `opencode.fragment.jsonc` into `D:\dev\simpsonm09\opencode.jsonc` and sets the primary model.
-4. Copies each plugin layer's `layer.json` `files` list, or the default item list, into `.opencode/plugins/<pluginTarget>`, then runs `npm install` there. A layer without a `claude` block gets no `.claude-plugin` directory, and any left from an earlier apply is removed.
+4. Copies each plugin layer's `layer.json` `files` list, or the default item list, into `.opencode/plugins/<pluginTarget>`, then runs `npm install` there. A layer without a `claude` block gets no `.claude-plugin` directory, and any left from an earlier apply is removed. A folder under `.opencode/plugins` that no current `pluginTarget` names is stale: it is removed only if the previous `stack.lock.json` recorded it as a layer's `pluginTarget`, and otherwise it is reported and kept.
 5. Copies the plugin layer's `agents/*.md` into `.opencode/agents` and injects the model line from `models.json`.
 6. Builds `.claude/plugins/`. A local layer becomes a junction to its installed copy, so both harnesses share it. A `git` layer becomes a copy of the pinned folder. Each child is checked for the manifest name it must carry. A child that no longer has a claude block is removed: a junction is removed as a link, and its target is never touched.
 7. Writes `stack.lock.json` at the workspace root.
@@ -27,7 +27,7 @@ Audit mode computes the config and each child, and reports each as `missing`, `d
 
 ## The recorded lock
 
-`stack.lock.json` is the install-provenance record. `Install-Workspace.ps1` writes it at the workspace root, not in this repository. It records `generatedAt`, `primaryModel`, the SHA-256 of the written workspace config, and one entry per layer with its `name`, `kind`, `path`, `source`, and installed `commit`. Each layer also has a `claude` record:
+`stack.lock.json` is the install-provenance record. `Install-Workspace.ps1` writes it at the workspace root, not in this repository. It records `generatedAt`, `primaryModel`, the SHA-256 of the written workspace config, and one entry per layer with its `name`, `kind`, `path`, `pluginTarget` (null for a layer with no plugin copy), `source`, and installed `commit`. The `pluginTarget` is what the next apply uses to recognise a stale `.opencode/plugins` folder. A lock written before this field existed records no targets, so no stale folder is removed until the next apply writes them. Each layer also has a `claude` record:
 
 - a local plugin: `enabled`, `plugin`, `kind: "junction"`, `child` (`.claude/plugins/<name>`), `target` (`.opencode/plugins/<pluginTarget>`), and `treeSha256`;
 - a git plugin: `enabled`, `plugin`, `kind: "git"`, `child`, `repository`, `path`, `commit`, and `treeSha256`;
