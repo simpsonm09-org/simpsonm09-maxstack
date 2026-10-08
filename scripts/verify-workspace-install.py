@@ -183,7 +183,9 @@ def main() -> int:
     global_skills = home / ".agents" / "skills"
     # Other tools own this folder too (the Cursor CLI installs its skills here), so
     # only a PStack skill counts as a leftover global install.
-    if (global_skills / "poteto-mode").exists() or any(global_skills.glob("principle-*")):
+    if (global_skills / "poteto-mode").exists() or any(
+        global_skills.glob("principle-*")
+    ):
         failures.append(f"global PStack skills are still present under {global_skills}")
 
     if (home / ".config" / "opencode" / "AGENTS.md").exists():
