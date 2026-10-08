@@ -25,7 +25,7 @@ The same installed plugin directories also serve Claude Code. The installer buil
 pwsh -File scripts/Install-Workspace.ps1 -Apply
 ```
 
-Start a new T3 session after an install. T3 starts OpenCode per session, and Claude Code reads the plugin folder at session start. See [`docs/install.md`](docs/install.md).
+After an install, restart the running OpenCode server before using a new T3 session: T3 can reuse that server across sessions, so a new session alone does not reliably reload plugins or skills. Claude Code reads the plugin folder at session start. See [`docs/install.md`](docs/install.md).
 
 ## Commands
 

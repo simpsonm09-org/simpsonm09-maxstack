@@ -41,8 +41,8 @@ An earlier design gave each T3 instance `--settings <file>`, which holds a marke
 
 ## Behaviour to know
 
-- Each plugin folder is read when a session starts. Re-run the installer, then start a new session.
-- The OpenCode provider starts its own `opencode serve` for each session, so a new session loads the installed OpenCode plugins too. There is no long-lived server to restart.
+- Claude Code reads each plugin folder when a session starts. Re-run the installer, restart the running OpenCode server, then start a new session.
+- T3 can reuse an already-running OpenCode server across sessions. Restart that server after reinstalling OpenCode plugins or skills; a new T3 session alone does not reliably reload them.
 - The first session already sees pstack. Nothing is fetched at session start, because the folder is already on disk.
 - The folder has no absolute path in it. A junction records its target internally, and the installer recreates it on each apply.
 

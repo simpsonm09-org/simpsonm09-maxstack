@@ -53,6 +53,6 @@ The Claude pin is checked offline. The `pstack-claude.lock.json` repository, pat
 2. Update the `commit` in `pstack-opencode.lock.json`, and the `path` or `source` if the layer moved.
 3. When the pstack release moves, update the `git` block in `layers.json` and `pstack-claude.lock.json` (`tag`, `commit`, `opencodeUpstream`), then run `python scripts/verify-manifests.py --online`.
 4. Run `pwsh -File scripts/Install-Workspace.ps1 -Apply`.
-5. Start a new T3 session. The OpenCode provider starts a fresh `opencode serve` for it, and Claude Code reads `.claude/plugins` when it starts. Then run `pwsh -File scripts/verify-opencode-workspace.ps1` and `python scripts/verify-workspace-install.py`.
+5. Restart the running OpenCode server, then start a new T3 session. T3 can reuse an OpenCode server across sessions, so a new session alone does not reliably reload plugins or skills. Claude Code reads `.claude/plugins` when it starts. Then run `pwsh -File scripts/verify-opencode-workspace.ps1` and `python scripts/verify-workspace-install.py`.
 
 Merge the manifest changes in the org and personal repositories before a `claude` block that names their plugin lands here. Until a layer's `.claude-plugin/plugin.json` is on the checkout the installer reads, both audit and `-Apply` stop with a clear error. The `claude` checks run before any file is written, so a failure leaves the workspace unchanged, including for the OpenCode layers.

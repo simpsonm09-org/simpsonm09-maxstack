@@ -8,7 +8,7 @@ maxstack sets no model. The workspace `opencode.jsonc` has no `model` or `small_
 
 T3 Code hosts the agent sessions. It runs two providers against the same workspace:
 
-- The OpenCode provider starts its own `opencode serve` for each session. OpenCode reads the workspace `opencode.jsonc` and `.opencode` directory from the session directory upward.
+- The OpenCode provider can reuse an already-running `opencode serve` across sessions. OpenCode reads the workspace `opencode.jsonc` and `.opencode` directory from the session directory upward.
 - The Claude provider runs Claude Code with `--plugin-dir` pointing at `<workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
 
 Ubuntu WSL can also run the OpenCode CLI. It reads the same workspace files under `D:\dev\simpsonm09`, which WSL sees at `/mnt/d/dev/simpsonm09`.
@@ -21,7 +21,7 @@ The plugin must be checked out at `projects/repos/pstack-opencode-plugin`, or pa
 pwsh -File scripts/Install-Workspace.ps1 -Apply
 ```
 
-After an install, start a new session in T3. There is no long-lived server to restart. Each session reads the installed plugins when it starts: the OpenCode provider's new `opencode serve`, and Claude Code's `.claude\plugins` folder.
+After an install, restart the running OpenCode server, then start a new session in T3. T3 can reuse a long-lived server across sessions, and that server does not reliably reload plugins or skills after reinstall. Claude Code reads its `.claude\plugins` folder when a session starts.
 
 Check the installed workspace:
 

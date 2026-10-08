@@ -381,7 +381,7 @@ withWorkspace('LayerSource overrides a layer checkout', (ctx) => {
 }, {});
 
 withWorkspace('the installer has no live-server check and no skip switch', (ctx) => {
-  // T3 starts OpenCode per session, so there is no long-lived server to check.
+  // The installer has no live-server check; T3 can reuse a long-lived server.
   assert.doesNotMatch(readFileSync(installer, 'utf8'), /openchamber|SkipLiveServerCheck/i);
   const run = runInstaller(shell, ctx, ['-SkipLiveServerCheck'], { apply: false });
   assert.notEqual(run.status, 0, 'the installer accepted the removed -SkipLiveServerCheck switch');

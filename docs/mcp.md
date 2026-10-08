@@ -30,7 +30,7 @@ It reports each server's prerequisite, not the live session:
 - `missing-package` means the npm package does not exist.
 - `needs-docker` means the command needs a Docker daemon.
 
-The live connection state belongs to the OpenCode server that runs the session. T3 starts one per session, so check it from that session. The OpenCode log records `mcp connected` and `mcp connect failed`.
+The live connection state belongs to the OpenCode server that runs the session. T3 can reuse that server across sessions, so check it from the active session and restart the server after reinstalling a plugin or skill. The OpenCode log records `mcp connected` and `mcp connect failed`.
 
 ## Auth and sign-in
 
@@ -80,4 +80,4 @@ A config layer can also register skills through an OpenCode plugin. `simpsonm09-
 | `simpsonm09-personal-ai-plugin` | `dev-tools` | Where each personal tool's settings live and how to apply them. |
 | `simpsonm09-personal-ai-plugin` | `discord` | Discord through the `discli` CLI. |
 
-Add a skill by creating `skills/<id>/SKILL.md` in the layer repository, then rerun `Install-Workspace.ps1 -Apply` and start a new T3 session.
+Add a skill by creating `skills/<id>/SKILL.md` in the layer repository, then rerun `Install-Workspace.ps1 -Apply`, restart the running OpenCode server, and start a new T3 session.
