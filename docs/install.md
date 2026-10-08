@@ -44,7 +44,7 @@ A layer that is renamed leaves its old folder under `.opencode\plugins`. `-Apply
 
 The workspace bundle is the only PStack install. If an older global install is ever found, remove it by hand, on Windows under `%USERPROFILE%` and on WSL under `$HOME`. `scripts/verify-workspace-install.py` reports what remains. It checks these paths:
 
-- `.agents/skills` has no entries.
+- `.agents/skills` holds no PStack skill (`poteto-mode` or a `principle-*` folder). Other tools, such as the Cursor CLI, install their own skills there, and those are left alone.
 - `.config/opencode/AGENTS.md` is absent.
 - `.config/opencode/agents/pstack-*.md` are absent.
 
