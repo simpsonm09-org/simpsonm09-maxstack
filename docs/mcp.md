@@ -8,7 +8,7 @@ This is the OpenCode V2 shape. V2 config uses `mcp.servers`, keeps a configured 
 
 ## Default servers
 
-The workspace is CLI-first. No MCP server is installed by default. Every service is reached through a CLI owner: `gh` for GitHub, `gh search code` and the local `grep` tool for code search, `postman` for the Postman cloud and `newman` for local and CI collection runs, `npx ctx7` for library docs, `@playwright/cli` for browser automation, the `chrome-devtools` CLI for performance and debugging, `kubectl` and `helm` for Kubernetes, `infisical` for the workspace secret source, `mise` for pinned tool versions, `trivy` for scanning, and `just` for repository tasks. The `service-integrations` skill in `simpsonm09-org-opencode-plugin` is the general registry. It defers accounts, boards, workspaces, clusters, and personal services such as Discord, email, notifications, and texting to the personal layer.
+The workspace is CLI-first. No MCP server is installed by default. Every service is reached through a CLI owner: `gh` for GitHub, `gh search code` and the local `grep` tool for code search, `postman` for the Postman cloud and `newman` for local and CI collection runs, `npx ctx7` for library docs, `@playwright/cli` for browser automation, the `chrome-devtools` CLI for performance and debugging, `kubectl` and `helm` for Kubernetes, `infisical` for the workspace secret source, `mise` for pinned tool versions, `trivy` for scanning, and `just` for repository tasks. The `service-integrations` skill in `simpsonm09-org-ai-plugin` is the general registry. It defers accounts, boards, workspaces, clusters, and personal services such as Discord, email, notifications, and texting to the personal layer.
 
 `mcp.timeout.startup` stays at 120 seconds for the case where a server is added later, because a local server's first run downloads its npm package before the MCP handshake.
 
@@ -30,7 +30,7 @@ It reports each server's prerequisite, not the live session:
 - `missing-package` means the npm package does not exist.
 - `needs-docker` means the command needs a Docker daemon.
 
-The live connection state is in OpenChamber, on the MCP settings page, and in the OpenCode log (`mcp connected` / `mcp connect failed`).
+The live connection state belongs to the OpenCode server that runs the session. T3 starts one per session, so check it from that session. The OpenCode log records `mcp connected` and `mcp connect failed`.
 
 ## Auth and sign-in
 
@@ -38,7 +38,7 @@ The live connection state is in OpenChamber, on the MCP settings page, and in th
 - GitHub uses `gh`. Run `gh auth status`, then `gh auth login`.
 - Postman uses `postman`. Install with `npm install -g postman-cli`. Reach the cloud through the vault wrapper, `with-vault --role agent postman <args>` for an agent or `with-secrets postman <args>` for the human, so the key is brokered rather than set in the environment. A direct `postman login --with-api-key` is the manual fallback. The key lives in Infisical as `POSTMAN_API_KEY`. See [`../../simpsonm09-dev-setup/docs/secrets.md`](../../simpsonm09-dev-setup/docs/secrets.md).
 - Library docs use `npx ctx7`. Anonymous works; `npx ctx7 login` raises the rate limit.
-- If a server is added later and reports `needs_auth`, sign in from OpenChamber on the Settings -> MCP page with the Authorize action.
+- If a server is added later and reports `needs_auth`, sign in with `opencode mcp auth <name>`. That is the OAuth flow for a remote server.
 
 ## Notes and removals
 
@@ -68,7 +68,7 @@ Remote secrets use `{env:NAME}`. Never write a secret into the config.
 
 ## Layer plugin entries
 
-A config layer can also register skills through an OpenCode plugin. `simpsonm09-org-opencode-plugin` and `simpsonm09-personal-opencode-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/simpsonm09-org-opencode` and `.opencode/plugins/simpsonm09-personal-opencode`, and OpenCode loads them next to `pstack-opencode`.
+A config layer can also register skills through an OpenCode plugin. `simpsonm09-org-ai-plugin` and `simpsonm09-personal-ai-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/simpsonm09-org-opencode` and `.opencode/plugins/simpsonm09-personal-opencode`, and OpenCode loads them next to `pstack-opencode`.
 
 | Plugin | Skill | Purpose |
 | --- | --- | --- |
@@ -80,4 +80,4 @@ A config layer can also register skills through an OpenCode plugin. `simpsonm09-
 | `simpsonm09-personal-opencode` | `dev-tools` | Where each personal tool's settings live and how to apply them. |
 | `simpsonm09-personal-opencode` | `discord` | Discord through the `discli` CLI. |
 
-Add a skill by creating `skills/<id>/SKILL.md` in the layer repository, then rerun `Install-Workspace.ps1 -Apply` and restart OpenChamber.
+Add a skill by creating `skills/<id>/SKILL.md` in the layer repository, then rerun `Install-Workspace.ps1 -Apply` and start a new T3 session.

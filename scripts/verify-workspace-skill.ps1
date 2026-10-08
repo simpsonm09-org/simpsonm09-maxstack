@@ -4,22 +4,21 @@ param(
     [string] $SkillId = 'poteto-mode',
     [string] $Workspace = 'D:\dev\simpsonm09',
     [string] $Project = (Join-Path $Workspace 'projects\repos\simpsonm09-repo-template'),
-    [string] $OpenCodeBinary = (Join-Path $env:LOCALAPPDATA 'Programs\@openchamberelectron\resources\opencode-cli\opencode.exe')
+    [string] $OpenCodeBinary = 'opencode'
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (-not (Test-Path -LiteralPath $OpenCodeBinary -PathType Leaf)) {
-    throw "OpenCode CLI not found at $OpenCodeBinary"
-}
+$command = Get-Command -Name $OpenCodeBinary -CommandType Application, ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $command) { throw "OpenCode CLI not found on PATH: $OpenCodeBinary" }
 
 $prompt = "Call the skill tool with id $SkillId. Then read the file playbooks/investigation.md in that skill's own directory and post WORKSPACE_PSTACK_OK=<its first heading>. Do not edit files and do not run shell commands."
 $json = Join-Path $env:TEMP ("workspace-skill-check.{0}.jsonl" -f [guid]::NewGuid().ToString('N'))
 
 try {
     Push-Location $Project
-    & $OpenCodeBinary run --standalone --auto --format json $prompt *> $json
+    & $command.Source run --standalone --auto --format json $prompt *> $json
     if ($LASTEXITCODE -ne 0) { throw "OpenCode run failed with exit code $LASTEXITCODE" }
 } finally {
     Pop-Location

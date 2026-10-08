@@ -123,7 +123,7 @@ function findWorkspaceRoot(start) {
 const workspaceRoot = findWorkspaceRoot(repoRoot);
 const devSetupFile = workspaceRoot && join(workspaceRoot, 'projects', 'repos', 'simpsonm09-dev-setup', 'tools.yaml');
 const orgPluginFile =
-  workspaceRoot && join(workspaceRoot, 'projects', 'repos', 'simpsonm09-org-opencode-plugin', registryRel);
+  workspaceRoot && join(workspaceRoot, 'projects', 'repos', 'simpsonm09-org-ai-plugin', registryRel);
 const hasSiblings = Boolean(devSetupFile && orgPluginFile && existsSync(devSetupFile) && existsSync(orgPluginFile));
 
 test(

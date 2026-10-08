@@ -2,12 +2,23 @@
 """Verify the workspace-scoped PStack bundle and that no global install remains."""
 
 import argparse
+import hashlib
+import json
 import os
 import pathlib
 import sys
 
-REQUIRED_SKILLS = ("poteto-mode", "pstack-opencode", "setup-pstack-opencode", "principle-laziness-protocol")
+REQUIRED_SKILLS = (
+    "poteto-mode",
+    "pstack-opencode",
+    "setup-pstack-opencode",
+    "principle-laziness-protocol",
+)
 REQUIRED_AGENTS = ("pstack-agent.md", "pstack-reviewer.md", "pstack-comment-sicko.md")
+OBSOLETE_CLAUDE_FILES = (
+    ".claude-plugin/marketplace.json",
+    ".claude/workspace-settings.json",
+)
 
 
 def default_workspace() -> str:
@@ -15,6 +26,93 @@ def default_workspace() -> str:
     if os.name != "nt" and wsl.is_dir():
         return str(wsl)
     return "D:/dev/simpsonm09"
+
+
+def is_link(path: pathlib.Path) -> bool:
+    """A junction on Windows, or a symlink elsewhere."""
+    if hasattr(os.path, "isjunction") and os.path.isjunction(path):
+        return True
+    return path.is_symlink()
+
+
+def tree_sha256(root: pathlib.Path) -> str:
+    """Mirror Get-TreeSha256 in Install-Workspace.ps1: one line per file, relative path and
+    SHA-256, sorted, leaving out a top-level node_modules; then the SHA-256 of that text."""
+    lines = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        if pathlib.Path(dirpath) == root:
+            dirnames[:] = [name for name in dirnames if name != "node_modules"]
+        for name in filenames:
+            full = pathlib.Path(dirpath) / name
+            digest = hashlib.sha256(full.read_bytes()).hexdigest().upper()
+            lines.append(f"{full.relative_to(root).as_posix()}\t{digest}")
+    text = "\n".join(sorted(lines)) + "\n"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest().upper()
+
+
+def check_claude(workspace: pathlib.Path, failures: list[str]) -> None:
+    """Check the Claude plugin tree against the claude records in stack.lock.json."""
+    lock_path = workspace / "stack.lock.json"
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        failures.append(f"cannot read {lock_path}: {error}")
+        return
+    layers = lock.get("layers", [])
+    if not layers or any("claude" not in layer for layer in layers):
+        failures.append(
+            f"{lock_path} predates the Claude plugin tree; rerun Install-Workspace.ps1 -Apply"
+        )
+        return
+
+    for obsolete in OBSOLETE_CLAUDE_FILES:
+        if (workspace / obsolete).exists():
+            failures.append(
+                f"obsolete generated file from the marketplace design: {workspace / obsolete}"
+            )
+
+    recorded = {}
+    for layer in layers:
+        claude = layer["claude"]
+        if claude.get("enabled"):
+            recorded[claude["plugin"]] = claude
+
+    plugins_dir = workspace / ".claude" / "plugins"
+    if plugins_dir.is_dir():
+        for entry in sorted(plugins_dir.iterdir()):
+            if entry.name not in recorded:
+                failures.append(
+                    f"stale Claude plugin folder not in stack.lock.json: {entry}"
+                )
+
+    for name, claude in recorded.items():
+        child = workspace / claude["child"]
+        if not child.exists():
+            failures.append(f"missing Claude plugin '{name}': {child}")
+            continue
+        if claude["kind"] == "junction":
+            target = workspace / claude["target"]
+            if not is_link(child) or os.path.normcase(
+                os.path.realpath(child)
+            ) != os.path.normcase(os.path.realpath(target)):
+                failures.append(f"Claude plugin '{name}' is not a link to {target}")
+        elif is_link(child):
+            failures.append(
+                f"Claude plugin '{name}' should be a copy of the pinned folder, not a link"
+            )
+        manifest = child / ".claude-plugin" / "plugin.json"
+        if not manifest.is_file():
+            failures.append(f"Claude plugin '{name}' has no manifest at {manifest}")
+        elif json.loads(manifest.read_text(encoding="utf-8")).get("name") != name:
+            failures.append(
+                f"Claude plugin '{name}' does not match the name in {manifest}"
+            )
+        if tree_sha256(child) != str(claude.get("treeSha256", "")).upper():
+            failures.append(
+                f"Claude plugin '{name}' differs from the tree recorded in stack.lock.json"
+            )
+
+    print(f"claude: {len(recorded)} plugin folder(s) recorded in {plugins_dir}")
 
 
 def main() -> int:
@@ -32,7 +130,12 @@ def main() -> int:
         failures.append(f"missing workspace config: {config}")
     else:
         text = config.read_text(encoding="utf-8")
-        for needle in ('"model"', '"default_agent"', '"permissions"', "external_directory"):
+        for needle in (
+            '"model"',
+            '"default_agent"',
+            '"permissions"',
+            "external_directory",
+        ):
             if needle not in text:
                 failures.append(f"{config} is missing {needle}")
 
@@ -57,6 +160,8 @@ def main() -> int:
         if not (agents / name).is_file():
             failures.append(f"missing agent profile: {agents / name}")
 
+    check_claude(workspace, failures)
+
     global_skills = home / ".agents" / "skills"
     if global_skills.is_dir() and any(global_skills.iterdir()):
         failures.append(f"global skills are still present under {global_skills}")
@@ -66,12 +171,20 @@ def main() -> int:
 
     global_agents = home / ".config" / "opencode" / "agents"
     if global_agents.is_dir():
-        left = sorted(entry.name for entry in global_agents.iterdir() if entry.name.startswith("pstack-"))
+        left = sorted(
+            entry.name
+            for entry in global_agents.iterdir()
+            if entry.name.startswith("pstack-")
+        )
         if left:
-            failures.append(f"global pstack agent profiles are still present: {', '.join(left)}")
+            failures.append(
+                f"global pstack agent profiles are still present: {', '.join(left)}"
+            )
 
     global_config = home / ".config" / "opencode" / "opencode.jsonc"
-    if global_config.is_file() and '"model"' in global_config.read_text(encoding="utf-8"):
+    if global_config.is_file() and '"model"' in global_config.read_text(
+        encoding="utf-8"
+    ):
         failures.append("global opencode.jsonc still sets a model")
 
     if failures:

@@ -5,21 +5,36 @@
       "kind": "plugin",
       "path": "projects/repos/pstack-opencode-plugin",
       "pluginTarget": "pstack-opencode",
-      "source": "https://github.com/simpsonm09-org/pstack-opencode-plugin.git"
+      "source": "https://github.com/simpsonm09-org/pstack-opencode-plugin.git",
+      "claude": {
+        "plugin": "pstack",
+        "git": {
+          "url": "https://github.com/michael-denyer/pstack-claude.git",
+          "path": "plugins/pstack",
+          "tag": "v0.9.73",
+          "commit": "8d3aa5719ab836e89482c894bbedd710224f4424"
+        }
+      }
     },
     {
       "name": "simpsonm09-org-opencode",
       "kind": "config",
-      "path": "projects/repos/simpsonm09-org-opencode-plugin",
+      "path": "projects/repos/simpsonm09-org-ai-plugin",
       "pluginTarget": "simpsonm09-org-opencode",
-      "source": "https://github.com/simpsonm09-org/simpsonm09-org-opencode-plugin.git"
+      "source": "https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin.git",
+      "claude": {
+        "plugin": "simpsonm09-org"
+      }
     },
     {
       "name": "simpsonm09-personal-opencode",
       "kind": "config",
-      "path": "projects/repos/simpsonm09-personal-opencode-plugin",
+      "path": "projects/repos/simpsonm09-personal-ai-plugin",
       "pluginTarget": "simpsonm09-personal-opencode",
-      "source": "https://github.com/simpsonm09-org/simpsonm09-personal-opencode-plugin.git"
+      "source": "https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin.git",
+      "claude": {
+        "plugin": "simpsonm09-personal"
+      }
     }
   ]
 }

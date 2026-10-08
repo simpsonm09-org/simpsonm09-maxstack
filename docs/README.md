@@ -10,5 +10,6 @@ Index for this repository.
 - [MCP servers](mcp.md) defines the workspace MCP servers and their default states.
 - [MCP installation guide](mcp-installation-guide-v2.md) is the original source guide, kept for provenance.
 - [Plugin publishing](plugin-publishing.md) describes how the installer assembles the plugin bundle.
-- [Setup plan](setup-plan.md) is the historical OpenCode and OpenChamber setup plan.
+- [T3 setup](t3-setup.md) covers running OpenCode and Claude Code from T3 against the workspace.
+- [Setup plan](setup-plan.md) is the historical OpenCode and OpenChamber setup plan. OpenChamber has been removed; T3 Code hosts the sessions now.
 - [Decisions](decisions.tsv) is the append-only decision trail.

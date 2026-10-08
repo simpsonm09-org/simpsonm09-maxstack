@@ -3,7 +3,7 @@
 // owner the org integration registry names.
 //
 // This is a workspace-local check, not a CI gate. It reads two sibling
-// checkouts (dev-setup-starter and simpsonm09-org-opencode-plugin) that CI does
+// checkouts (dev-setup-starter and simpsonm09-org-ai-plugin) that CI does
 // not have, so it runs from the workspace root and only when those exist.
 //
 //   node scripts/check-agent-tools.mjs
@@ -26,7 +26,7 @@ const OWNER_ALIASES = new Map([
 ]);
 
 const DEV_SETUP_REL = join('projects', 'repos', 'simpsonm09-dev-setup', 'tools.yaml');
-const ORG_PLUGIN_REL = join('projects', 'repos', 'simpsonm09-org-opencode-plugin', 'skills', 'service-integrations', 'SKILL.md');
+const ORG_PLUGIN_REL = join('projects', 'repos', 'simpsonm09-org-ai-plugin', 'skills', 'service-integrations', 'SKILL.md');
 
 function commandWord(text) {
   let token = text.trim();
