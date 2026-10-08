@@ -30,8 +30,8 @@ The pstack folder is a copy, not a junction. Its OpenCode copy comes from the po
 
 ## Checks
 
-- The audit prints drift for each child without writing anything: `pwsh -File scripts/Install-Workspace.ps1`. It reports `missing`, `differs`, `matches`, or `stale`.
-- The OpenCode check runs from the workspace and starts no server: `pwsh -File scripts/verify-opencode-workspace.ps1`. It runs `opencode debug config` and `opencode debug agents`.
+- The audit prints drift for each child without writing anything: `pwsh -File scripts/Install-Workspace.ps1`. It reports `missing`, `differs`, `matches`, or `stale`. A `stale` line also marks a folder under `.opencode\plugins` that no layer names. `-Apply` removes such a folder only when the previous `stack.lock.json` recorded it as a layer target, and reports any other one as kept.
+- The OpenCode check runs from the workspace and starts no server: `pwsh -File scripts/verify-opencode-workspace.ps1`. It runs `opencode debug config` and `opencode debug agents`, each with a 60-second limit.
 - The workspace verifier checks each child against `stack.lock.json`: `python scripts/verify-workspace-install.py`.
 - A live probe from a scratch repository under `projects\repos`: `claude -p --model haiku --plugin-dir D:\dev\simpsonm09\.claude\plugins --output-format stream-json --verbose "List the plugin skills you have whose names start with simpsonm09. Reply with just the names."` The init event lists the loaded plugins and skills.
 

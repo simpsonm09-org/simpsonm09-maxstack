@@ -30,10 +30,12 @@ pwsh -File scripts/verify-opencode-workspace.ps1
 python scripts/verify-workspace-install.py
 ```
 
-`verify-opencode-workspace.ps1` runs `opencode debug config` and `opencode debug agents` from the workspace. It checks that OpenCode reads the workspace config and `.opencode` directory, and that the three PStack agents carry the models from `models.json`. It starts no server and makes no model call. Plugin loading needs a model call, so `scripts/verify-workspace-skill.ps1` runs a bounded OpenCode session that loads a skill.
+`verify-opencode-workspace.ps1` runs `opencode debug config` and `opencode debug agents` from the workspace. It checks that OpenCode reads the workspace config and `.opencode` directory, and that the three PStack agents carry the models from `models.json`. It starts no server and makes no model call. Each OpenCode call has a 60-second limit; a call that runs past it fails the check and names the command. Plugin loading needs a model call, so `scripts/verify-workspace-skill.ps1` runs a bounded OpenCode session that loads a skill.
 
 ## Claude Code
 
 The same install also builds `.claude/plugins` at the workspace root: one child folder per Claude plugin. The local plugins are junctions to the installed OpenCode copies, and pstack is a copy of its pinned upstream folder. Claude Code reads the folder when a session starts, so a new session is enough. A T3 Claude provider instance passes `--plugin-dir <workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
 
-Audit mode prints drift for `opencode.jsonc` and for each Claude child, without writing or fetching anything.
+Audit mode prints drift for `opencode.jsonc`, for each Claude child, and for each stale folder under `.opencode\plugins`, without writing or fetching anything.
+
+A layer that is renamed leaves its old folder under `.opencode\plugins`. `-Apply` removes a folder there that no current layer names, but only when the previous `stack.lock.json` recorded it as a layer's `pluginTarget`, so the installer made it. Any other unnamed folder is reported as stale and kept. The same cleanup applies to `.claude\plugins`: `-Apply` removes a child that no layer declares, and audit reports it as stale.

@@ -342,7 +342,7 @@ withWorkspace('LayerSource overrides a layer checkout', (ctx) => {
   assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'from-override.txt')));
 }, {});
 
-withWorkspace('the installer has no OpenChamber live-server check and no skip switch', (ctx) => {
+withWorkspace('the installer has no live-server check and no skip switch', (ctx) => {
   // T3 starts OpenCode per session, so there is no long-lived server to check.
   assert.doesNotMatch(readFileSync(installer, 'utf8'), /openchamber|SkipLiveServerCheck/i);
   const run = runInstaller(shell, ctx, ['-SkipLiveServerCheck'], { apply: false });
@@ -363,4 +363,61 @@ withWorkspace('audit with the real layers.json needs no network and writes no Cl
   assert.match(run.stdout, /plugins\\pstack: missing/);
   assert.ok(!existsSync(join(ctx.workspace, '.claude', 'cache')), 'audit touched the git cache');
   assert.ok(!existsSync(join(ctx.workspace, '.claude')), 'audit wrote under .claude');
+}, {});
+
+// A layer renamed after an apply leaves its old folder under .opencode\plugins. The
+// first apply makes that folder under the old pluginTarget, so the lock records it.
+function renamedPersonalLayer(ctx) {
+  return writeLayers(ctx, (manifest) => {
+    for (const layer of manifest.layers) {
+      if (layer.name === 'simpsonm09-personal-ai-plugin') layer.pluginTarget = 'simpsonm09-personal-opencode';
+    }
+  });
+}
+
+withWorkspace('a stale plugin folder the previous lock recorded is removed on apply', (ctx) => {
+  assert.equal(runInstaller(shell, ctx, [], { layersFile: renamedPersonalLayer(ctx) }).status, 0);
+  const stale = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-personal-opencode');
+  assert.ok(existsSync(join(stale, 'index.ts')), 'the first apply made the old folder');
+  const recorded = readJson(join(ctx.workspace, 'stack.lock.json')).layers.find((record) => record.name === 'simpsonm09-personal-ai-plugin');
+  assert.equal(recorded.pluginTarget, 'simpsonm09-personal-opencode', 'the lock records the layer target');
+
+  const run = runInstaller(shell, ctx);
+  assert.equal(run.status, 0, `installer exited ${run.status}\n${run.stdout}\n${run.stderr}`);
+  assert.match(run.stdout, /Removed the stale plugin folder .*simpsonm09-personal-opencode/);
+  assert.ok(!existsSync(stale), 'the stale folder is still there');
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-personal-ai-plugin', 'index.ts')), 'the current folder is missing');
+  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal-ai-plugin')), 'the personal link was not repointed');
+}, {});
+
+withWorkspace('a stale plugin folder the previous lock never recorded is reported and kept', (ctx) => {
+  assert.equal(runInstaller(shell, ctx).status, 0);
+  const handMade = join(ctx.workspace, '.opencode', 'plugins', 'hand-made');
+  writeLayerFile(handMade, 'notes.txt', 'not the installer\n');
+
+  const audit = runInstaller(shell, ctx, [], { apply: false });
+  assert.equal(audit.status, 0, audit.stderr);
+  assert.match(audit.stdout, /Drift: +.*plugins\\hand-made: stale/, audit.stdout);
+
+  const run = runInstaller(shell, ctx);
+  assert.equal(run.status, 0, `installer exited ${run.status}\n${run.stdout}\n${run.stderr}`);
+  assert.match(run.stdout, /Drift: +.*plugins\\hand-made: stale, kept/);
+  assert.equal(readFileSync(join(handMade, 'notes.txt'), 'utf8'), 'not the installer\n', 'the unrecorded folder changed');
+}, {});
+
+withWorkspace('audit reports a stale recorded plugin folder and removes nothing', (ctx) => {
+  assert.equal(runInstaller(shell, ctx, [], { layersFile: renamedPersonalLayer(ctx) }).status, 0);
+  const stale = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-personal-opencode');
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const configPath = join(ctx.workspace, 'opencode.jsonc');
+  const lockBefore = readFileSync(lockPath, 'utf8');
+  const configBefore = readFileSync(configPath, 'utf8');
+
+  const audit = runInstaller(shell, ctx, [], { apply: false });
+  assert.equal(audit.status, 0, audit.stderr);
+  assert.match(audit.stdout, /plugins\\simpsonm09-personal-opencode: stale/, audit.stdout);
+  assert.doesNotMatch(audit.stdout, /Removed the stale plugin folder/);
+  assert.ok(existsSync(join(stale, 'index.ts')), 'audit removed the stale folder');
+  assert.equal(readFileSync(lockPath, 'utf8'), lockBefore, 'audit rewrote the lock');
+  assert.equal(readFileSync(configPath, 'utf8'), configBefore, 'audit rewrote the config');
 }, {});

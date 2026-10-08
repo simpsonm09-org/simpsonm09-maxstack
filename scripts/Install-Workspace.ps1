@@ -19,6 +19,7 @@ $lockFile = Join-Path $repoRoot 'pstack-opencode.lock.json'
 $configTarget = Join-Path $Workspace 'opencode.jsonc'
 $stackTarget = Join-Path $Workspace 'stack.lock.json'
 $agentsTarget = Join-Path $Workspace '.opencode\agents'
+$opencodePluginsTarget = Join-Path $Workspace '.opencode\plugins'
 $claudePluginsTarget = Join-Path $Workspace '.claude\plugins'
 $claudeCacheTarget = Join-Path $Workspace '.claude\cache'
 $pluginItems = @('index.ts', 'package.json', 'README.md', 'docs', 'pstack.lock.json', 'NOTICE', 'NOTICE-port.md', 'LICENSE', 'LICENSE-cursor-team-kit', 'skills')
@@ -160,6 +161,15 @@ function Get-NormalPath {
     param([string] $Path)
 
     return [IO.Path]::GetFullPath($Path).TrimEnd('\').ToLowerInvariant()
+}
+
+# The folders directly under .opencode\plugins that no current layer's pluginTarget
+# names. A layer that was renamed or removed leaves its folder behind.
+function Get-StalePluginFolders {
+    param([string[]] $Wanted)
+
+    if (-not (Test-Path -LiteralPath $opencodePluginsTarget -PathType Container)) { return @() }
+    return @(Get-ChildItem -LiteralPath $opencodePluginsTarget -Directory -Force | Where-Object { $Wanted -notcontains $_.Name })
 }
 
 function Test-ClaudeJunction {
@@ -330,6 +340,11 @@ if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
     }
 }
 
+# The plugin folders the current layers name, and the ones the previous lock recorded
+# the installer creating. Stale folders are removed only when the lock recorded them.
+$wantedTargets = @($layers | Where-Object { $_.PSObject.Properties['pluginTarget'] } | ForEach-Object { $_.pluginTarget })
+$priorTargets = @($priorLayers.Values | ForEach-Object { Get-Field $_ 'pluginTarget' } | Where-Object { $_ })
+
 Write-Host "Workspace:      $Workspace"
 foreach ($layer in $layers) {
     Write-Host ("Layer:          {0} ({1}) at {2}" -f $layer.name, $layer.kind, $layer.root)
@@ -403,6 +418,9 @@ if (-not $Apply) {
             if ($wanted -notcontains $entry.Name) { Write-Host ("Drift:          {0}: stale" -f $entry.FullName) }
         }
     }
+    foreach ($entry in Get-StalePluginFolders -Wanted $wantedTargets) {
+        Write-Host ("Drift:          {0}: stale" -f $entry.FullName)
+    }
     Write-Host 'Audit only. No files or workspace configuration changed. Rerun with -Apply after reviewing.'
     return
 }
@@ -458,6 +476,21 @@ foreach ($layer in $layers) {
             Set-AgentModel -Path $destination -Model $model
             Write-Host "Installed agent profile $($_.Name) with model $model"
         }
+    }
+}
+
+# A stale plugin folder goes only when the previous lock recorded it as a layer target,
+# so the installer made it. Any other folder is reported and left in place.
+foreach ($entry in Get-StalePluginFolders -Wanted $wantedTargets) {
+    if ($priorTargets -contains $entry.Name) {
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            [IO.Directory]::Delete($entry.FullName, $false)
+        } else {
+            Remove-Item -LiteralPath $entry.FullName -Recurse -Force
+        }
+        Write-Host "Removed the stale plugin folder $($entry.FullName)"
+    } else {
+        Write-Host ("Drift:          {0}: stale, kept because the previous stack.lock.json does not record it" -f $entry.FullName)
     }
 }
 
@@ -528,12 +561,13 @@ $layerRecords = foreach ($layer in $layers) {
         $claude = [pscustomobject]@{ enabled = $false }
     }
     [pscustomobject]@{
-        name   = $layer.name
-        kind   = $layer.kind
-        path   = $layer.path
-        source = $layer.source
-        commit = $(if ($head) { $head.Trim() } else { $null })
-        claude = $claude
+        name         = $layer.name
+        kind         = $layer.kind
+        path         = $layer.path
+        pluginTarget = Get-Field $layer 'pluginTarget'
+        source       = $layer.source
+        commit       = $(if ($head) { $head.Trim() } else { $null })
+        claude       = $claude
     }
 }
 $stack = [pscustomobject]@{
