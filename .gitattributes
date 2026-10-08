@@ -4,6 +4,3 @@
 *.png binary
 *.jpg binary
 *.webp binary
-
-# Frozen legacy snapshot, kept only as the global-removal match target.
-opencode/** linguist-generated=true

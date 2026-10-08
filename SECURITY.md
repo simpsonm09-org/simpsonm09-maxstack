@@ -13,4 +13,4 @@ Report a suspected vulnerability privately through GitHub's security advisory fo
 
 ## Secrets
 
-No secret is committed to this repository or to the repositories it governs. Configuration references secrets by environment variable name, and the value comes from the secrets manager. See the `dev-setup-starter` repository for the secrets manager setup.
+No secret is committed to this repository or to the repositories it governs. Configuration references secrets by environment variable name, and the value comes from the secrets manager. See the [`simpsonm09-dev-setup`](https://github.com/simpsonm09-org/simpsonm09-dev-setup) repository for the secrets manager setup.

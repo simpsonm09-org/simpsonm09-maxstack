@@ -8,7 +8,7 @@ This repository does not own the plugin. [`simpsonm09-org/pstack-opencode-plugin
 - A layer may carry a `claude` block. `{ "plugin": "<name>" }` makes a local Claude plugin: the layer's `.claude-plugin/plugin.json` must exist, its `name` must match, and its `files` list must include `.claude-plugin`. The installer links `.claude/plugins/<name>` to the installed copy. `{ "plugin": "<name>", "git": { "url", "path", "commit", "tag" } }` makes a pinned Claude plugin: the installer copies the `path` folder of the repository at exactly `commit` into `.claude/plugins/<name>`.
 - `pstack-opencode.lock.json` pins the plugin repository and the exact commit to install.
 - `pstack-claude.lock.json` pins the pstack Claude plugin: the repository, the `path`, the `tag` it belongs to, the commit, and the upstream commit the OpenCode port pins.
-- `models.json` is the model policy. The installer writes `roles.primary` into the workspace config and the matching role into each agent profile.
+- The installer sets no model. It writes no `model` or `small_model` key into the workspace config, and it removes any `model:` line from each agent profile it copies. The user picks the model in the harness.
 - `workspace/opencode.jsonc` is the config base. Layer fragments supply the MCP servers and extra permissions.
 
 ## Assembly
@@ -17,9 +17,9 @@ This repository does not own the plugin. [`simpsonm09-org/pstack-opencode-plugin
 
 1. Checks that each layer checkout exists and that the plugin layer has an `index.ts`. It checks each `claude` block against the layer's manifest, and for a `git` block it fetches the pinned commit into `.claude/cache` and checks it out. A pin the repository cannot supply stops the run here, before anything is written.
 2. Warns when the plugin checkout HEAD differs from the pinned commit.
-3. Merges every config layer's `opencode.fragment.jsonc` into `D:\dev\simpsonm09\opencode.jsonc` and sets the primary model.
+3. Merges every config layer's `opencode.fragment.jsonc` into `D:\dev\simpsonm09\opencode.jsonc`.
 4. Copies each plugin layer's `layer.json` `files` list, or the default item list, into `.opencode/plugins/<pluginTarget>`, then runs `npm install` there. A layer without a `claude` block gets no `.claude-plugin` directory, and any left from an earlier apply is removed. A folder under `.opencode/plugins` that no current `pluginTarget` names is stale: it is removed only if the previous `stack.lock.json` recorded it as a layer's `pluginTarget`, and otherwise it is reported and kept.
-5. Copies the plugin layer's `agents/*.md` into `.opencode/agents` and injects the model line from `models.json`.
+5. Copies the plugin layer's `agents/*.md` into `.opencode/agents` and removes any `model:` line from each copy.
 6. Builds `.claude/plugins/`. A local layer becomes a junction to its installed copy, so both harnesses share it. A `git` layer becomes a copy of the pinned folder. Each child is checked for the manifest name it must carry. A child that no longer has a claude block is removed: a junction is removed as a link, and its target is never touched.
 7. Writes `stack.lock.json` at the workspace root.
 
@@ -27,7 +27,7 @@ Audit mode computes the config and each child, and reports each as `missing`, `d
 
 ## The recorded lock
 
-`stack.lock.json` is the install-provenance record. `Install-Workspace.ps1` writes it at the workspace root, not in this repository. It records `generatedAt`, `primaryModel`, the SHA-256 of the written workspace config, and one entry per layer with its `name`, `kind`, `path`, `pluginTarget` (null for a layer with no plugin copy), `source`, and installed `commit`. The `pluginTarget` is what the next apply uses to recognise a stale `.opencode/plugins` folder. A lock written before this field existed records no targets, so no stale folder is removed until the next apply writes them. Each layer also has a `claude` record:
+`stack.lock.json` is the install-provenance record. `Install-Workspace.ps1` writes it at the workspace root, not in this repository. It records `generatedAt`, the SHA-256 of the written workspace config, and one entry per layer with its `name`, `kind`, `path`, `pluginTarget` (null for a layer with no plugin copy), `source`, and installed `commit`. The `pluginTarget` is what the next apply uses to recognise a stale `.opencode/plugins` folder. A lock written before this field existed records no targets, so no stale folder is removed until the next apply writes them. Each layer also has a `claude` record:
 
 - a local plugin: `enabled`, `plugin`, `kind: "junction"`, `child` (`.claude/plugins/<name>`), `target` (`.opencode/plugins/<pluginTarget>`), and `treeSha256`;
 - a git plugin: `enabled`, `plugin`, `kind: "git"`, `child`, `repository`, `path`, `commit`, and `treeSha256`;
@@ -41,7 +41,7 @@ The generated files live at the workspace root, which is not a git repository, s
 
 ## Validation
 
-`.github/workflows/ci.yml` runs `scripts/verify-manifests.py` in the `validate` job. The script checks that `layers.json`, `pstack-opencode.lock.json`, `pstack-claude.lock.json`, `models.json`, and `workspace/opencode.jsonc` agree with each other and with the installer, without cloning the private plugin repository. The plugin repository validates its own generated `skills/` tree in its `verify-pin.yml` workflow.
+`.github/workflows/ci.yml` runs `scripts/verify-manifests.py` in the `validate` job. The script checks that `layers.json`, `pstack-opencode.lock.json`, `pstack-claude.lock.json`, and `workspace/opencode.jsonc` agree with each other and with the installer, without cloning the private plugin repository. The plugin repository validates its own generated `skills/` tree in its `verify-pin.yml` workflow.
 
 The Claude pin is checked offline. The `pstack-claude.lock.json` repository, path, tag, and commit must match the `git` block in `layers.json`, and its `commit` must equal its `opencodeUpstream`, which is the upstream commit the OpenCode port pins. `python scripts/verify-manifests.py --online` also runs `git ls-remote` to confirm the tag still resolves to that commit, and `gh api` to read the port's `pstack.lock.json` at the commit `pstack-opencode.lock.json` names. Run it from a machine with `gh` signed in. CI does not run `--online`.
 

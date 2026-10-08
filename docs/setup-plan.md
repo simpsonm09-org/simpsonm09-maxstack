@@ -1,6 +1,6 @@
-# OpenCode and OpenChamber PStack setup (past plan)
+# OpenCode PStack setup (past plan)
 
-Historical plan for the initial workspace setup, written when OpenChamber hosted the sessions. OpenChamber is uninstalled and T3 Code hosts the sessions now. Superseded by `repo-standard` and the framework rework plan.
+Historical plan for the initial workspace setup, written when a desktop app hosted the sessions. That app is uninstalled and T3 Code hosts the sessions now. Superseded by `repo-standard` and the framework rework plan.
 
 ## Completion checks
 

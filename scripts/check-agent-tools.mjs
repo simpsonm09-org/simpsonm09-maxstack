@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Check that the agent tool set in dev-setup-starter covers every service
+// Check that the agent tool set in simpsonm09-dev-setup covers every service
 // owner the org integration registry names.
 //
 // This is a workspace-local check, not a CI gate. It reads two sibling
-// checkouts (dev-setup-starter and simpsonm09-org-ai-plugin) that CI does
+// checkouts (simpsonm09-dev-setup and simpsonm09-org-ai-plugin) that CI does
 // not have, so it runs from the workspace root and only when those exist.
 //
 //   node scripts/check-agent-tools.mjs

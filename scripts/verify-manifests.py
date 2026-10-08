@@ -2,7 +2,7 @@
 """Check that the workspace manifests the installer consumes agree.
 
 `scripts/Install-Workspace.ps1` reads `layers.json`,
-`pstack-opencode.lock.json`, `pstack-claude.lock.json`, `models.json`, and
+`pstack-opencode.lock.json`, `pstack-claude.lock.json`, and
 `workspace/opencode.jsonc`. A drift between them installs a broken bundle, so
 this fails CI first. By default it reads only the manifests and never clones the
 private plugin repository. With `--online` it also asks GitHub whether the Claude
@@ -24,9 +24,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 GIT_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+\.git$")
 GITHUB_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-AGENT_ROLES = ("primary", "worker", "reviewer", "comment-sicko")
 LAYER_KINDS = ("plugin", "config")
 CLAUDE_LOCK = "pstack-claude.lock.json"
+MODEL_KEYS = ("model", "small_model")
 
 
 def is_nonempty_str(value: object) -> bool:
@@ -330,32 +330,13 @@ def check_online(
         )
 
 
-def check_models(models: dict, failures: list[str]) -> str | None:
-    default = models.get("default")
-    if not is_nonempty_str(default):
-        failures.append("models.json: default must be a non-empty string")
-    roles = models.get("roles")
-    if not isinstance(roles, dict):
-        failures.append("models.json: roles must be an object")
-        return default if is_nonempty_str(default) else None
-    for role in AGENT_ROLES:
-        if not is_nonempty_str(roles.get(role)):
-            failures.append(f"models.json: roles.{role} must be a non-empty string")
-    if is_nonempty_str(roles.get("primary")):
-        return roles["primary"]
-    return default if is_nonempty_str(default) else None
-
-
-def check_workspace_config(
-    config: dict, expected_model: str | None, failures: list[str]
-) -> None:
-    if not is_nonempty_str(config.get("model")):
-        failures.append("workspace/opencode.jsonc: model must be a non-empty string")
-    elif expected_model and config["model"] != expected_model:
-        failures.append(
-            "workspace/opencode.jsonc: model does not match the models.json primary "
-            f"({config['model']} != {expected_model})"
-        )
+def check_workspace_config(config: dict, failures: list[str]) -> None:
+    for key in MODEL_KEYS:
+        if key in config:
+            failures.append(
+                f"workspace/opencode.jsonc must not set {key}: maxstack sets no model, "
+                "the user picks it in the harness"
+            )
     if not is_nonempty_str(config.get("default_agent")):
         failures.append(
             "workspace/opencode.jsonc: default_agent must be a non-empty string"
@@ -407,7 +388,6 @@ def main() -> int:
         if (REPO_ROOT / CLAUDE_LOCK).exists()
         else None
     )
-    models = load_json(REPO_ROOT / "models.json", failures)
     config = load_jsonc(REPO_ROOT / "workspace" / "opencode.jsonc", failures)
 
     plugin = check_layers(layers, failures) if layers else None
@@ -415,9 +395,8 @@ def main() -> int:
         check_lock(lock, plugin, failures)
     pins = check_claude_layers(layers, failures) if layers else []
     check_claude_lock(claude_lock, pins, failures)
-    primary = check_models(models, failures) if models else None
     if config:
-        check_workspace_config(config, primary, failures)
+        check_workspace_config(config, failures)
     check_surface(failures)
     if args.online and claude_lock and pins:
         check_online(claude_lock, lock, failures)

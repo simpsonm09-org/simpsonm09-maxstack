@@ -14,7 +14,6 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $layersPath = if ($LayersFile) { $LayersFile } else { Join-Path $repoRoot 'layers.json' }
 $baseConfigFile = Join-Path $repoRoot 'workspace\opencode.jsonc'
-$modelsFile = Join-Path $repoRoot 'models.json'
 $lockFile = Join-Path $repoRoot 'pstack-opencode.lock.json'
 $configTarget = Join-Path $Workspace 'opencode.jsonc'
 $stackTarget = Join-Path $Workspace 'stack.lock.json'
@@ -23,31 +22,17 @@ $opencodePluginsTarget = Join-Path $Workspace '.opencode\plugins'
 $claudePluginsTarget = Join-Path $Workspace '.claude\plugins'
 $claudeCacheTarget = Join-Path $Workspace '.claude\cache'
 $pluginItems = @('index.ts', 'package.json', 'README.md', 'docs', 'pstack.lock.json', 'NOTICE', 'NOTICE-port.md', 'LICENSE', 'LICENSE-cursor-team-kit', 'skills')
-$roleByFile = @{
-    'pstack-agent.md'         = 'worker'
-    'pstack-reviewer.md'      = 'reviewer'
-    'pstack-comment-sicko.md' = 'comment-sicko'
-}
 
-function Get-RoleModel {
-    param($Models, [string] $Role)
-
-    if ($Role) {
-        $roles = $Models.PSObject.Properties['roles']
-        if ($roles) {
-            $property = $roles.Value.PSObject.Properties[$Role]
-            if ($property) { return $property.Value }
-        }
-    }
-    return $Models.PSObject.Properties['default'].Value
-}
-
-function Set-AgentModel {
-    param([string] $Path, [string] $Model)
+# maxstack sets no model. An installed profile keeps no model line, so the session's
+# model applies; the copy from the plugin repository is stripped if it carries one.
+function Remove-AgentModel {
+    param([string] $Path)
 
     $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
-    $text = [regex]::Replace($text, '(?m)^model:.*\n', '')
-    if ($Model) { $text = ([regex]'^---\n').Replace($text, "---`nmodel: $Model`n", 1) }
+    $frontmatter = [regex]::Match($text, '(?s)\A---\n.*?\n---\n')
+    if (-not $frontmatter.Success) { return }
+    $stripped = [regex]::Replace($frontmatter.Value, '(?m)^model:.*\n', '')
+    $text = $stripped + $text.Substring($frontmatter.Length)
     [IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding($false)))
 }
 
@@ -276,9 +261,7 @@ if ([string]::IsNullOrWhiteSpace($workspaceName)) {
     throw "Could not derive a workspace name from: $Workspace"
 }
 
-$models = Get-Content -LiteralPath $modelsFile -Raw | ConvertFrom-Json
 $lock = Get-Content -LiteralPath $lockFile -Raw | ConvertFrom-Json
-$primary = Get-RoleModel $models 'primary'
 $layerManifest = Get-Content -LiteralPath $layersPath -Raw | ConvertFrom-Json
 $layers = @($layerManifest.layers)
 
@@ -350,7 +333,6 @@ foreach ($layer in $layers) {
     Write-Host ("Layer:          {0} ({1}) at {2}" -f $layer.name, $layer.kind, $layer.root)
 }
 Write-Host "Config target:  $configTarget"
-Write-Host "Primary model:  $primary"
 Write-Host "Claude plugins: $($claudeRecords.Count) declared in $claudePluginsTarget"
 
 $base = Get-Content -LiteralPath $baseConfigFile -Raw | ConvertFrom-Json
@@ -391,7 +373,6 @@ foreach ($name in $servers.Keys) {
 if ($extraPermissions.Count -gt 0) {
     $base.permissions = @($base.permissions) + $extraPermissions
 }
-$base.model = $primary
 $document = ($base | ConvertTo-Json -Depth 100)
 
 # Git sources are synced before anything is written, so a bad pin stops the run
@@ -469,12 +450,10 @@ foreach ($layer in $layers) {
     if (Test-Path -LiteralPath $agentsSource -PathType Container) {
         New-Item -ItemType Directory -Path $agentsTarget -Force | Out-Null
         Get-ChildItem -LiteralPath $agentsSource -Filter '*.md' | ForEach-Object {
-            $role = if ($roleByFile.ContainsKey($_.Name)) { $roleByFile[$_.Name] } else { $null }
-            $model = Get-RoleModel $models $role
             $destination = Join-Path $agentsTarget $_.Name
             Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
-            Set-AgentModel -Path $destination -Model $model
-            Write-Host "Installed agent profile $($_.Name) with model $model"
+            Remove-AgentModel -Path $destination
+            Write-Host "Installed agent profile $($_.Name)"
         }
     }
 }
@@ -573,7 +552,6 @@ $layerRecords = foreach ($layer in $layers) {
 $stack = [pscustomobject]@{
     generatedAt  = (Get-Date).ToUniversalTime().ToString('o')
     workspace    = $workspaceName
-    primaryModel = $primary
     configSha256 = Get-TextSha256 $document
     layers       = $layerRecords
 }
