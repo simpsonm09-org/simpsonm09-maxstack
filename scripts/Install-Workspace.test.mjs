@@ -34,8 +34,8 @@ const LAYERS = [
 // The two local layers declare a claude block, so each needs a manifest whose
 // name matches. pstack declares a git pin and needs no local manifest.
 const LOCAL_CLAUDE_PLUGINS = {
-  'projects/repos/simpsonm09-org-ai-plugin': 'simpsonm09-org',
-  'projects/repos/simpsonm09-personal-ai-plugin': 'simpsonm09-personal',
+  'projects/repos/simpsonm09-org-ai-plugin': 'simpsonm09-org-ai-plugin',
+  'projects/repos/simpsonm09-personal-ai-plugin': 'simpsonm09-personal-ai-plugin',
 };
 
 let layersCounter = 0;
@@ -202,8 +202,8 @@ withWorkspace('local layers are junctions and pstack is a pinned sparse copy', (
 
   const plugins = join(ctx.workspace, '.claude', 'plugins');
   for (const [plugin, target] of [
-    ['simpsonm09-org', '.opencode/plugins/simpsonm09-org-opencode'],
-    ['simpsonm09-personal', '.opencode/plugins/simpsonm09-personal-opencode'],
+    ['simpsonm09-org-ai-plugin', '.opencode/plugins/simpsonm09-org-ai-plugin'],
+    ['simpsonm09-personal-ai-plugin', '.opencode/plugins/simpsonm09-personal-ai-plugin'],
   ]) {
     const child = join(plugins, plugin);
     assert.ok(isLink(child), `${plugin} is a link`);
@@ -223,11 +223,11 @@ withWorkspace('local layers are junctions and pstack is a pinned sparse copy', (
 
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   const byName = Object.fromEntries(lock.layers.map((record) => [record.name, record]));
-  assert.equal(byName['simpsonm09-org-opencode'].claude.kind, 'junction');
-  assert.equal(byName['simpsonm09-org-opencode'].claude.plugin, 'simpsonm09-org');
-  assert.equal(byName['simpsonm09-org-opencode'].claude.child, '.claude/plugins/simpsonm09-org');
-  assert.equal(byName['simpsonm09-org-opencode'].claude.target, '.opencode/plugins/simpsonm09-org-opencode');
-  assert.match(byName['simpsonm09-org-opencode'].claude.treeSha256, /^[0-9A-F]{64}$/);
+  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.kind, 'junction');
+  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.plugin, 'simpsonm09-org-ai-plugin');
+  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.child, '.claude/plugins/simpsonm09-org-ai-plugin');
+  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.target, '.opencode/plugins/simpsonm09-org-ai-plugin');
+  assert.match(byName['simpsonm09-org-ai-plugin'].claude.treeSha256, /^[0-9A-F]{64}$/);
   assert.equal(byName['pstack-opencode-plugin'].claude.kind, 'git');
   assert.equal(byName['pstack-opencode-plugin'].claude.commit, ctx.fixture.commit, 'the pstack record is the pinned commit');
   assert.equal(byName['pstack-opencode-plugin'].claude.repository, ctx.fixture.url);
@@ -267,7 +267,7 @@ withWorkspace('a second apply is idempotent: the same links and tree hashes', (c
   const second = readJson(join(ctx.workspace, 'stack.lock.json'));
   const trees = (lock) => lock.layers.map((record) => [record.name, record.claude.treeSha256 ?? null]);
   assert.deepEqual(trees(second), trees(first));
-  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org')));
+  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin')));
 
   const audit = runInstaller(shell, ctx, [], { apply: false });
   assert.equal(audit.status, 0, audit.stderr);
@@ -279,7 +279,7 @@ withWorkspace('a second apply is idempotent: the same links and tree hashes', (c
 withWorkspace('audit reports Claude drift and writes nothing', (ctx) => {
   const before = runInstaller(shell, ctx, [], { apply: false });
   assert.equal(before.status, 0, before.stderr);
-  for (const child of ['simpsonm09-org', 'simpsonm09-personal', 'pstack']) {
+  for (const child of ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin', 'pstack']) {
     assert.match(before.stdout, new RegExp(`plugins\\\\${child}: missing`), `missing drift for ${child}`);
   }
   assert.ok(!existsSync(join(ctx.workspace, '.claude', 'plugins')), 'audit created the plugin folder');
@@ -306,20 +306,20 @@ withWorkspace('a claude plugin name that differs from the manifest fails', (ctx)
   writeLayerFile(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), '.claude-plugin/plugin.json', JSON.stringify({ name: 'renamed' }));
   const run = runInstaller(shell, ctx);
   assert.notEqual(run.status, 0);
-  assert.match(plainOutput(run), /claude\.plugin is 'simpsonm09-org' but its \.claude-plugin\\plugin\.json names 'renamed'/);
+  assert.match(plainOutput(run), /claude\.plugin is 'simpsonm09-org-ai-plugin' but its \.claude-plugin\\plugin\.json names 'renamed'/);
 }, {});
 
 withWorkspace('removing a claude block removes only its link and keeps the installed copy', (ctx) => {
   assert.equal(runInstaller(shell, ctx).status, 0);
-  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org');
-  const target = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-opencode');
+  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
+  const target = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin');
   assert.ok(isLink(child));
   // Not an item in the layer's files list, so no apply copies over it.
   writeFileSync(join(target, 'keep-me.txt'), 'the installed copy must survive\n');
 
   const layers = writeLayers(ctx, (manifest) => {
     for (const layer of manifest.layers) {
-      if (layer.name === 'simpsonm09-org-opencode') delete layer.claude;
+      if (layer.name === 'simpsonm09-org-ai-plugin') delete layer.claude;
     }
   });
   const run = runInstaller(shell, ctx, [], { layersFile: layers });
@@ -328,18 +328,18 @@ withWorkspace('removing a claude block removes only its link and keeps the insta
   assert.equal(lstatSync(child, { throwIfNoEntry: false }), undefined, 'the link is gone');
   assert.ok(existsSync(join(target, 'keep-me.txt')), 'the target lost a file');
   assert.ok(existsSync(join(target, 'index.ts')), 'the target lost its entrypoint');
-  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal')), 'the personal link was disturbed');
+  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal-ai-plugin')), 'the personal link was disturbed');
 
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
-  assert.equal(lock.layers.find((record) => record.name === 'simpsonm09-org-opencode').claude.enabled, false);
+  assert.equal(lock.layers.find((record) => record.name === 'simpsonm09-org-ai-plugin').claude.enabled, false);
 }, {});
 
 withWorkspace('LayerSource overrides a layer checkout', (ctx) => {
   const alternate = join(ctx.base, 'alternate-org');
-  writeLayerStub(alternate, { claudePlugin: 'simpsonm09-org', extra: { 'from-override.txt': 'override\n' } });
-  const run = runInstaller(shell, ctx, ['-LayerSource', `simpsonm09-org-opencode=${alternate}`]);
+  writeLayerStub(alternate, { claudePlugin: 'simpsonm09-org-ai-plugin', extra: { 'from-override.txt': 'override\n' } });
+  const run = runInstaller(shell, ctx, ['-LayerSource', `simpsonm09-org-ai-plugin=${alternate}`]);
   assert.equal(run.status, 0, `installer exited ${run.status}\n${run.stdout}\n${run.stderr}`);
-  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-opencode', 'from-override.txt')));
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'from-override.txt')));
 }, {});
 
 withWorkspace('the installer has no OpenChamber live-server check and no skip switch', (ctx) => {
@@ -355,8 +355,8 @@ withWorkspace('audit with the real layers.json needs no network and writes no Cl
   const args = [
     '-LayerSource',
     `pstack-opencode-plugin=${join(ctx.workspace, 'projects/repos/pstack-opencode-plugin')},` +
-      `simpsonm09-org-opencode=${join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin')},` +
-      `simpsonm09-personal-opencode=${join(ctx.workspace, 'projects/repos/simpsonm09-personal-ai-plugin')}`,
+      `simpsonm09-org-ai-plugin=${join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin')},` +
+      `simpsonm09-personal-ai-plugin=${join(ctx.workspace, 'projects/repos/simpsonm09-personal-ai-plugin')}`,
   ];
   const run = runInstaller(shell, ctx, args, { apply: false, layersFile: null });
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);

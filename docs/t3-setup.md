@@ -21,8 +21,8 @@ The alternative is an instance environment entry, `CLAUDE_CODE_PLUGIN_DIRS`, wit
 | Plugin | Folder | Source | Skills appear as |
 | --- | --- | --- | --- |
 | `pstack` | `.claude\plugins\pstack` | a copy of `plugins/pstack` at commit `8d3aa57` of `michael-denyer/pstack-claude` | `pstack:poteto-mode`, and the other `pstack:*` skills |
-| `simpsonm09-org` | `.claude\plugins\simpsonm09-org` | a junction to `.opencode\plugins\simpsonm09-org-opencode` | `simpsonm09-org:repo-standard`, and the other `simpsonm09-org:*` skills |
-| `simpsonm09-personal` | `.claude\plugins\simpsonm09-personal` | a junction to `.opencode\plugins\simpsonm09-personal-opencode` | `simpsonm09-personal:dev-tools`, and the other `simpsonm09-personal:*` skills |
+| `simpsonm09-org-ai-plugin` | `.claude\plugins\simpsonm09-org-ai-plugin` | a junction to `.opencode\plugins\simpsonm09-org-ai-plugin` | `simpsonm09-org-ai-plugin:repo-standard`, and the other `simpsonm09-org-ai-plugin:*` skills |
+| `simpsonm09-personal-ai-plugin` | `.claude\plugins\simpsonm09-personal-ai-plugin` | a junction to `.opencode\plugins\simpsonm09-personal-ai-plugin` | `simpsonm09-personal-ai-plugin:dev-tools`, and the other `simpsonm09-personal-ai-plugin:*` skills |
 
 The local folders are junctions to the installed OpenCode copies, so there is still one installed copy for both harnesses. One `Install-Workspace.ps1 -Apply` updates both. A junction needs no administrator rights. Each plugin's hooks run only in sessions that load it, and they resolve their files through the junction.
 
