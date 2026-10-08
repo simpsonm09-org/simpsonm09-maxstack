@@ -181,8 +181,12 @@ def main() -> int:
     check_claude(workspace, failures)
 
     global_skills = home / ".agents" / "skills"
-    if global_skills.is_dir() and any(global_skills.iterdir()):
-        failures.append(f"global skills are still present under {global_skills}")
+    # Other tools own this folder too (the Cursor CLI installs its skills here), so
+    # only a PStack skill counts as a leftover global install.
+    if (global_skills / "poteto-mode").exists() or any(
+        global_skills.glob("principle-*")
+    ):
+        failures.append(f"global PStack skills are still present under {global_skills}")
 
     if (home / ".config" / "opencode" / "AGENTS.md").exists():
         failures.append("global AGENTS.md is still present")
