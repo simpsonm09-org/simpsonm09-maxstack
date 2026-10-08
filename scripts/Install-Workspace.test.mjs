@@ -200,7 +200,7 @@ withWorkspace('apply writes no model, and removes one from the config and the in
   // A profile in the plugin repository carries a model line, and the workspace still
   // holds the config and profile an older policy wrote. Apply must leave no model in
   // either, and keep the rest of each file.
-  writeLayerFile(join(ctx.workspace, 'projects/repos/pstack-opencode-plugin'), 'agents/pstack-agent.md', '---\ndescription: worker\nmodel: opencode-go/deepseek-v4.1-flash\n---\nbody\n');
+  writeLayerFile(join(ctx.workspace, 'projects/repos/pstack-opencode-plugin'), 'agents/pstack-agent.md', '---\ndescription: worker\nmodel: opencode-go/deepseek-v4.1-flash\n---\nbody\nmodel: a body line\n');
   writeLayerFile(ctx.workspace, 'opencode.jsonc', '{\n  "model": "opencode-go/deepseek-v4.1-flash",\n  "small_model": "opencode-go/deepseek-v4.1-flash"\n}\n');
   writeLayerFile(ctx.workspace, '.opencode/agents/pstack-agent.md', '---\nmodel: opencode-go/deepseek-v4.1-flash\n---\nold\n');
 
@@ -214,7 +214,8 @@ withWorkspace('apply writes no model, and removes one from the config and the in
   assert.equal(config.default_agent, 'build', 'the rest of the base config is kept');
 
   const profile = readFileSync(join(ctx.workspace, '.opencode', 'agents', 'pstack-agent.md'), 'utf8');
-  assert.doesNotMatch(profile, /^model:/m, 'the installed profile keeps a model line');
+  assert.doesNotMatch(profile.split('\n---\n')[0], /^model:/m, 'the installed profile keeps a model line');
+  assert.match(profile, /^model: a body line$/m, 'a body line that starts with model: was stripped');
   assert.match(profile, /^description: worker$/m, 'the installed profile lost its other frontmatter');
 
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));

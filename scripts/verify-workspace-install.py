@@ -36,6 +36,12 @@ def is_link(path: pathlib.Path) -> bool:
     return path.is_symlink()
 
 
+def frontmatter(text: str) -> str:
+    """The frontmatter block of a profile, or nothing when it has none."""
+    match = re.match(r"---\r?\n.*?\r?\n---\r?\n", text, re.DOTALL)
+    return match.group(0) if match else ""
+
+
 def tree_sha256(root: pathlib.Path) -> str:
     """Mirror Get-TreeSha256 in Install-Workspace.ps1: one line per file, relative path and
     SHA-256, sorted, leaving out a top-level node_modules; then the SHA-256 of that text."""
@@ -165,7 +171,9 @@ def main() -> int:
         profile = agents / name
         if not profile.is_file():
             failures.append(f"missing agent profile: {profile}")
-        elif re.search(r"(?m)^model:", profile.read_text(encoding="utf-8")):
+        elif re.search(
+            r"(?m)^model:", frontmatter(profile.read_text(encoding="utf-8"))
+        ):
             failures.append(
                 f"agent profile {profile} sets a model; Install-Workspace.ps1 -Apply removes it"
             )

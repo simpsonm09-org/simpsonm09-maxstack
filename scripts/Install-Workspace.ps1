@@ -29,7 +29,10 @@ function Remove-AgentModel {
     param([string] $Path)
 
     $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
-    $text = [regex]::Replace($text, '(?m)^model:.*\n', '')
+    $frontmatter = [regex]::Match($text, '(?s)\A---\n.*?\n---\n')
+    if (-not $frontmatter.Success) { return }
+    $stripped = [regex]::Replace($frontmatter.Value, '(?m)^model:.*\n', '')
+    $text = $stripped + $text.Substring($frontmatter.Length)
     [IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding($false)))
 }
 
