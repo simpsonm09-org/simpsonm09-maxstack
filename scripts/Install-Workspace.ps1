@@ -559,4 +559,4 @@ $stack = [pscustomobject]@{
 Write-Host "Wrote $stackTarget"
 
 Write-Host 'Workspace bundle installed from the layer manifest.'
-Write-Host 'Start a new T3 session to load it. OpenCode and Claude Code read the plugins when a session starts.'
+Write-Host 'Restart the running OpenCode server, then start a new T3 session to load it: T3 can reuse that server across sessions. Claude Code reads plugins when a session starts.'

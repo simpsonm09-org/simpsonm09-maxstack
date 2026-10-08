@@ -9,7 +9,7 @@ param(
 # Checks what a fresh OpenCode process resolves from the workspace: the workspace
 # config and .opencode directory, and the three PStack agent profiles. It starts no
 # server and makes no model call, so it does not depend on a running server; T3 starts
-# its own `opencode serve` per session. Plugin loading needs a model call, so
+# can reuse a running server across sessions. Plugin loading needs a model call, so
 # scripts/verify-workspace-skill.ps1 covers it.
 #
 # maxstack sets no model. Each profile must resolve without one, so the session's
