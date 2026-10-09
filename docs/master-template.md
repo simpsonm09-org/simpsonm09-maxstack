@@ -50,7 +50,7 @@ Three behaviors constrain the design:
 
 ## Installer lifecycle
 
-The installer today installs all four runtimes on every apply, has no way to remove what it wrote, and declares itself Windows-only. The target is one entry point with these commands, the same on Windows and macOS:
+The installer selects runtimes and layers, records what it wrote, and removes it with `-Remove` and `-Uninstall`. Both are dry runs until `-Apply`, and [install.md](install.md#removing-and-uninstalling) states their rules. It still declares itself Windows-only, and `update` is not built. The target is one entry point with these commands, the same on Windows and macOS:
 
 | Command | Effect |
 | --- | --- |
