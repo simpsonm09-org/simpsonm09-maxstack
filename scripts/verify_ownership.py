@@ -186,6 +186,16 @@ def check_selection(lock: dict, failures: list[str]) -> None:
                 failures.append(
                     f"stack.lock.json records {runtime} enabled for layer '{layer.get('name')}', which the selection does not select"
                 )
+    for runtime in ("copilot", "pi"):
+        block = lock.get(runtime)
+        if (
+            isinstance(block, dict)
+            and block.get("enabled") is True
+            and runtime not in runtimes
+        ):
+            failures.append(
+                f"stack.lock.json records {runtime} enabled, which the selection does not select"
+            )
     for index, record in enumerate(lock.get("owned", []) or []):
         path = record.get("path") if isinstance(record, dict) else None
         runtime = owned_runtime(path) if isinstance(path, str) else None

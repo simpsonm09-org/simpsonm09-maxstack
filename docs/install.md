@@ -36,11 +36,15 @@ The selection is recorded in `stack.lock.json`, with each list sorted:
 
 The rules:
 
+- A plain `-Apply`, with no flags, reuses the recorded selection. It does not select a layer or runtime that `layers.json` gained after the selection was recorded.
 - A flag adds its names to the recorded selection, and never removes one. Naming a runtime or layer that is already selected prints `Already selected ...` and changes nothing. Removing one is the future `remove` command.
+- `all` expands to every runtime or layer that `layers.json` names at the time of the run. The lock then records the expanded names, not the word `all`, so a layer added later is not selected until a flag names it.
 - An unnamed dimension keeps its recorded value. A new workspace with no flags selects every runtime and every layer, so a plain `-Apply` installs what it did before. A new workspace with `-Runtimes` selects exactly the runtimes named, and every layer unless `-Layers` names some.
+- A layer or runtime that `layers.json` names but the selection leaves out is reported on every apply, audit, and status, with the flag that adds it, for example `-Layers <name>`. `-Status` also lists it as `not selected`. It is not installed until a flag names it.
+- A recorded name that `layers.json` no longer names, such as a layer removed from it, is dropped from the selection with a warning. The next apply removes the folders that layer installed, the same way it removes a layer that stopped installing a runtime.
 - A lock with no `selection` predates the field. It reads as all, and the next apply writes the field.
 - `copilot` and `pi` need `claude`. Their wrapper or settings name the Claude plugin folders, so selecting either without `claude`, by name or in the recorded selection, is an error.
-- An unknown name is an error that lists the valid names, and nothing is written.
+- An unknown name on the command line is an error that lists the valid names, and nothing is written.
 - A layer installs only the selected runtimes it declares in `layers.json`. A selected layer that declares none of them is reported and installs nothing.
 
 What each runtime writes:
@@ -51,6 +55,10 @@ What each runtime writes:
 - `pi`: `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`.
 
 The pinned pstack cache under `.claude\cache` is the source every runtime copies from, so each layer that installs anything writes it, whichever runtime it serves. The lock records each runtime a layer does not install as `enabled: false`. For `copilot` and `pi` the reason is `not selected`.
+
+The lock is replaced whole. The installer writes the new text to `stack.lock.json.new` beside it and then replaces the lock, so an interrupted run cannot leave a partial lock. The lock it replaced is kept as `stack.lock.json.bak`.
+
+An empty, `null`, or truncated `stack.lock.json` stops every command before anything is written. The message says how to recover. Restore the lock from `stack.lock.json.bak` if that file reads, or repair it by hand. Deleting the lock is the last resort, and it has a cost: the selection resets to all runtimes and layers, and the `createdDirs` and `createdFiles` record is lost, so a later uninstall could not tell what the installer created. Keep `stack.lock.json.bak` either way.
 
 An unselected runtime's files are left alone. An apply does not write, remove, or report them as drift. `-Status` names any that exist as `not selected`, and `-Strict` does not count them. `-Status` takes no selection flags, because it reports the recorded selection, which it prints first.
 
@@ -139,7 +147,7 @@ pwsh -File scripts/Install-Workspace.ps1 -Status -Strict
 | `modified` | It differs from the recorded hash, target, or entry, usually because of a hand edit. |
 | `missing` | The record names it and the disk does not hold it. A Pi entry shows alone when it is missing from its list. |
 | `untracked` | A file in `.maxstack\bin` that no record names. |
-| `not selected` | A file of a runtime the selection leaves out. Apply leaves it alone, and `-Strict` does not count it. |
+| `not selected` | A file of a runtime the selection leaves out, or a layer or runtime that `layers.json` names and the selection leaves out, shown with the flag that adds it. Apply leaves files alone, and `-Strict` does not count these. |
 
 `-Status` prints the selection first, then judges only the selected runtimes. The summary counts `not selected` paths after the other states.
 

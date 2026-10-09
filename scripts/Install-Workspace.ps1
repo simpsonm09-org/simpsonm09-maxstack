@@ -475,18 +475,24 @@ function Assert-SelectionRuntimes {
     }
 }
 
-# Fails on a recorded list that is empty, repeats a name, or names a value outside Valid.
-function Assert-RecordedNames {
+# The recorded names that are still valid. A malformed or repeated name is refused. A name that
+# layers.json or the runtimes no longer name, such as a layer removed from layers.json, is dropped with
+# a warning, so the normal stale cleanup removes what it installed. If nothing recorded is still valid,
+# the list is all of them, as for a new lock.
+function Get-RecordedNames {
     param($Names, [string[]] $Valid, [string] $Kind)
 
     $list = @($Names)
     if ($list.Count -eq 0 -or @($list | Where-Object { -not (Test-NonEmptyString $_) }).Count -gt 0) {
         throw "stack.lock.json selection needs a list of $Kind names."
     }
-    foreach ($name in $list) {
-        if ($Valid -cnotcontains $name) { throw "stack.lock.json selection names an unknown $Kind '$name'. Valid names: $($Valid -join ', ')." }
-    }
     if (@($list | Select-Object -Unique).Count -ne $list.Count) { throw "stack.lock.json selection names a $Kind twice." }
+    foreach ($name in @($list | Where-Object { $Valid -cnotcontains $_ })) {
+        Write-Warning "The recorded selection names the $Kind '$name', which is no longer in layers.json. It is dropped from the selection, and the next apply removes what it installed."
+    }
+    $known = @($list | Where-Object { $Valid -ccontains $_ })
+    if ($known.Count -eq 0) { return @(Sort-Utf8 $Valid) }
+    return @(Sort-Utf8 $known)
 }
 
 # The selection a lock records. A lock with no selection predates it, and means every runtime and
@@ -497,17 +503,65 @@ function Read-RecordedSelection {
     if ($null -eq $Stack) { return $null }
     $recorded = Get-Field $Stack 'selection'
     if ($null -eq $recorded) { return @{ runtimes = (Sort-Utf8 $runtimeNames); layers = (Sort-Utf8 $LayerNames) } }
-    $runtimes = Get-Field $recorded 'runtimes'
-    $layers = Get-Field $recorded 'layers'
-    Assert-RecordedNames -Names $runtimes -Valid $runtimeNames -Kind 'runtime'
-    Assert-RecordedNames -Names $layers -Valid $LayerNames -Kind 'layer'
-    return @{ runtimes = (Sort-Utf8 @($runtimes)); layers = (Sort-Utf8 @($layers)) }
+    return @{
+        runtimes = (Get-RecordedNames -Names (Get-Field $recorded 'runtimes') -Valid $runtimeNames -Kind 'runtime')
+        layers   = (Get-RecordedNames -Names (Get-Field $recorded 'layers') -Valid $LayerNames -Kind 'layer')
+    }
 }
 
 function Format-Selection {
     param([string[]] $Runtimes, [string[]] $Layers)
 
     return "Selection: runtimes $($Runtimes -join ', '); layers $($Layers -join ', ')"
+}
+
+# The lock an earlier apply wrote. A lock that is empty, null, or truncated is refused with what to do
+# and what deleting it would cost, so apply, audit, and status all say the same thing.
+function Read-PriorLock {
+    $text = Get-Content -LiteralPath $stackTarget -Raw
+    $parsed = $null
+    if (-not [string]::IsNullOrWhiteSpace($text)) {
+        try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $null }
+    }
+    if ($parsed -is [pscustomobject]) { return $parsed }
+    throw ("$stackTarget is empty, null, or truncated, so its selection and created-paths record cannot be read. " +
+        "Restore it from $stackTarget.bak if that file exists and reads, or repair it by hand. " +
+        "Deleting $stackTarget instead resets the selection to all runtimes and layers and loses the createdDirs and createdFiles record. " +
+        "Keep $stackTarget.bak either way: it holds the lock the last apply replaced.")
+}
+
+# The lock is replaced whole. Its text goes to a temporary file beside it, which then replaces the lock, so
+# an interrupted write leaves the previous lock as it was. The replaced lock is kept as stack.lock.json.bak.
+function Write-LockAtomically {
+    param([string] $Text)
+
+    $temp = "$stackTarget.new"
+    [IO.File]::WriteAllText($temp, $Text, (New-Object System.Text.UTF8Encoding($false)))
+    if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
+        [IO.File]::Replace($temp, $stackTarget, "$stackTarget.bak")
+    } else {
+        [IO.File]::Move($temp, $stackTarget)
+    }
+}
+
+# The layers and runtimes layers.json names that the selection leaves out. Each note names the flag that adds
+# it, so an apply, an audit, and a status all say that a new layer or runtime is not installed yet.
+function Get-UnselectedNotes {
+    param([object[]] $AllLayers, [string[]] $SelectedLayers, [string[]] $SelectedRuntimes)
+
+    $notes = [System.Collections.Generic.List[pscustomobject]]::new()
+    foreach ($layer in $AllLayers) {
+        if ($SelectedLayers -notcontains $layer.name) {
+            $notes.Add([pscustomobject]@{ kind = 'layer'; name = $layer.name; flag = '-Layers' })
+        }
+    }
+    $declared = @($AllLayers | ForEach-Object { $_.declared.Keys } | Select-Object -Unique)
+    foreach ($runtime in $runtimeNames) {
+        if (($declared -contains $runtime) -and ($SelectedRuntimes -notcontains $runtime)) {
+            $notes.Add([pscustomobject]@{ kind = 'runtime'; name = $runtime; flag = '-Runtimes' })
+        }
+    }
+    return $notes.ToArray()
 }
 
 # The runtime an owned path belongs to. The claude cache is the source every runtime copies from, so
@@ -1385,11 +1439,7 @@ $priorOwned = $null
 $priorCreatedDirs = @()
 $priorCreatedFiles = @()
 if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
-    try {
-        $priorStack = Get-Content -LiteralPath $stackTarget -Raw | ConvertFrom-Json
-    } catch {
-        throw "Could not read the previous $stackTarget, so its selection is unknown. Fix or remove that file, then run again."
-    }
+    $priorStack = Read-PriorLock
     foreach ($priorLayer in @($priorStack.layers)) {
         $priorLayers[$priorLayer.name] = $priorLayer
     }
@@ -1411,6 +1461,11 @@ $namedLayers = if ($layersNamed) { Get-NamedValues -Values $RequestedLayers -Val
 $selectedRuntimes = @(Merge-Selected -Recorded $recordedRuntimes -All $runtimeNames -Named $namedRuntimes -HasNames $runtimesNamed -Label 'runtimes')
 $selectedLayers = @(Merge-Selected -Recorded $recordedLayers -All $layerNames -Named $namedLayers -HasNames $layersNamed -Label 'layers')
 Assert-SelectionRuntimes -Runtimes $selectedRuntimes
+# A layer or runtime that layers.json names but the selection leaves out is said so, on every run.
+$unselectedNotes = @(Get-UnselectedNotes -AllLayers $layers -SelectedLayers $selectedLayers -SelectedRuntimes $selectedRuntimes)
+foreach ($note in $unselectedNotes) {
+    Write-Warning "$($note.kind) '$($note.name)' is in layers.json but not selected, so this run does not install it. Add it with $($note.flag) $($note.name)."
+}
 $copilotSelected = $selectedRuntimes -contains 'copilot'
 $piSelected = $selectedRuntimes -contains 'pi'
 $openCodeSelected = $selectedRuntimes -contains 'opencode'
@@ -1609,6 +1664,9 @@ if ($Status) {
     }
     $notSelected = @(Get-NotSelectedPaths -SelectedRuntimes $selectedRuntimes)
     $results = @(Get-OwnershipReport -Recorded $priorOwned -Plan $plan -SelectedRuntimes $selectedRuntimes -NotSelected $notSelected)
+    foreach ($note in $unselectedNotes) {
+        $results += [pscustomobject]@{ state = 'not selected'; label = "$($note.kind) $($note.name) (add with $($note.flag) $($note.name))" }
+    }
     foreach ($result in $results) { Write-Host ('{0,-12} {1}' -f $result.state, $result.label) }
     $counts = foreach ($state in @('matching', 'drifted', 'modified', 'missing', 'untracked', 'not selected')) {
         "$(@($results | Where-Object { $_.state -eq $state }).Count) $state"
@@ -2018,7 +2076,7 @@ $stack = [pscustomobject]@{
     createdDirs  = $createdDirs
     createdFiles = $createdFiles
 }
-[IO.File]::WriteAllText($stackTarget, ($stack | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+Write-LockAtomically -Text ($stack | ConvertTo-Json -Depth 8)
 Write-Host "Wrote $stackTarget"
 
 Write-Host 'Workspace bundle installed from the layer manifest.'
