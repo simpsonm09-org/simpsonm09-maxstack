@@ -78,6 +78,28 @@ The proof is a round trip. A test snapshots a workspace, runs `install` then `un
 
 macOS needs the installer to stop assuming Windows. PowerShell 7 runs on macOS, but the installer uses junctions. On POSIX it uses symbolic links and sets the executable bit on the shell wrappers. CI runs the lifecycle tests on Windows and macOS.
 
+## Layer sources
+
+Every layer, including PStack, names where it installs from. Today PStack is a pinned git source, the org and personal layers are local checkouts, and `-LayerSource name=path` can override only a local layer. It refuses PStack, so a change on a fork branch cannot be tried without editing `layers.json`.
+
+A layer source is one of:
+
+| Form | Example | Notes |
+| --- | --- | --- |
+| Git, by owner and repository | `simpsonm09/pstack-claude@feat/opencode-runtime` | Resolves to `https://github.com/<owner>/<repo>.git`. The ref may be a branch, a tag, or a full commit. |
+| Git, by URL | `https://github.com/michael-denyer/pstack-claude.git@main` | The same, for any host. |
+| Local | `local:D:\dev\simpsonm09\projects\repos\pstack-claude` | A working tree. It is never fetched, and uncommitted changes are installed as they are. |
+
+The committed `layers.json` holds each layer's default source with a full commit pin, so a plain install is reproducible. An override changes the source for one run without editing `layers.json`:
+
+- `-Source pstack=simpsonm09/pstack-claude@feat/opencode-runtime` or `-Source personal=local:<path>`, repeatable, for any layer.
+- The override and the commit it resolved to are recorded in the lock, flagged as an override.
+- `status` and `update` print every override and every unpinned or local source, so a workspace never runs from a test source unnoticed.
+- `update` re-resolves a branch or tag to its current commit and records it. A local source has no commit to resolve. `update` re-reads it.
+- Dropping the override returns the layer to its committed default on the next `install` or `update`.
+
+Reading from a repository we do not own is allowed, because upstream PStack is a legitimate source. Opening a pull request there is not, and the ownership rule in the repo-standard skill still applies.
+
 ## Constraints that carry over
 
 - Pi runs with no third-party extensions. The org gate and PStack's own Pi extension are the only extensions.
@@ -89,7 +111,7 @@ macOS needs the installer to stop assuming Windows. PowerShell 7 runs on macOS, 
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
-| 0 | Neutral schema, and generation of skills, instructions, and MCP. One PStack pin. The duplicate skill trees go. The lifecycle: runtime and layer selection, the ownership record, `update`, `remove`, `uninstall`, and macOS support. | The generated output for the four installed runtimes matches today's installs, and the install and uninstall round trip leaves the tree unchanged on Windows and macOS. |
+| 0 | Neutral schema, and generation of skills, instructions, and MCP. One PStack pin. The duplicate skill trees go. The lifecycle: runtime and layer selection, layer sources and overrides, the ownership record, `update`, `remove`, `uninstall`, and macOS support. | The generated output for the four installed runtimes matches today's installs, and the install and uninstall round trip leaves the tree unchanged on Windows and macOS. |
 | 1 | Agents and hooks conversion for those four runtimes. | The gate denies the same commands as today in each runtime. |
 | 2 | Codex: a `codex` runtime key, a `CODEX_HOME` wrapper, a gate adapter. | A denied command is blocked in a Codex session. |
 | 3 | Cursor and Antigravity: stamping and workspace-root files. | A skill and the gate work in each, quota permitting. |
