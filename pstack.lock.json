@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/simpsonm09/pstack-claude.git",
   "path": "plugins/pstack",
-  "commit": "fd80388968399918065e023152c02c1903efb9b4",
+  "commit": "f629de81cfc9a2a9fd631cacc7567beee7b5b346",
   "ref": "feat/opencode-runtime",
   "notes": "The one pin for the pstack plugin, in every runtime: Claude Code, OpenCode, and GitHub Copilot CLI. The installer syncs path at exactly commit from the fork into a cache and copies it from there. The same values sit in the pstack layer's source block in layers.json; scripts/verify-manifests.py checks that they agree. --online also checks that ref still points at commit."
 }
