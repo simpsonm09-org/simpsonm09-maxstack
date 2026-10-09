@@ -3,7 +3,7 @@
 
 Each runtime the lock records is checked against the files on disk: the Claude plugin
 folders, the OpenCode plugin folders and their agent profiles, the nested OpenCode
-entries the config names, and the Copilot wrappers.
+entries the config names, the Copilot wrappers, and the Pi wrappers and settings.
 """
 
 import argparse
@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sys
 
 REQUIRED_SKILLS = (
@@ -27,7 +28,10 @@ OBSOLETE_CLAUDE_FILES = (
 RETIRED_OPENCODE_FOLDERS = ("pstack-opencode",)
 COPILOT_WRAPPERS = ("copilot.cmd", "copilot.sh")
 COPILOT_ASK_LINE = 'set "AGENT_ACCESS_COPILOT_ASK=allow"'
-RUNTIMES = ("claude", "opencode", "copilot")
+PI_WRAPPERS = ("pi.cmd", "pi.sh")
+PI_ASK_LINE = 'set "AGENT_ACCESS_PI_ASK=allow"'
+PI_SH_ASK_LINE = "export AGENT_ACCESS_PI_ASK=allow"
+RUNTIMES = ("claude", "opencode", "copilot", "pi")
 
 
 def default_workspace() -> str:
@@ -216,6 +220,40 @@ def check_opencode(lock: dict, workspace: pathlib.Path, failures: list[str]) -> 
         print(f"skills: {len(ids)}")
 
 
+def configured(lock: dict, runtime: str) -> bool:
+    """Whether any layer's runtime block turns the runtime on."""
+    return any((layer.get(runtime) or {}).get("enabled") for layer in lock["layers"])
+
+
+def check_shell_bit(path: pathlib.Path, failures: list[str]) -> None:
+    """A .sh wrapper is spawned directly, so off Windows it needs the executable bit."""
+    if os.name != "nt" and path.is_file() and not os.access(path, os.X_OK):
+        failures.append(
+            f"{path} is not executable; rerun Install-Workspace.ps1 -Apply, which sets the bit"
+        )
+
+
+def check_missing_wrapper(
+    lock: dict, runtime: str, command: str, bin_dir: pathlib.Path, failures: list[str]
+) -> None:
+    """A disabled wrapper is wrong when layers configure the runtime and its CLI is on PATH.
+
+    The installer left the wrapper out because the CLI was missing at apply time, so the
+    fix is to apply again. PATH is searched as the installer searches it, outside .maxstack\bin.
+    """
+    if not configured(lock, runtime):
+        return
+    found = shutil.which(command)
+    if found is None:
+        return
+    bin_prefix = os.path.normcase(os.path.abspath(bin_dir)) + os.sep
+    if os.path.normcase(os.path.abspath(found)).startswith(bin_prefix):
+        return
+    failures.append(
+        f"the {command} CLI is on PATH, and layers configure {runtime}, but stack.lock.json records no {runtime} wrapper; rerun Install-Workspace.ps1 -Apply"
+    )
+
+
 def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> None:
     """Check the Copilot wrappers against their recorded hashes, switch, folders, and executable."""
     bin_dir = workspace / ".maxstack" / "bin"
@@ -226,6 +264,7 @@ def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> N
                 failures.append(
                     f"Copilot wrapper {bin_dir / name} is present, but stack.lock.json records copilot disabled"
                 )
+        check_missing_wrapper(lock, "copilot", "copilot", bin_dir, failures)
         return
 
     for name, key in (("copilot.cmd", "cmdSha256"), ("copilot.sh", "shSha256")):
@@ -236,6 +275,8 @@ def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> N
             failures.append(
                 f"Copilot wrapper {path} differs from the text recorded in stack.lock.json"
             )
+        if name.endswith(".sh"):
+            check_shell_bit(path, failures)
 
     cmd = bin_dir / "copilot.cmd"
     if cmd.is_file():
@@ -267,6 +308,146 @@ def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> N
             failures.append(
                 f"{cmd} names plugin folders {found}, but stack.lock.json records {expected}"
             )
+
+
+def same_path(text: str, expected: pathlib.Path) -> bool:
+    return os.path.normcase(os.path.abspath(text)) == os.path.normcase(
+        os.path.abspath(expected)
+    )
+
+
+def check_pi_wrappers(
+    lock_pi: dict, bin_dir: pathlib.Path, agent_dir: pathlib.Path, failures: list[str]
+) -> None:
+    """Check the Pi wrappers against their hashes, the agent folder, and the ask switch."""
+    if not lock_pi.get("enabled"):
+        for name in PI_WRAPPERS:
+            if (bin_dir / name).exists():
+                failures.append(
+                    f"Pi wrapper {bin_dir / name} is present, but stack.lock.json records pi disabled"
+                )
+        return
+
+    for name, key in (("pi.cmd", "cmdSha256"), ("pi.sh", "shSha256")):
+        path = bin_dir / name
+        if not path.is_file():
+            failures.append(f"missing Pi wrapper: {path}")
+        elif sha256_hex(path.read_bytes()) != str(lock_pi.get(key, "")).upper():
+            failures.append(
+                f"Pi wrapper {path} differs from the text recorded in stack.lock.json"
+            )
+        if name.endswith(".sh"):
+            check_shell_bit(path, failures)
+
+    cmd = bin_dir / "pi.cmd"
+    if cmd.is_file():
+        text = cmd.read_text(encoding="utf-8")
+        if PI_ASK_LINE not in text:
+            failures.append(f"{cmd} does not set the ask switch: {PI_ASK_LINE}")
+        agent = re.search(r'^set "PI_CODING_AGENT_DIR=(.+)"$', text, re.MULTILINE)
+        if agent is None or not same_path(agent.group(1), agent_dir):
+            failures.append(f"{cmd} does not set PI_CODING_AGENT_DIR to {agent_dir}")
+        executable = re.search(r'^set "PI_BIN=(.+)"$', text, re.MULTILINE)
+        if executable is None or not pathlib.Path(executable.group(1)).is_file():
+            failures.append(f"{cmd} does not name a Pi CLI that exists")
+
+    sh = bin_dir / "pi.sh"
+    if sh.is_file():
+        text = sh.read_text(encoding="utf-8")
+        if PI_SH_ASK_LINE not in text:
+            failures.append(f"{sh} does not set the ask switch: {PI_SH_ASK_LINE}")
+        agent = re.search(
+            r'^export PI_CODING_AGENT_DIR="([^"\n]*)"$', text, re.MULTILINE
+        )
+        if agent is None or not same_path(agent.group(1), agent_dir):
+            failures.append(f"{sh} does not set PI_CODING_AGENT_DIR to {agent_dir}")
+
+
+def read_json_object(path: pathlib.Path, failures: list[str]) -> dict | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        failures.append(f"cannot read {path}: {error}")
+        return None
+    if not isinstance(value, dict):
+        failures.append(f"{path} is not a JSON object")
+        return None
+    return value
+
+
+def check_pi_settings(
+    lock_pi: dict, agent_dir: pathlib.Path, failures: list[str]
+) -> None:
+    """Check the Pi settings list each recorded package and skills folder."""
+    settings_path = agent_dir / "settings.json"
+    packages = lock_pi.get("packages", [])
+    skills = lock_pi.get("skills", [])
+    if not settings_path.is_file():
+        if packages or skills:
+            failures.append(f"missing Pi settings: {settings_path}")
+        return
+    settings = read_json_object(settings_path, failures)
+    if settings is None:
+        return
+    for kind, entries in (("packages", packages), ("skills", skills)):
+        for entry in entries:
+            if entry not in settings.get(kind, []):
+                failures.append(
+                    f"{settings_path} does not list the Pi {kind} entry {entry}, which stack.lock.json records"
+                )
+    for entry in packages:
+        target = agent_dir / entry
+        manifest = target / "package.json"
+        if not manifest.is_file():
+            failures.append(f"Pi package {entry} has no package.json at {manifest}")
+            continue
+        package = read_json_object(manifest, failures)
+        if package is not None and "pi" not in package:
+            failures.append(f"Pi package {entry} has no pi key in {manifest}")
+    for entry in skills:
+        if not (agent_dir / entry).is_dir():
+            failures.append(f"Pi skills folder {entry} is missing: {agent_dir / entry}")
+
+
+def check_pi_layers(
+    lock: dict, workspace: pathlib.Path, agent_dir: pathlib.Path, failures: list[str]
+) -> None:
+    """Each layer's package and skills folder is one of the entries the lock records for Pi."""
+    lock_pi = lock.get("pi") or {}
+    recorded_packages = set(lock_pi.get("packages", []))
+    recorded_skills = set(lock_pi.get("skills", []))
+    for layer in lock["layers"]:
+        record = layer["pi"]
+        if not record.get("enabled"):
+            continue
+        if record.get("package"):
+            entry = pathlib.Path(
+                os.path.relpath(workspace / record["package"], agent_dir)
+            ).as_posix()
+            if entry not in recorded_packages:
+                failures.append(
+                    f"layer '{layer['name']}' is a Pi package at {record['package']}, but stack.lock.json does not record it"
+                )
+        if record.get("skills"):
+            entry = pathlib.Path(
+                os.path.relpath(workspace / record["skills"], agent_dir)
+            ).as_posix()
+            if entry not in recorded_skills:
+                failures.append(
+                    f"layer '{layer['name']}' has Pi skills at {record['skills']}, but stack.lock.json does not record them"
+                )
+
+
+def check_pi(lock: dict, workspace: pathlib.Path, failures: list[str]) -> None:
+    """Check the Pi wrappers, the workspace Pi settings, and each layer's Pi record."""
+    lock_pi = lock.get("pi") or {}
+    bin_dir = workspace / ".maxstack" / "bin"
+    agent_dir = workspace / lock_pi.get("agentDir", ".pi/agent")
+    if not lock_pi.get("enabled"):
+        check_missing_wrapper(lock, "pi", "pi", bin_dir, failures)
+    check_pi_wrappers(lock_pi, bin_dir, agent_dir, failures)
+    check_pi_settings(lock_pi, agent_dir, failures)
+    check_pi_layers(lock, workspace, agent_dir, failures)
 
 
 def check_global(home: pathlib.Path, failures: list[str]) -> None:
@@ -311,6 +492,7 @@ def main() -> int:
         check_claude(lock, workspace, failures)
         check_opencode(lock, workspace, failures)
         check_copilot(lock, workspace, failures)
+        check_pi(lock, workspace, failures)
 
     check_global(home, failures)
 

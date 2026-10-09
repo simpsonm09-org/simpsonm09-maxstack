@@ -18,7 +18,7 @@ The plugin layers own the skills, the agents, the entries, and the MCP servers. 
 | `simpsonm09-maxstack` | none | AI composition: the config fragment, the layer manifest, the installer, and the PStack pin. |
 | `simpsonm09-dev-setup` | none | The machine and the human tool set: tool installs, `tools.yaml`, the secrets loaders, and the Agent Vault wrappers. |
 
-`layers.json` lists the layers in order. Each layer names the runtimes it installs for: `claude`, `opencode`, and `copilot`. `maxstack` reads that order, builds each runtime's folders, merges the config fragments, and installs the agent profiles. A later layer wins where two layers set the same value.
+`layers.json` lists the layers in order. Each layer names the runtimes it installs for: `claude`, `opencode`, `copilot`, and `pi`. `maxstack` reads that order, builds each runtime's folders, merges the config fragments, and installs the agent profiles. A later layer wins where two layers set the same value.
 
 The PStack layer is a git source. The org and personal layers are local checkouts. All three install for the same runtimes, so one layer is one plugin in every harness.
 

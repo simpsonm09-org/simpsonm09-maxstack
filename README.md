@@ -1,6 +1,6 @@
 # maxstack
 
-Personal AI tooling for OpenCode, Claude Code, and GitHub Copilot CLI, run from T3 Code. It coordinates the workspace config and the installer, and it pins the PStack plugin. maxstack sets no model: you pick the model in the harness.
+Personal AI tooling for OpenCode, Claude Code, GitHub Copilot CLI, and Pi, run from T3 Code. It coordinates the workspace config and the installer, and it pins the PStack plugin. maxstack sets no model: you pick the model in the harness.
 
 The original lives in `simpsonm09-org/simpsonm09-maxstack`; work happens on the personal fork. See [`repo-standard`](https://github.com/simpsonm09-org/simpsonm09-repo-standard).
 
@@ -13,8 +13,9 @@ PStack comes from one source: the `plugins/pstack` folder of [`simpsonm09/pstack
 - OpenCode: `.opencode\plugins\pstack`, with the agent profiles in `.opencode\agents`.
 - Claude Code: `.claude\plugins\pstack`.
 - GitHub Copilot CLI: `.maxstack\bin\copilot.cmd` and `copilot.sh`, which run Copilot with the Claude plugin folders.
+- Pi: `.maxstack\bin\pi.cmd` and `pi.sh`, which run Pi with the settings in `.pi\agent`, listing the same layers as packages and skills.
 
-The org and personal layers are local checkouts. They install for the same three runtimes, and their Claude folders are links to the OpenCode copies. Nothing is global. See [`docs/t3-setup.md`](docs/t3-setup.md).
+The org and personal layers are local checkouts. They install for the same four runtimes, and their Claude folders are links to the OpenCode copies. Nothing is global. See [`docs/t3-setup.md`](docs/t3-setup.md).
 
 ## Guardrails
 
@@ -53,7 +54,7 @@ MIT. See [`LICENSE`](LICENSE).
 
 ## Related repositories
 
-- [`simpsonm09/pstack-claude`](https://github.com/simpsonm09/pstack-claude) (fork) owns the PStack plugin in `plugins/pstack`, for all three runtimes.
+- [`simpsonm09/pstack-claude`](https://github.com/simpsonm09/pstack-claude) (fork) owns the PStack plugin in `plugins/pstack`, for all four runtimes.
 - [`org-ai-plugin`](https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin) owns the shared MCP servers and skills.
 - [`personal-ai-plugin`](https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin) owns the personal MCP servers and skills.
 - [`simpsonm09-dev-setup`](https://github.com/simpsonm09-org/simpsonm09-dev-setup) owns the machine and app setup.

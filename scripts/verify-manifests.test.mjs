@@ -66,11 +66,11 @@ test('the shipped manifests pass the verifier', { skip }, () => {
   assert.match(run.stdout, /^PASS:/);
 });
 
-test('the shipped pstack layer is one git source with all three runtimes', { skip }, () => {
+test('the shipped pstack layer is one git source with all four runtimes', { skip }, () => {
   const pstack = pstackOf(shipped('layers.json'));
   assert.equal(pstack.kind, 'plugin');
   assert.equal(typeof pstack.source, 'object', 'pstack is pinned to a git source');
-  assert.deepEqual(Object.keys(pstack.runtimes).sort(), ['claude', 'copilot', 'opencode']);
+  assert.deepEqual(Object.keys(pstack.runtimes).sort(), ['claude', 'copilot', 'opencode', 'pi']);
   assert.equal(pstack.runtimes.opencode.entry, 'opencode/index.ts');
   assert.equal(pstack.runtimes.opencode.agents, 'opencode/agents');
 });
@@ -84,6 +84,17 @@ test('a copilot runtime without claude is refused', { skip }, () => {
   });
   assert.equal(run.status, 1, failureOf(run));
   assert.match(failureOf(run), /declares copilot, which loads the Claude plugin folder, so it also needs claude/);
+});
+
+test('a pi runtime without claude is refused', { skip }, () => {
+  const run = runVerifier({
+    layers: (manifest) => {
+      manifest.layers[1].runtimes = { opencode: {}, pi: {} };
+      return manifest;
+    },
+  });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /declares pi, which lists the Claude plugin folder's skills, so it also needs claude/);
 });
 
 test('a local layer that declares claude without opencode is refused', { skip }, () => {
