@@ -64,6 +64,49 @@ pwsh -File scripts/Install-Workspace.ps1
 
 A layer that stops naming a runtime leaves its folder behind. `-Apply` removes an OpenCode folder that no layer names only when the previous `stack.lock.json` recorded it, so the installer made it. It also removes the folder of the retired `pstack-opencode` port on every apply. Any other unnamed folder is reported as stale and kept. The same cleanup applies to `.claude\plugins`: `-Apply` removes a child that no layer declares, and audit reports it as stale.
 
+## Ownership and status
+
+`-Apply` writes an ownership record into `stack.lock.json`: the `owned` list, with `ownedSchema: 1`. It names each path the apply wrote, sorted by path, kind, and key:
+
+- `opencode.jsonc`, `.maxstack\bin\copilot.*`, `.maxstack\bin\pi.*`, and each agent profile in `.opencode\agents`: a `file` with its SHA-256.
+- `.claude\plugins\<layer>`: a `link` with its `target` for a local layer, or a `dir` for a pinned copy.
+- `.claude\cache\<layer>`: a `dir` for each pinned layer.
+- `.opencode\plugins\<layer>`: a `dir`.
+- `.pi\agent\settings.json`: one `json-entries` record for `packages` and one for `skills`. Each holds only the entries the installer added. The keys and entries the user wrote are not recorded.
+
+A `dir` hash covers each file's relative path and SHA-256. It leaves out `node_modules`, `package-lock.json`, and `.git` at any depth, because npm and git write those beside the installed files. The record holds no absolute path and does not list the lock itself. Re-applying with nothing to change leaves the lock the same except `generatedAt`.
+
+```json
+"owned": [
+  { "path": ".maxstack/bin/copilot.cmd", "kind": "file", "sha256": "…" },
+  { "path": ".pi/agent/settings.json", "kind": "json-entries", "key": "packages", "entries": ["../../.claude/cache/pstack"] }
+]
+```
+
+`-Status` compares the record with the disk and with what an apply would write. It writes nothing. It prints one line per path, then a summary:
+
+```powershell
+pwsh -File scripts/Install-Workspace.ps1 -Status
+pwsh -File scripts/Install-Workspace.ps1 -Status -Strict
+```
+
+| State | Meaning |
+| --- | --- |
+| `matching` | It matches the record, and an apply would leave it as it is. |
+| `drifted` | It matches the record, but an apply would write something else, such as a layer whose source changed. |
+| `modified` | It differs from the recorded hash, target, or entry, usually because of a hand edit. |
+| `missing` | The record names it and the disk does not hold it. A Pi entry shows alone when it is missing from its list. |
+| `untracked` | A file in `.maxstack\bin` that no record names. |
+
+`-Strict` exits 1 when any path is not `matching`. A workspace whose lock has no `owned` list prints `no ownership record; run -Apply once to create it`, and exits 0, or 1 with `-Strict`.
+
+Limits of the record:
+
+- For a pinned layer, status reads only the local cache. When the cache is not at the pinned commit, each path that layer owns reports as `drifted` until an apply syncs it.
+- The `.bak` copies of the config and Pi settings are not recorded.
+- A folder's hash covers every file in it, so a file the user adds to an owned folder shows as `modified` until the next apply records it.
+- Apply does not remove the agent profiles of a layer that stopped installing them, nor the cache of a removed pinned layer, as before. Those files drop out of the record at the next apply.
+
 ## A legacy global install
 
 The workspace bundle is the only PStack install. If an older global install is ever found, remove it by hand, on Windows under `%USERPROFILE%` and on WSL under `$HOME`. `scripts/verify-workspace-install.py` reports what remains. It checks these paths:
