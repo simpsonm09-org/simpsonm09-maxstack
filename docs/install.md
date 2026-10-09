@@ -72,9 +72,12 @@ A layer that stops naming a runtime leaves its folder behind. `-Apply` removes a
 - `.claude\plugins\<layer>`: a `link` with its `target` for a local layer, or a `dir` for a pinned copy.
 - `.claude\cache\<layer>`: a `dir` for each pinned layer.
 - `.opencode\plugins\<layer>`: a `dir`.
-- `.pi\agent\settings.json`: one `json-entries` record for `packages` and one for `skills`. Each holds only the entries the installer added. The keys and entries the user wrote are not recorded.
+- `.pi\agent\settings.json`: one `json-entries` record for `packages` and one for `skills`. Each holds only the entries the installer added, and none when it added none. An entry the user already listed is the user's, so it is not recorded, and a second copy the user wrote beside an installer entry stays the user's.
+- `opencode.jsonc.bak` and `.pi\agent\settings.json.bak`: a `file` record each, once an apply has written the backup.
 
-A `dir` hash covers each file's relative path and SHA-256. It leaves out `node_modules`, `package-lock.json`, and `.git` at any depth, because npm and git write those beside the installed files. The record holds no absolute path and does not list the lock itself. Re-applying with nothing to change leaves the lock the same except `generatedAt`.
+A `json-entries` record for a key the installer created in a settings file that already existed carries `createdKey: true`. The top-level `createdDirs` lists each directory an apply created, and `createdFiles` each file it created (a settings file that already existed is not listed). Both are sorted, and both lists name only what was not there before the first apply.
+
+A `dir` record is the hash of what the installer wrote. An owned folder is wholly the installer's: each apply removes whatever the layer does not install, printing each removal, and replaces each item with a fresh copy. The hash covers each file's relative path and SHA-256, and each link by its target, and it leaves out `node_modules` and `.git` at any depth. The record holds no absolute path and does not list the lock itself. Re-applying with nothing to change leaves the lock the same except `generatedAt`.
 
 ```json
 "owned": [
@@ -102,10 +105,11 @@ pwsh -File scripts/Install-Workspace.ps1 -Status -Strict
 
 Limits of the record:
 
-- For a pinned layer, status reads only the local cache. When the cache is not at the pinned commit, each path that layer owns reports as `drifted` until an apply syncs it.
-- The `.bak` copies of the config and Pi settings are not recorded.
-- A folder's hash covers every file in it, so a file the user adds to an owned folder shows as `modified` until the next apply records it.
-- Apply does not remove the agent profiles of a layer that stopped installing them, nor the cache of a removed pinned layer, as before. Those files drop out of the record at the next apply.
+- Owned folders must not hold user files. `.opencode\plugins\<layer>`, `.claude\plugins\<layer>`, and `.claude\cache\<layer>` belong to the installer: an apply removes any file a user adds to them, and status reports such a file as `modified` until then. Keep your own files elsewhere.
+- For a pinned layer, status reads only the local cache. Each path or entry that depends on a pinned commit the cache is not at reports as `drifted`, once, until an apply syncs the cache. An apply also removes untracked files from the cache.
+- A backup the next apply would write is not reported until it exists.
+- Apply does not remove the agent profiles of a layer that stopped installing them, nor the cache of a removed pinned layer. Those files drop out of the record at the next apply.
+- A lock from before the record has no `owned` list, so status reports no record until one apply. That apply takes the entries its `pi` section lists as the installer's, and the claude `treeSha256` values keep the legacy rule, so they do not report `differs` after the upgrade.
 
 ## A legacy global install
 

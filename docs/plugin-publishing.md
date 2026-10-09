@@ -50,7 +50,7 @@ Audit mode computes each of these and reports `missing`, `differs`, `matches`, o
 
 The top-level `copilot` record holds `enabled`, and when enabled, the `executable` file name, the `wrappers` relative paths, and the SHA-256 of each wrapper's text. When it is disabled, it holds the `reason`. The executable's absolute path is not recorded, because the lock holds no absolute path. It is written only into the wrapper.
 
-`treeSha256` is a hash over each file's relative path and SHA-256, leaving out `node_modules` and `.git` at any depth. The lock holds only workspace-relative paths, so it holds no absolute path. The junction's target is an absolute path inside the filesystem, but the installer creates it on each apply and the lock does not record it.
+`treeSha256` is the legacy claude hash: one line per entry, the relative path and SHA-256 of each file, sorted by UTF-8 bytes. It leaves out only a top-level `node_modules`, matched without regard to case, as earlier versions did. A link inside the tree is hashed by its target and never followed. The owned hashes in `owned` use a stricter rule and are described in [Ownership and status](install.md#ownership-and-status): `node_modules` and `.git` are left out at any depth, and names compare exactly. The lock holds only workspace-relative paths, so it holds no absolute path. The junction's target is an absolute path inside the filesystem, but the installer creates it on each apply and the lock does not record it.
 
 ## Generated files and git
 
