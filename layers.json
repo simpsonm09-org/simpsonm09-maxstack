@@ -6,7 +6,7 @@
       "source": {
         "url": "https://github.com/simpsonm09/pstack-claude.git",
         "path": "plugins/pstack",
-        "commit": "fd80388968399918065e023152c02c1903efb9b4",
+        "commit": "f629de81cfc9a2a9fd631cacc7567beee7b5b346",
         "ref": "feat/opencode-runtime"
       },
       "runtimes": {
