@@ -356,8 +356,11 @@ def check_pi_wrappers(
         text = sh.read_text(encoding="utf-8")
         if PI_SH_ASK_LINE not in text:
             failures.append(f"{sh} does not set the ask switch: {PI_SH_ASK_LINE}")
-        if not re.search(r'^export PI_CODING_AGENT_DIR="[^"]+"$', text, re.MULTILINE):
-            failures.append(f"{sh} does not set PI_CODING_AGENT_DIR")
+        agent = re.search(
+            r'^export PI_CODING_AGENT_DIR="([^"\n]*)"$', text, re.MULTILINE
+        )
+        if agent is None or not same_path(agent.group(1), agent_dir):
+            failures.append(f"{sh} does not set PI_CODING_AGENT_DIR to {agent_dir}")
 
 
 def read_json_object(path: pathlib.Path, failures: list[str]) -> dict | None:

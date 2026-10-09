@@ -6,6 +6,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   appendFileSync,
   chmodSync,
@@ -722,6 +723,26 @@ withWorkspace('pi.cmd passes arguments to an .exe target unchanged', (ctx) => {
   assert.deepEqual(JSON.parse(run.stdout), ['a^b', '100%'], 'the wrapper changed the arguments');
 }, {});
 
+// pi.sh puts the agent folder inside double quotes, so a dollar sign or a backtick in the baked
+// path would change what the shell runs. The cmd wrapper keeps both as plain text, so the run
+// stops only on the shell side. Windows allows both characters in a folder name.
+test('a workspace path that pi.sh cannot quote stops the run before anything is written', { skip }, () => {
+  for (const name of ['sim$pson', 'sim`pson']) {
+    const ctx = buildWorkspace();
+    try {
+      const renamed = join(ctx.base, name);
+      renameSync(ctx.workspace, renamed);
+      ctx.workspace = renamed;
+      const run = runInstaller(shell, ctx);
+      assert.notEqual(run.status, 0, `the installer accepted the workspace path ${name}`);
+      assert.match(plainOutput(run), /the Pi shell wrapper cannot quote/, run.stdout);
+      assert.ok(!existsSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.sh')), 'pi.sh was written');
+    } finally {
+      rmSync(ctx.base, { recursive: true, force: true });
+    }
+  }
+});
+
 withWorkspace('pi.sh runs pi from PATH with the agent folder and the ask switch, and honours MAXSTACK_PI_BIN', (ctx) => {
   const bash = findBash();
   if (!bash) return;
@@ -1027,6 +1048,33 @@ withWorkspace('the workspace verifier passes after an apply and flags a hand-edi
   const edited = verify();
   assert.notEqual(edited.status, 0, 'the verifier accepted an edited wrapper');
   assert.match(plainOutput(edited), /copilot\.cmd differs from the text recorded in stack\.lock\.json/);
+}, {});
+
+// The hash check passes here, because the lock is updated to the edited script. What remains
+// is the folder the script names, which the verifier must compare to the workspace's.
+withWorkspace('the verifier compares the agent folder in pi.sh with the workspace, not just its presence', (ctx) => {
+  if (!python) return;
+  mustApply(ctx);
+  const home = join(ctx.base, 'home');
+  mkdirSync(home);
+  const verify = () => spawnSync(python, [join(repoRoot, 'scripts', 'verify-workspace-install.py'), '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8' });
+  const shPath = join(ctx.workspace, '.maxstack', 'bin', 'pi.sh');
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+
+  const text = readFileSync(shPath, 'utf8');
+  const tampered = text.replace(/^export PI_CODING_AGENT_DIR=".*"$/m, 'export PI_CODING_AGENT_DIR="/tmp/elsewhere/.pi/agent"');
+  assert.notEqual(tampered, text, 'the test did not change the agent folder line');
+  writeFileSync(shPath, tampered);
+  const lock = readJson(lockPath);
+  lock.pi.shSha256 = createHash('sha256').update(tampered).digest('hex').toUpperCase();
+  writeFileSync(lockPath, JSON.stringify(lock));
+
+  const wrong = verify();
+  assert.notEqual(wrong.status, 0, 'the verifier accepted a pi.sh that names another agent folder');
+  assert.match(plainOutput(wrong), /pi\.sh does not set PI_CODING_AGENT_DIR to /);
+
+  mustApply(ctx);
+  assert.equal(verify().status, 0);
 }, {});
 
 withWorkspace('the workspace verifier checks the Pi wrappers and the Pi settings', (ctx) => {
