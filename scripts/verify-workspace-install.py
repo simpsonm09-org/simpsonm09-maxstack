@@ -15,7 +15,7 @@ import re
 import shutil
 import sys
 
-from verify_ownership import check_owned
+from verify_ownership import check_owned, layer_names, selected
 
 REQUIRED_SKILLS = (
     "poteto-mode",
@@ -141,6 +141,11 @@ def load_lock(workspace: pathlib.Path, failures: list[str]) -> dict | None:
     return lock
 
 
+def is_unselected_layer(lock: dict, name: str) -> bool:
+    """A layer the lock names but the selection leaves out. Its folders are left alone, not judged."""
+    return name in layer_names(lock) and name not in selected(lock)[1]
+
+
 def check_claude(lock: dict, workspace: pathlib.Path, failures: list[str]) -> None:
     """Check the Claude plugin tree against the claude records in stack.lock.json."""
     for obsolete in OBSOLETE_CLAUDE_FILES:
@@ -158,7 +163,7 @@ def check_claude(lock: dict, workspace: pathlib.Path, failures: list[str]) -> No
     plugins_dir = workspace / ".claude" / "plugins"
     if plugins_dir.is_dir():
         for entry in sorted(plugins_dir.iterdir()):
-            if entry.name not in recorded:
+            if entry.name not in recorded and not is_unselected_layer(lock, entry.name):
                 failures.append(
                     f"stale Claude plugin folder not in stack.lock.json: {entry}"
                 )
@@ -253,11 +258,15 @@ def check_opencode(lock: dict, workspace: pathlib.Path, failures: list[str]) -> 
                 failures.append(
                     f"retired OpenCode plugin folder is still present: {entry}"
                 )
-            elif entry.name not in recorded:
+            elif entry.name not in recorded and not is_unselected_layer(
+                lock, entry.name
+            ):
                 failures.append(
                     f"stale OpenCode plugin folder not in stack.lock.json: {entry}"
                 )
 
+    if PSTACK not in selected(lock)[1]:
+        return
     skills = workspace / ".opencode" / "plugins" / PSTACK / "skills"
     if not skills.is_dir():
         failures.append(f"missing vendored skills: {skills}")
@@ -574,14 +583,20 @@ def main() -> int:
     home = pathlib.Path(args.home)
     failures: list[str] = []
 
-    if not (workspace / "opencode.jsonc").is_file():
-        failures.append(f"missing workspace config: {workspace / 'opencode.jsonc'}")
     lock = load_lock(workspace, failures)
+    # A runtime the selection leaves out is not checked. A missing lock means every runtime is expected.
+    runtimes = selected(lock)[0] if lock is not None else {"opencode"}
+    if "opencode" in runtimes and not (workspace / "opencode.jsonc").is_file():
+        failures.append(f"missing workspace config: {workspace / 'opencode.jsonc'}")
     if lock is not None:
-        check_claude(lock, workspace, failures)
-        check_opencode(lock, workspace, failures)
-        check_copilot(lock, workspace, failures)
-        check_pi(lock, workspace, failures)
+        if "claude" in runtimes:
+            check_claude(lock, workspace, failures)
+        if "opencode" in runtimes:
+            check_opencode(lock, workspace, failures)
+        if "copilot" in runtimes:
+            check_copilot(lock, workspace, failures)
+        if "pi" in runtimes:
+            check_pi(lock, workspace, failures)
         owned_failures = len(failures)
         check_owned(lock, failures)
         if len(failures) == owned_failures:
