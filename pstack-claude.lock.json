@@ -1,8 +1,0 @@
-{
-  "repository": "https://github.com/michael-denyer/pstack-claude.git",
-  "path": "plugins/pstack",
-  "tag": "v0.9.73",
-  "commit": "8d3aa5719ab836e89482c894bbedd710224f4424",
-  "opencodeUpstream": "8d3aa5719ab836e89482c894bbedd710224f4424",
-  "notes": "The Claude Code pin for the pstack plugin. The installer materialises path at exactly commit into .claude/plugins/pstack; no marketplace is involved. tag names the release the commit belongs to. opencodeUpstream is the upstream commit that the OpenCode port pins in its pstack.lock.json, read from the plugin repository at the commit pstack-opencode.lock.json names. scripts/verify-manifests.py checks that layers.json, this file, and the upstream pin all name the same commit. --online also checks that the tag still resolves to it and that the port's pin agrees."
-}
