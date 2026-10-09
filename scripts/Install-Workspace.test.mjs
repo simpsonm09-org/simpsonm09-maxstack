@@ -726,6 +726,13 @@ withWorkspace('pi.sh runs pi from PATH with the agent folder and the ask switch,
   assert.match(overridden.stdout, /OVERRIDE=rpc/);
 }, {});
 
+withWorkspace('the installer writes no Pi model or provider, and a fresh Pi settings file holds only packages and skills', (ctx) => {
+  mustApply(ctx);
+  const fresh = readJson(join(ctx.workspace, '.pi', 'agent', 'settings.json'));
+  assert.deepEqual(Object.keys(fresh).sort(), ['packages', 'skills'], 'the installer wrote a key it does not own');
+  assert.ok(!('defaultModel' in fresh) && !('defaultProvider' in fresh), 'the installer named a model or provider');
+}, {});
+
 withWorkspace('the Pi settings list each package and skills folder, and keep the keys and entries the installer does not own', (ctx) => {
   const settingsPath = join(ctx.workspace, '.pi', 'agent', 'settings.json');
   writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({
@@ -850,4 +857,32 @@ withWorkspace('the workspace verifier passes after an apply and flags a hand-edi
   const edited = verify();
   assert.notEqual(edited.status, 0, 'the verifier accepted an edited wrapper');
   assert.match(plainOutput(edited), /copilot\.cmd differs from the text recorded in stack\.lock\.json/);
+}, {});
+
+withWorkspace('the workspace verifier checks the Pi wrappers and the Pi settings', (ctx) => {
+  if (!python) return;
+  mustApply(ctx);
+  const home = join(ctx.base, 'home');
+  mkdirSync(home);
+  const verify = () => spawnSync(python, [join(repoRoot, 'scripts', 'verify-workspace-install.py'), '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8' });
+  const settingsPath = join(ctx.workspace, '.pi', 'agent', 'settings.json');
+
+  const passed = verify();
+  assert.equal(passed.status, 0, `${passed.stdout}\n${passed.stderr}`);
+
+  appendFileSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.sh'), '# hand edit\n');
+  const edited = verify();
+  assert.notEqual(edited.status, 0, 'the verifier accepted an edited Pi script');
+  assert.match(plainOutput(edited), /pi\.sh differs from the text recorded in stack\.lock\.json/);
+
+  mustApply(ctx);
+  const settings = readJson(settingsPath);
+  writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({ ...settings, packages: [] }));
+  const unlisted = verify();
+  assert.notEqual(unlisted.status, 0, 'the verifier accepted settings without a recorded package');
+  assert.match(plainOutput(unlisted), /does not list the Pi packages entry \.\.\/\.\.\/\.claude\/cache\/pstack/);
+
+  mustApply(ctx);
+  const restored = verify();
+  assert.equal(restored.status, 0, `${restored.stdout}\n${restored.stderr}`);
 }, {});
