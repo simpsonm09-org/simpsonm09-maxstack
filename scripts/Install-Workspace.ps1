@@ -8,6 +8,13 @@ param(
     [string] $CopilotCommand = 'copilot',
     # The Pi CLI to wrap, by the same rule as CopilotCommand.
     [string] $PiCommand = 'pi',
+    # Runtimes to add to the recorded selection: claude, opencode, copilot, pi, or all. Comma-separated
+    # values are split, because separate tokens do not bind to an array under pwsh -File.
+    [Alias('Runtimes')]
+    [string[]] $RequestedRuntimes = @(),
+    # Layers to add to the recorded selection, by their names in layers.json, or all.
+    [Alias('Layers')]
+    [string[]] $RequestedLayers = @(),
     [switch] $Apply,
     # Reports each owned path against the ownership record in stack.lock.json. Writes nothing.
     [switch] $Status,
@@ -20,6 +27,8 @@ $ErrorActionPreference = 'Stop'
 
 if ($Apply -and $Status) { throw '-Apply writes the workspace and -Status only reports it. Choose one.' }
 if ($Strict -and -not $Status) { throw '-Strict applies to -Status.' }
+$namesRequested = $PSBoundParameters.ContainsKey('RequestedRuntimes') -or $PSBoundParameters.ContainsKey('RequestedLayers')
+if ($Status -and $namesRequested) { throw '-Status reports the recorded selection and takes no -Runtimes or -Layers. Select with an apply.' }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $layersPath = if ($LayersFile) { $LayersFile } else { Join-Path $repoRoot 'layers.json' }
@@ -177,6 +186,9 @@ function New-LayerModel {
         sourcePath = $sourcePath
         commit     = $commit
         source     = $sourceText
+        # The runtimes the manifest declares. runtimes narrows to the selection, and declared keeps the
+        # item lists a copy needs even when opencode is not selected.
+        declared   = $runtimes
         runtimes   = $runtimes
         root       = $null
     }
@@ -216,7 +228,7 @@ function Get-OpenCodeSpec {
 function Get-OpenCodeItems {
     param($Layer, [string] $Root)
 
-    $files = Get-Field $Layer.runtimes['opencode'] 'files'
+    $files = Get-Field $Layer.declared['opencode'] 'files'
     if ($null -eq $files) { $files = Get-Field (Read-LayerJson $Root) 'files' }
     if ($null -eq $files -or @($files).Count -eq 0) {
         throw "Layer '$($Layer.name)' names no OpenCode files: set runtimes.opencode.files, or add a layer.json with files."
@@ -245,7 +257,8 @@ function Get-OpenCodeState {
 
 # Turns one layer's claude runtime into a record. A local layer is a junction under
 # .claude\plugins to its installed copy in .opencode\plugins, so both harnesses share
-# one copy. A git layer is a copy of its pinned folder.
+# one copy. Without the opencode runtime there is no such copy, so a local layer is copied
+# from its items. A git layer is a copy of its pinned folder.
 function Get-ClaudeRecord {
     param($Layer)
 
@@ -262,8 +275,12 @@ function Get-ClaudeRecord {
     if ($declared -ne $Layer.name) {
         throw "Layer '$($Layer.name)' is the Claude plugin '$($Layer.name)' but its .claude-plugin\plugin.json names '$declared'."
     }
-    if (@(Get-OpenCodeItems -Layer $Layer -Root $Layer.root) -notcontains '.claude-plugin') {
+    $items = @(Get-OpenCodeItems -Layer $Layer -Root $Layer.root)
+    if ($items -notcontains '.claude-plugin') {
         throw "Layer '$($Layer.name)' has a claude runtime but its file list omits .claude-plugin, so the installed copy would not carry the manifest."
+    }
+    if (-not $Layer.runtimes.ContainsKey('opencode')) {
+        return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = 'copy'; items = $items }
     }
     return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = 'junction'; target = ".opencode/plugins/$($Layer.name)" }
 }
@@ -396,6 +413,142 @@ function Sort-Utf8 {
     foreach ($value in @($Values)) { $list.Add($value) }
     $list.Sort([Comparison[string]] { param($left, $right) Compare-Utf8Bytes $left $right })
     return $list.ToArray()
+}
+
+# The top-level paths each runtime writes. A runtime that is not selected leaves whatever of these
+# is on disk alone, and status names it as not selected.
+$runtimeArtifacts = @{
+    claude   = @('.claude/plugins')
+    opencode = @('opencode.jsonc', '.opencode/plugins', '.opencode/agents')
+    copilot  = @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh')
+    pi       = @('.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh', '.pi/agent/settings.json')
+}
+
+# The names a -Runtimes or -Layers value picks. A value splits on commas, and all picks every name.
+# A name outside Valid is an error that lists the valid names.
+function Get-NamedValues {
+    param([string[]] $Values, [string[]] $Valid, [string] $Parameter)
+
+    $names = @($Values | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $choices = "$($Valid -join ', '), or all"
+    if ($names.Count -eq 0) { throw "-$Parameter names no value. Valid names: $choices." }
+    $picked = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in $names) {
+        if ($name -ieq 'all') { $picked.AddRange([string[]] $Valid); continue }
+        $match = @($Valid | Where-Object { $_ -ieq $name })
+        if ($match.Count -eq 0) { throw "-$Parameter names an unknown name '$name'. Valid names: $choices." }
+        $picked.Add($match[0])
+    }
+    return (Sort-Utf8 @($picked | Select-Object -Unique))
+}
+
+# The selection an apply records. Named values add to the recorded set and never remove from it. An
+# unnamed dimension keeps its recorded value. With no lock (Recorded is $null), an unnamed dimension is
+# all of them, and a named one is exactly what is named.
+function Merge-Selected {
+    param([string[]] $Recorded, [string[]] $All, [string[]] $Named, [bool] $HasNames, [string] $Label)
+
+    if (-not $HasNames) {
+        if ($null -eq $Recorded) { return (Sort-Utf8 $All) }
+        return (Sort-Utf8 $Recorded)
+    }
+    # A list, because an if-expression unrolls a single name into a string, and a string plus a string concatenates.
+    $merged = [System.Collections.Generic.List[string]]::new()
+    if ($null -ne $Recorded) { $merged.AddRange([string[]] $Recorded) }
+    $added = @($Named | Where-Object { $merged -cnotcontains $_ })
+    if ($null -ne $Recorded -and $added.Count -eq 0) {
+        Write-Host "Already selected $($Label): $($Named -join ', '). Flags never narrow the selection; the rest stay selected."
+    }
+    $merged.AddRange([string[]] $Named)
+    return (Sort-Utf8 @($merged | Select-Object -Unique))
+}
+
+# Fails when copilot or pi is selected without claude. Their wrapper or settings name the Claude
+# plugin folders, and only the claude runtime writes them.
+function Assert-SelectionRuntimes {
+    param([string[]] $Runtimes)
+
+    foreach ($dependent in @('copilot', 'pi')) {
+        if (($Runtimes -contains $dependent) -and ($Runtimes -notcontains 'claude')) {
+            throw "Runtime '$dependent' needs claude: its wrapper or settings name the Claude plugin folders, so select claude with it."
+        }
+    }
+}
+
+# Fails on a recorded list that is empty, repeats a name, or names a value outside Valid.
+function Assert-RecordedNames {
+    param($Names, [string[]] $Valid, [string] $Kind)
+
+    $list = @($Names)
+    if ($list.Count -eq 0 -or @($list | Where-Object { -not (Test-NonEmptyString $_) }).Count -gt 0) {
+        throw "stack.lock.json selection needs a list of $Kind names."
+    }
+    foreach ($name in $list) {
+        if ($Valid -cnotcontains $name) { throw "stack.lock.json selection names an unknown $Kind '$name'. Valid names: $($Valid -join ', ')." }
+    }
+    if (@($list | Select-Object -Unique).Count -ne $list.Count) { throw "stack.lock.json selection names a $Kind twice." }
+}
+
+# The selection a lock records. A lock with no selection predates it, and means every runtime and
+# layer. $null means there is no lock, so the first apply starts a selection.
+function Read-RecordedSelection {
+    param($Stack, [string[]] $LayerNames)
+
+    if ($null -eq $Stack) { return $null }
+    $recorded = Get-Field $Stack 'selection'
+    if ($null -eq $recorded) { return @{ runtimes = (Sort-Utf8 $runtimeNames); layers = (Sort-Utf8 $LayerNames) } }
+    $runtimes = Get-Field $recorded 'runtimes'
+    $layers = Get-Field $recorded 'layers'
+    Assert-RecordedNames -Names $runtimes -Valid $runtimeNames -Kind 'runtime'
+    Assert-RecordedNames -Names $layers -Valid $LayerNames -Kind 'layer'
+    return @{ runtimes = (Sort-Utf8 @($runtimes)); layers = (Sort-Utf8 @($layers)) }
+}
+
+function Format-Selection {
+    param([string[]] $Runtimes, [string[]] $Layers)
+
+    return "Selection: runtimes $($Runtimes -join ', '); layers $($Layers -join ', ')"
+}
+
+# The runtime an owned path belongs to. The claude cache is the source every runtime copies from, so
+# it belongs to none and is never judged by the selection.
+function Get-OwnedRuntime {
+    param([string] $Path)
+
+    if ($Path.StartsWith('opencode.jsonc', [StringComparison]::Ordinal) -or $Path.StartsWith('.opencode/', [StringComparison]::Ordinal)) { return 'opencode' }
+    if ($Path.StartsWith('.claude/plugins/', [StringComparison]::Ordinal)) { return 'claude' }
+    if ($Path -in @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh')) { return 'copilot' }
+    if ($Path.StartsWith('.maxstack/bin/pi.', [StringComparison]::Ordinal) -or $Path.StartsWith('.pi/', [StringComparison]::Ordinal)) { return 'pi' }
+    return $null
+}
+
+# The artifacts of the runtimes that are not selected and that exist on disk. Status names them.
+function Get-NotSelectedPaths {
+    param([string[]] $SelectedRuntimes)
+
+    $found = [System.Collections.Generic.List[string]]::new()
+    foreach ($runtime in $runtimeNames) {
+        if ($SelectedRuntimes -contains $runtime) { continue }
+        foreach ($path in $runtimeArtifacts[$runtime]) {
+            if (Test-Path -LiteralPath (Join-Path $Workspace ($path -replace '/', '\'))) { $found.Add($path) }
+        }
+    }
+    return (Sort-Utf8 $found.ToArray())
+}
+
+# Copies the named items of a layer root into a folder. A claude copy of a local layer holds the same
+# items as its OpenCode copy, and never the rest of the checkout.
+function Copy-LayerItems {
+    param([string] $Root, [string[]] $Items, [string] $Destination)
+
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    foreach ($item in $Items) {
+        $source = Join-Path $Root ($item -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $source)) { throw "Layer item missing: $source" }
+        $target = Join-Path $Destination ($item -replace '/', '\')
+        New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        Copy-Item -LiteralPath $source -Destination $target -Recurse -Force
+    }
 }
 
 # The hash of a tree from its lines: sorted, one line per entry, then the SHA-256 of that text.
@@ -841,7 +994,8 @@ function Assert-Written {
 # with the disk and with the record. A null hash or entries means the value is not known yet.
 function Get-OwnedPlan {
     param(
-        [string] $Document,
+        # Untyped: a null config must stay null, because a [string] parameter turns it into an empty string.
+        $Document,
         [object[]] $Layers,
         [object[]] $ClaudeRecords,
         [object[]] $OpenCodeLayers,
@@ -859,27 +1013,30 @@ function Get-OwnedPlan {
     $layerByName = @{}
     foreach ($layer in $Layers) { $layerByName[$layer.name] = $layer }
 
-    # An apply that finds the config matching by trimmed text leaves the file as it is.
-    $configExists = Test-Path -LiteralPath $configTarget -PathType Leaf
-    $configText = $null
-    if ($configExists) { $configText = Get-Content -LiteralPath $configTarget -Raw }
-    $configUnchanged = ($null -ne $configText) -and ($configText.Trim() -eq $Document.Trim())
-    $configSha = Get-TextSha256 $Document
-    if ($configUnchanged) { $configSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash }
-    $records.Add((New-OwnedRecord -Path 'opencode.jsonc' -Kind 'file' -Sha256 $configSha))
+    # The config is an OpenCode output, so it has records only when opencode is selected.
+    if ($null -ne $Document) {
+        # An apply that finds the config matching by trimmed text leaves the file as it is.
+        $configExists = Test-Path -LiteralPath $configTarget -PathType Leaf
+        $configText = $null
+        if ($configExists) { $configText = Get-Content -LiteralPath $configTarget -Raw }
+        $configUnchanged = ($null -ne $configText) -and ($configText.Trim() -eq $Document.Trim())
+        $configSha = Get-TextSha256 $Document
+        if ($configUnchanged) { $configSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash }
+        $records.Add((New-OwnedRecord -Path 'opencode.jsonc' -Kind 'file' -Sha256 $configSha))
 
-    # A backup holds the config that the last change replaced, so an apply that changes the config
-    # writes a new one. An earlier backup stays as it is.
-    $backupSha = $null
-    if ($configExists -and -not $configUnchanged) {
-        $backupSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
-    } elseif (Test-Path -LiteralPath "$configTarget.bak" -PathType Leaf) {
-        $backupSha = (Get-FileHash -LiteralPath "$configTarget.bak" -Algorithm SHA256).Hash
-    }
-    if ($null -ne $backupSha) {
-        $backup = New-OwnedRecord -Path 'opencode.jsonc.bak' -Kind 'file' -Sha256 $backupSha
-        $backup | Add-Member -NotePropertyName backup -NotePropertyValue $true
-        $records.Add($backup)
+        # A backup holds the config that the last change replaced, so an apply that changes the config
+        # writes a new one. An earlier backup stays as it is.
+        $backupSha = $null
+        if ($configExists -and -not $configUnchanged) {
+            $backupSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
+        } elseif (Test-Path -LiteralPath "$configTarget.bak" -PathType Leaf) {
+            $backupSha = (Get-FileHash -LiteralPath "$configTarget.bak" -Algorithm SHA256).Hash
+        }
+        if ($null -ne $backupSha) {
+            $backup = New-OwnedRecord -Path 'opencode.jsonc.bak' -Kind 'file' -Sha256 $backupSha
+            $backup | Add-Member -NotePropertyName backup -NotePropertyValue $true
+            $records.Add($backup)
+        }
     }
 
     foreach ($record in $ClaudeRecords) {
@@ -890,7 +1047,8 @@ function Get-OwnedPlan {
         }
         $root = Get-LayerRoot $layerByName[$record.layer]
         $sha = $null
-        if ($null -ne $root) { $sha = Get-TreeSha256 $root }
+        if ($null -ne $root -and $record.kind -eq 'copy') { $sha = Get-ItemsTreeSha256 -Root $root -Items $record.items }
+        elseif ($null -ne $root) { $sha = Get-TreeSha256 $root }
         $records.Add((New-OwnedRecord -Path $path -Kind 'dir' -Sha256 $sha))
     }
 
@@ -1033,7 +1191,7 @@ function Get-OwnedState {
 # reported per entry, so one removed entry shows alone. An entry whose state cannot be known until an
 # apply syncs a pinned source is drifted, and it is reported once, like every other path.
 function Get-OwnershipReport {
-    param([object[]] $Recorded, [object[]] $Plan)
+    param([object[]] $Recorded, [object[]] $Plan, [string[]] $SelectedRuntimes, [string[]] $NotSelected)
 
     $results = [System.Collections.Generic.List[object]]::new()
     $plannedByKey = [hashtable]::new([StringComparer]::Ordinal)
@@ -1041,12 +1199,22 @@ function Get-OwnershipReport {
     $recordedKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $recordedPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $recordedEntries = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $notSelectedLabels = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($record in @($Recorded)) {
         $recordedKeys.Add((Get-OwnedKey $record)) | Out-Null
         $recordedPaths.Add($record.path) | Out-Null
     }
+    # An artifact of a runtime that is not selected is named, and never judged.
+    foreach ($path in @($NotSelected)) {
+        if ($notSelectedLabels.Add($path)) { $results.Add([pscustomobject]@{ state = 'not selected'; label = $path }) }
+    }
 
     foreach ($record in @($Recorded)) {
+        $runtime = Get-OwnedRuntime $record.path
+        if (($null -ne $runtime) -and ($SelectedRuntimes -notcontains $runtime)) {
+            if ($notSelectedLabels.Add($record.path)) { $results.Add([pscustomobject]@{ state = 'not selected'; label = $record.path }) }
+            continue
+        }
         if ($record.kind -ne 'json-entries') {
             $state = Get-OwnedState -Record $record -Planned $plannedByKey[(Get-OwnedKey $record)]
             $results.Add([pscustomobject]@{ state = $state; label = $record.path })
@@ -1099,7 +1267,7 @@ function Get-OwnershipReport {
     if (Test-Path -LiteralPath $bin -PathType Container) {
         foreach ($file in @(Get-ChildItem -LiteralPath $bin -File -Force)) {
             $path = ".maxstack/bin/$($file.Name)"
-            if (-not $recordedPaths.Contains($path)) { $results.Add([pscustomobject]@{ state = 'untracked'; label = $path }) }
+            if (-not $recordedPaths.Contains($path) -and -not $notSelectedLabels.Contains($path)) { $results.Add([pscustomobject]@{ state = 'untracked'; label = $path }) }
         }
     }
     return $results.ToArray()
@@ -1205,6 +1373,66 @@ foreach ($entry in @($LayerSource | ForEach-Object { $_ -split ',' } | Where-Obj
     $sourceOverrides[$overrideName] = $overridePath
 }
 
+# The previous lock records what the last apply installed. It is read before anything is resolved,
+# because its selection decides which layers and runtimes this run touches. Audit compares against
+# it, and apply removes only the folders it recorded.
+$priorStack = $null
+$priorLayers = @{}
+$priorPi = $null
+# The ownership list the previous apply wrote. $null means the lock predates it, or there is no lock.
+$priorOwned = $null
+# The directories and files an earlier apply recorded as created by the installer.
+$priorCreatedDirs = @()
+$priorCreatedFiles = @()
+if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
+    try {
+        $priorStack = Get-Content -LiteralPath $stackTarget -Raw | ConvertFrom-Json
+    } catch {
+        throw "Could not read the previous $stackTarget, so its selection is unknown. Fix or remove that file, then run again."
+    }
+    foreach ($priorLayer in @($priorStack.layers)) {
+        $priorLayers[$priorLayer.name] = $priorLayer
+    }
+    $priorPi = Get-Field $priorStack 'pi'
+    if ($null -ne $priorStack.PSObject.Properties['owned']) { $priorOwned = @($priorStack.owned) }
+    if ($null -ne $priorStack.PSObject.Properties['createdDirs']) { $priorCreatedDirs = @($priorStack.createdDirs) }
+    if ($null -ne $priorStack.PSObject.Properties['createdFiles']) { $priorCreatedFiles = @($priorStack.createdFiles) }
+}
+
+# The selection. Flags add names to the recorded selection; an unnamed dimension keeps what is recorded.
+# A lock with no selection reads as all, and a new workspace starts with exactly what is named.
+$recordedSelection = Read-RecordedSelection -Stack $priorStack -LayerNames $layerNames
+$recordedRuntimes = if ($null -ne $recordedSelection) { $recordedSelection.runtimes } else { $null }
+$recordedLayers = if ($null -ne $recordedSelection) { $recordedSelection.layers } else { $null }
+$runtimesNamed = $PSBoundParameters.ContainsKey('RequestedRuntimes')
+$layersNamed = $PSBoundParameters.ContainsKey('RequestedLayers')
+$namedRuntimes = if ($runtimesNamed) { Get-NamedValues -Values $RequestedRuntimes -Valid $runtimeNames -Parameter 'Runtimes' } else { @() }
+$namedLayers = if ($layersNamed) { Get-NamedValues -Values $RequestedLayers -Valid $layerNames -Parameter 'Layers' } else { @() }
+$selectedRuntimes = @(Merge-Selected -Recorded $recordedRuntimes -All $runtimeNames -Named $namedRuntimes -HasNames $runtimesNamed -Label 'runtimes')
+$selectedLayers = @(Merge-Selected -Recorded $recordedLayers -All $layerNames -Named $namedLayers -HasNames $layersNamed -Label 'layers')
+Assert-SelectionRuntimes -Runtimes $selectedRuntimes
+$copilotSelected = $selectedRuntimes -contains 'copilot'
+$piSelected = $selectedRuntimes -contains 'pi'
+$openCodeSelected = $selectedRuntimes -contains 'opencode'
+$claudeSelected = $selectedRuntimes -contains 'claude'
+
+# A layer installs only the selected runtimes it declares. A selected layer that declares none of them
+# is reported and installs nothing. An unselected layer keeps no runtimes, so the lock records it disabled.
+$allLayers = $layers
+foreach ($layer in $allLayers) {
+    $active = @{}
+    if ($selectedLayers -contains $layer.name) {
+        foreach ($runtime in $selectedRuntimes) {
+            if ($layer.declared.ContainsKey($runtime)) { $active[$runtime] = $layer.declared[$runtime] }
+        }
+        if ($active.Count -eq 0) { Write-Host "Layer '$($layer.name)' declares none of the selected runtimes, so it installs nothing." }
+    }
+    $layer.runtimes = $active
+}
+$layers = @($allLayers | Where-Object { $_.runtimes.Count -gt 0 })
+$activeLayerNames = @($layers | ForEach-Object { $_.name })
+$unselectedLayerNames = @($layerNames | Where-Object { $selectedLayers -notcontains $_ })
+
 foreach ($layer in $layers) {
     if ($null -eq $layer.path) { continue }
     $root = Join-Path $Workspace $layer.path
@@ -1251,29 +1479,6 @@ $openCodeLayers = @($layers | Where-Object { $_.runtimes.ContainsKey('opencode')
 $openCodeSpecs = @{}
 foreach ($layer in $openCodeLayers) { $openCodeSpecs[$layer.name] = Get-OpenCodeSpec $layer }
 
-# The previous lock records what the last apply installed. Audit compares against it, and
-# apply removes only the folders it recorded.
-$priorLayers = @{}
-$priorPi = $null
-# The ownership list the previous apply wrote. $null means the lock predates it, or there is no lock.
-$priorOwned = $null
-# The directories and files an earlier apply recorded as created by the installer.
-$priorCreatedDirs = @()
-$priorCreatedFiles = @()
-if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
-    try {
-        $priorStack = Get-Content -LiteralPath $stackTarget -Raw | ConvertFrom-Json
-        foreach ($priorLayer in @($priorStack.layers)) {
-            $priorLayers[$priorLayer.name] = $priorLayer
-        }
-        $priorPi = Get-Field $priorStack 'pi'
-        if ($null -ne $priorStack.PSObject.Properties['owned']) { $priorOwned = @($priorStack.owned) }
-        if ($null -ne $priorStack.PSObject.Properties['createdDirs']) { $priorCreatedDirs = @($priorStack.createdDirs) }
-        if ($null -ne $priorStack.PSObject.Properties['createdFiles']) { $priorCreatedFiles = @($priorStack.createdFiles) }
-    } catch {
-        Write-Warning "Could not read the previous $stackTarget; every Claude child and plugin folder will report as differs until the next apply."
-    }
-}
 $priorOpenCodeFolders = @($priorLayers.Values | ForEach-Object { Get-Field (Get-Field $_ 'opencode') 'folder' } | Where-Object { $_ } | ForEach-Object { Split-Path -Leaf $_ })
 
 $copilotLayers = @($layers | Where-Object { $_.runtimes.ContainsKey('copilot') })
@@ -1308,59 +1513,63 @@ if ($piExecutable) {
     Write-Warning "Pi CLI not found: no '$PiCommand' application outside .maxstack\bin. Skipping $piCmdTarget and $piShTarget. Install Pi, then rerun with -Apply."
 }
 $piSettings = $null
-if ($piLayers.Count -gt 0 -or (Test-Path -LiteralPath $piSettingsTarget -PathType Leaf)) {
+if ($piSelected -and ($piLayers.Count -gt 0 -or (Test-Path -LiteralPath $piSettingsTarget -PathType Leaf))) {
     $piSettings = Get-PiSettings -Packages $piPackageEntries -Skills $piSkillEntries `
         -OwnedPackages (Get-OwnedPiEntries -Owned $priorOwned -LegacyPi $priorPi -Key 'packages') `
         -OwnedSkills (Get-OwnedPiEntries -Owned $priorOwned -LegacyPi $priorPi -Key 'skills')
 }
 
-$base = Get-Content -LiteralPath $baseConfigFile -Raw | ConvertFrom-Json
-$serverMaps = @()
-$extraPermissions = @()
-foreach ($layer in $layers) {
-    if ($layer.kind -ne 'config') { continue }
-    $layerJson = Read-LayerJson $layer.root
-    $fragmentName = Get-Field $layerJson 'config'
-    $fragmentPath = Join-Path $layer.root $(if ($fragmentName) { $fragmentName } else { 'opencode.fragment.jsonc' })
-    if (-not (Test-Path -LiteralPath $fragmentPath -PathType Leaf)) {
-        throw "Layer '$($layer.name)' has no config fragment: $fragmentPath"
+# The config is OpenCode's. Without the opencode runtime it is neither built nor written.
+$document = $null
+if ($openCodeSelected) {
+    $base = Get-Content -LiteralPath $baseConfigFile -Raw | ConvertFrom-Json
+    $serverMaps = @()
+    $extraPermissions = @()
+    foreach ($layer in $layers) {
+        if ($layer.kind -ne 'config') { continue }
+        $layerJson = Read-LayerJson $layer.root
+        $fragmentName = Get-Field $layerJson 'config'
+        $fragmentPath = Join-Path $layer.root $(if ($fragmentName) { $fragmentName } else { 'opencode.fragment.jsonc' })
+        if (-not (Test-Path -LiteralPath $fragmentPath -PathType Leaf)) {
+            throw "Layer '$($layer.name)' has no config fragment: $fragmentPath"
+        }
+        $fragment = Get-Content -LiteralPath $fragmentPath -Raw | ConvertFrom-Json
+        $mcpProperty = $fragment.PSObject.Properties['mcp']
+        if ($mcpProperty) {
+            $serversProperty = $mcpProperty.Value.PSObject.Properties['servers']
+            if ($serversProperty) { $serverMaps += $serversProperty.Value }
+        }
+        $permissionProperty = $fragment.PSObject.Properties['permissions']
+        if ($permissionProperty) { $extraPermissions += $permissionProperty.Value }
     }
-    $fragment = Get-Content -LiteralPath $fragmentPath -Raw | ConvertFrom-Json
-    $mcpProperty = $fragment.PSObject.Properties['mcp']
-    if ($mcpProperty) {
-        $serversProperty = $mcpProperty.Value.PSObject.Properties['servers']
-        if ($serversProperty) { $serverMaps += $serversProperty.Value }
-    }
-    $permissionProperty = $fragment.PSObject.Properties['permissions']
-    if ($permissionProperty) { $extraPermissions += $permissionProperty.Value }
-}
 
-$servers = [ordered]@{}
-foreach ($map in $serverMaps) {
-    foreach ($property in $map.PSObject.Properties) {
-        $servers[$property.Name] = $property.Value
+    $servers = [ordered]@{}
+    foreach ($map in $serverMaps) {
+        foreach ($property in $map.PSObject.Properties) {
+            $servers[$property.Name] = $property.Value
+        }
     }
-}
 
-if (-not $base.PSObject.Properties['mcp']) {
-    $base | Add-Member -NotePropertyName mcp -NotePropertyValue ([pscustomobject]@{}) -Force
+    if (-not $base.PSObject.Properties['mcp']) {
+        $base | Add-Member -NotePropertyName mcp -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+    if (-not $base.mcp.PSObject.Properties['servers']) {
+        $base.mcp | Add-Member -NotePropertyName servers -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+    foreach ($name in $servers.Keys) {
+        $base.mcp.servers | Add-Member -NotePropertyName $name -NotePropertyValue $servers[$name] -Force
+    }
+    if ($extraPermissions.Count -gt 0) {
+        $base.permissions = @($base.permissions) + $extraPermissions
+    }
+    # A nested entry point is named here, relative to this file, so the path holds no
+    # machine-specific root. Root-level index.ts entries load on their own and are not listed.
+    $pluginEntries = @($openCodeLayers | ForEach-Object { Get-OpenCodePluginPath -Layer $_ -Spec $openCodeSpecs[$_.name] } | Where-Object { $_ })
+    if ($pluginEntries.Count -gt 0) {
+        $base | Add-Member -NotePropertyName plugin -NotePropertyValue $pluginEntries -Force
+    }
+    $document = ($base | ConvertTo-Json -Depth 100)
 }
-if (-not $base.mcp.PSObject.Properties['servers']) {
-    $base.mcp | Add-Member -NotePropertyName servers -NotePropertyValue ([pscustomobject]@{}) -Force
-}
-foreach ($name in $servers.Keys) {
-    $base.mcp.servers | Add-Member -NotePropertyName $name -NotePropertyValue $servers[$name] -Force
-}
-if ($extraPermissions.Count -gt 0) {
-    $base.permissions = @($base.permissions) + $extraPermissions
-}
-# A nested entry point is named here, relative to this file, so the path holds no
-# machine-specific root. Root-level index.ts entries load on their own and are not listed.
-$pluginEntries = @($openCodeLayers | ForEach-Object { Get-OpenCodePluginPath -Layer $_ -Spec $openCodeSpecs[$_.name] } | Where-Object { $_ })
-if ($pluginEntries.Count -gt 0) {
-    $base | Add-Member -NotePropertyName plugin -NotePropertyValue $pluginEntries -Force
-}
-$document = ($base | ConvertTo-Json -Depth 100)
 
 # Apply needs the plan, and status needs it only to compare with a record. Audit does not need it.
 # A pinned layer whose cache is not at its pin cannot say which Pi entries it adds. Only those entries
@@ -1379,40 +1588,59 @@ if ($Apply -or ($Status -and $null -ne $priorOwned)) {
         -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown
 }
 
+# The Claude plugin folders, and the OpenCode folders that no unselected layer owns. An unselected
+# runtime's folders and files are left alone, so neither apply nor audit touches them.
+$staleOpenCodeFolders = @()
+if ($openCodeSelected) {
+    $staleOpenCodeFolders = @(Get-StalePluginFolders -Wanted @($openCodeLayers | ForEach-Object { $_.name }) | Where-Object { $unselectedLayerNames -notcontains $_.Name })
+}
+
 if ($Status) {
+    if ($null -eq $priorStack) {
+        Write-Host 'Selection: none recorded; an apply selects all'
+    } else {
+        $legacyNote = if ($null -eq (Get-Field $priorStack 'selection')) { ' (the lock predates the selection, so all)' } else { '' }
+        Write-Host ((Format-Selection -Runtimes $selectedRuntimes -Layers $selectedLayers) + $legacyNote)
+    }
     if ($null -eq $priorOwned) {
         Write-Host 'no ownership record; run -Apply once to create it'
         if ($Strict) { exit 1 }
         return
     }
-    $results = @(Get-OwnershipReport -Recorded $priorOwned -Plan $plan)
-    foreach ($result in $results) { Write-Host ('{0,-10} {1}' -f $result.state, $result.label) }
-    $counts = foreach ($state in @('matching', 'drifted', 'modified', 'missing', 'untracked')) {
+    $notSelected = @(Get-NotSelectedPaths -SelectedRuntimes $selectedRuntimes)
+    $results = @(Get-OwnershipReport -Recorded $priorOwned -Plan $plan -SelectedRuntimes $selectedRuntimes -NotSelected $notSelected)
+    foreach ($result in $results) { Write-Host ('{0,-12} {1}' -f $result.state, $result.label) }
+    $counts = foreach ($state in @('matching', 'drifted', 'modified', 'missing', 'untracked', 'not selected')) {
         "$(@($results | Where-Object { $_.state -eq $state }).Count) $state"
     }
     Write-Host ('Summary: ' + ($counts -join ', '))
-    if ($Strict -and @($results | Where-Object { $_.state -ne 'matching' }).Count -gt 0) { exit 1 }
+    if ($Strict -and @($results | Where-Object { $_.state -notin @('matching', 'not selected') }).Count -gt 0) { exit 1 }
     return
 }
 
 if (-not $Apply) {
     Write-Host "Workspace:      $Workspace"
+    Write-Host (Format-Selection -Runtimes $selectedRuntimes -Layers $selectedLayers)
     foreach ($layer in $layers) {
         $where = if ($layer.root) { $layer.root } else { "pinned $($layer.url) at $($layer.commit)" }
         Write-Host ("Layer:          {0} ({1}) at {2}" -f $layer.name, $layer.kind, $where)
     }
-    Write-Host "Config target:  $configTarget"
-    Write-Host ("Drift:          {0}: {1}" -f $configTarget, (Get-DriftState -Path $configTarget -Text $document))
-    $wantedClaude = @($claudeRecords | ForEach-Object { $_.plugin })
-    foreach ($record in $claudeRecords) {
-        $child = Join-Path $claudePluginsTarget $record.plugin
-        $target = if ($record.kind -eq 'junction') { Join-Path $Workspace $record.target } else { $null }
-        $prior = Get-Field $priorLayers[$record.layer] 'claude'
-        Write-Host ("Drift:          {0}: {1}" -f $child, (Get-ClaudeChildState -Record $record -Prior $prior -Child $child -Target $target))
+    if ($openCodeSelected) {
+        Write-Host "Config target:  $configTarget"
+        Write-Host ("Drift:          {0}: {1}" -f $configTarget, (Get-DriftState -Path $configTarget -Text $document))
     }
-    if (Test-Path -LiteralPath $claudePluginsTarget -PathType Container) {
-        foreach ($entry in Get-ChildItem -LiteralPath $claudePluginsTarget -Force) {
-            if ($wantedClaude -notcontains $entry.Name) { Write-Host ("Drift:          {0}: stale" -f $entry.FullName) }
+    if ($claudeSelected) {
+        $wantedClaude = @($claudeRecords | ForEach-Object { $_.plugin })
+        foreach ($record in $claudeRecords) {
+            $child = Join-Path $claudePluginsTarget $record.plugin
+            $target = if ($record.kind -eq 'junction') { Join-Path $Workspace $record.target } else { $null }
+            $prior = Get-Field $priorLayers[$record.layer] 'claude'
+            Write-Host ("Drift:          {0}: {1}" -f $child, (Get-ClaudeChildState -Record $record -Prior $prior -Child $child -Target $target))
+        }
+        if (Test-Path -LiteralPath $claudePluginsTarget -PathType Container) {
+            foreach ($entry in Get-ChildItem -LiteralPath $claudePluginsTarget -Force) {
+                if ($wantedClaude -notcontains $entry.Name -and $unselectedLayerNames -notcontains $entry.Name) { Write-Host ("Drift:          {0}: stale" -f $entry.FullName) }
+            }
         }
     }
     foreach ($layer in $openCodeLayers) {
@@ -1423,44 +1651,50 @@ if (-not $Apply) {
         $plugin = Get-OpenCodePluginPath -Layer $layer -Spec $spec
         Write-Host ("Drift:          {0}: {1}" -f $folder, (Get-OpenCodeState -EntryPath $entryPath -Prior $prior -Entry $spec.entry -Plugin $plugin))
     }
-    foreach ($entry in Get-StalePluginFolders -Wanted @($openCodeLayers | ForEach-Object { $_.name })) {
+    foreach ($entry in $staleOpenCodeFolders) {
         Write-Host ("Drift:          {0}: stale" -f $entry.FullName)
     }
-    if ($copilotCmdText) {
-        Write-Host ("Drift:          {0}: {1}" -f $copilotCmdTarget, (Get-DriftState -Path $copilotCmdTarget -Text $copilotCmdText))
-        Write-Host ("Drift:          {0}: {1}" -f $copilotShTarget, (Get-DriftState -Path $copilotShTarget -Text $copilotShText))
-    } else {
-        foreach ($path in @($copilotCmdTarget, $copilotShTarget)) {
-            if (Test-Path -LiteralPath $path -PathType Leaf) { Write-Host ("Drift:          {0}: stale" -f $path) }
+    if ($copilotSelected) {
+        if ($copilotCmdText) {
+            Write-Host ("Drift:          {0}: {1}" -f $copilotCmdTarget, (Get-DriftState -Path $copilotCmdTarget -Text $copilotCmdText))
+            Write-Host ("Drift:          {0}: {1}" -f $copilotShTarget, (Get-DriftState -Path $copilotShTarget -Text $copilotShText))
+        } else {
+            foreach ($path in @($copilotCmdTarget, $copilotShTarget)) {
+                if (Test-Path -LiteralPath $path -PathType Leaf) { Write-Host ("Drift:          {0}: stale" -f $path) }
+            }
         }
     }
-    if ($piCmdText) {
-        Write-Host ("Drift:          {0}: {1}" -f $piCmdTarget, (Get-DriftState -Path $piCmdTarget -Text $piCmdText))
-        Write-Host ("Drift:          {0}: {1}" -f $piShTarget, (Get-DriftState -Path $piShTarget -Text $piShText))
-    } else {
-        foreach ($path in @($piCmdTarget, $piShTarget)) {
-            if (Test-Path -LiteralPath $path -PathType Leaf) { Write-Host ("Drift:          {0}: stale" -f $path) }
+    if ($piSelected) {
+        if ($piCmdText) {
+            Write-Host ("Drift:          {0}: {1}" -f $piCmdTarget, (Get-DriftState -Path $piCmdTarget -Text $piCmdText))
+            Write-Host ("Drift:          {0}: {1}" -f $piShTarget, (Get-DriftState -Path $piShTarget -Text $piShText))
+        } else {
+            foreach ($path in @($piCmdTarget, $piShTarget)) {
+                if (Test-Path -LiteralPath $path -PathType Leaf) { Write-Host ("Drift:          {0}: stale" -f $path) }
+            }
         }
-    }
-    if ($piPending) {
-        Write-Host ("Drift:          {0}: unknown until -Apply syncs the pstack cache" -f $piSettingsTarget)
-    } elseif ($piSettings) {
-        Write-Host ("Drift:          {0}: {1}" -f $piSettingsTarget, (Get-DriftState -Path $piSettingsTarget -Text $piSettings.text))
+        if ($piPending) {
+            Write-Host ("Drift:          {0}: unknown until -Apply syncs the pstack cache" -f $piSettingsTarget)
+        } elseif ($piSettings) {
+            Write-Host ("Drift:          {0}: {1}" -f $piSettingsTarget, (Get-DriftState -Path $piSettingsTarget -Text $piSettings.text))
+        }
     }
     Write-Host 'Audit only. No files or workspace configuration changed. Rerun with -Apply after reviewing.'
     return
 }
 
-New-Item -ItemType Directory -Path (Split-Path -Parent $configTarget) -Force | Out-Null
-if ((Test-Path -LiteralPath $configTarget) -and ((Get-Content -LiteralPath $configTarget -Raw).Trim() -eq $document.Trim())) {
-    Write-Host "Config already matches: $configTarget"
-} else {
-    if (Test-Path -LiteralPath $configTarget) {
-        Copy-Item -LiteralPath $configTarget -Destination "$configTarget.bak" -Force
-        Write-Host "Backed up the previous config to $configTarget.bak"
+if ($openCodeSelected) {
+    New-Item -ItemType Directory -Path (Split-Path -Parent $configTarget) -Force | Out-Null
+    if ((Test-Path -LiteralPath $configTarget) -and ((Get-Content -LiteralPath $configTarget -Raw).Trim() -eq $document.Trim())) {
+        Write-Host "Config already matches: $configTarget"
+    } else {
+        if (Test-Path -LiteralPath $configTarget) {
+            Copy-Item -LiteralPath $configTarget -Destination "$configTarget.bak" -Force
+            Write-Host "Backed up the previous config to $configTarget.bak"
+        }
+        [IO.File]::WriteAllText($configTarget, $document, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "Wrote $configTarget"
     }
-    [IO.File]::WriteAllText($configTarget, $document, (New-Object System.Text.UTF8Encoding($false)))
-    Write-Host "Wrote $configTarget"
 }
 
 # Each OpenCode layer gets its own folder under .opencode\plugins, holding the items the
@@ -1524,9 +1758,9 @@ foreach ($layer in $openCodeLayers) {
     }
 }
 
-# A folder under .opencode\plugins that no layer names goes when the previous lock
+# A folder under .opencode\plugins that no selected layer names goes when the previous lock
 # recorded it, or when it is the retired port's folder. Any other folder is kept.
-foreach ($entry in Get-StalePluginFolders -Wanted @($openCodeLayers | ForEach-Object { $_.name })) {
+foreach ($entry in $staleOpenCodeFolders) {
     if (($priorOpenCodeFolders -contains $entry.Name) -or ($retiredOpenCodeFolders -contains $entry.Name)) {
         Remove-OwnedTree $entry.FullName
         Write-Host "Removed the stale plugin folder $($entry.FullName)"
@@ -1535,36 +1769,42 @@ foreach ($entry in Get-StalePluginFolders -Wanted @($openCodeLayers | ForEach-Ob
     }
 }
 
-# Build the Claude children. A local child is a junction to the installed copy; a
-# git child is a copy of the pinned plugin folder.
+# Build the Claude children. A local child is a junction to the installed copy when opencode is
+# selected, and a copy of its items when it is not. A git child is a copy of the pinned plugin folder.
 $layerByName = @{}
 foreach ($layer in $layers) { $layerByName[$layer.name] = $layer }
-New-Item -ItemType Directory -Path $claudePluginsTarget -Force | Out-Null
-foreach ($record in $claudeRecords) {
-    $child = Join-Path $claudePluginsTarget $record.plugin
-    if ($record.kind -eq 'junction') {
-        $target = Join-Path $Workspace $record.target
-        if (-not (Test-ClaudeJunction -Child $child -Target $target)) {
+if ($claudeSelected) {
+    New-Item -ItemType Directory -Path $claudePluginsTarget -Force | Out-Null
+    foreach ($record in $claudeRecords) {
+        $child = Join-Path $claudePluginsTarget $record.plugin
+        if ($record.kind -eq 'junction') {
+            $target = Join-Path $Workspace $record.target
+            if (-not (Test-ClaudeJunction -Child $child -Target $target)) {
+                Remove-ClaudeChild $child
+                New-Item -ItemType Junction -Path $child -Target $target | Out-Null
+                Write-Host "Linked Claude plugin '$($record.plugin)' to $target"
+            }
+        } elseif ($record.kind -eq 'copy') {
             Remove-ClaudeChild $child
-            New-Item -ItemType Junction -Path $child -Target $target | Out-Null
-            Write-Host "Linked Claude plugin '$($record.plugin)' to $target"
+            Copy-LayerItems -Root $layerByName[$record.layer].root -Items $record.items -Destination $child
+            Write-Host "Copied Claude plugin '$($record.plugin)' from $($layerByName[$record.layer].root)"
+        } else {
+            Remove-ClaudeChild $child
+            Copy-Item -LiteralPath $layerByName[$record.layer].root -Destination $child -Recurse -Force
+            Write-Host "Copied Claude plugin '$($record.plugin)' from $($record.url) at $($record.commit)"
         }
-    } else {
-        Remove-ClaudeChild $child
-        Copy-Item -LiteralPath $layerByName[$record.layer].root -Destination $child -Recurse -Force
-        Write-Host "Copied Claude plugin '$($record.plugin)' from $($record.url) at $($record.commit)"
+        $declared = Get-Field (Get-Content -LiteralPath (Join-Path $child '.claude-plugin\plugin.json') -Raw | ConvertFrom-Json) 'name'
+        if ($declared -ne $record.plugin) {
+            throw "Claude plugin '$($record.plugin)' materialised at $child names '$declared' in its manifest."
+        }
     }
-    $declared = Get-Field (Get-Content -LiteralPath (Join-Path $child '.claude-plugin\plugin.json') -Raw | ConvertFrom-Json) 'name'
-    if ($declared -ne $record.plugin) {
-        throw "Claude plugin '$($record.plugin)' materialised at $child names '$declared' in its manifest."
-    }
-}
-if (Test-Path -LiteralPath $claudePluginsTarget -PathType Container) {
-    $wantedClaude = @($claudeRecords | ForEach-Object { $_.plugin })
-    foreach ($entry in Get-ChildItem -LiteralPath $claudePluginsTarget -Force) {
-        if ($wantedClaude -notcontains $entry.Name) {
-            Remove-ClaudeChild $entry.FullName
-            Write-Host "Removed the stale Claude plugin $($entry.Name)"
+    if (Test-Path -LiteralPath $claudePluginsTarget -PathType Container) {
+        $wantedClaude = @($claudeRecords | ForEach-Object { $_.plugin })
+        foreach ($entry in Get-ChildItem -LiteralPath $claudePluginsTarget -Force) {
+            if (($wantedClaude -notcontains $entry.Name) -and ($unselectedLayerNames -notcontains $entry.Name)) {
+                Remove-ClaudeChild $entry.FullName
+                Write-Host "Removed the stale Claude plugin $($entry.Name)"
+            }
         }
     }
 }
@@ -1577,7 +1817,7 @@ if ($copilotCmdText) {
     [IO.File]::WriteAllText($copilotShTarget, $copilotShText, $utf8)
     Set-ShellExecutable $copilotShTarget
     Write-Host "Wrote $copilotCmdTarget and $copilotShTarget"
-} else {
+} elseif ($copilotSelected) {
     foreach ($path in @($copilotCmdTarget, $copilotShTarget)) {
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             Remove-Item -LiteralPath $path -Force
@@ -1615,7 +1855,7 @@ if ($piCmdText) {
     [IO.File]::WriteAllText($piShTarget, $piShText, $utf8)
     Set-ShellExecutable $piShTarget
     Write-Host "Wrote $piCmdTarget and $piShTarget"
-} else {
+} elseif ($piSelected) {
     foreach ($path in @($piCmdTarget, $piShTarget)) {
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             Remove-Item -LiteralPath $path -Force
@@ -1626,13 +1866,13 @@ if ($piCmdText) {
 
 $claudeByLayer = @{}
 foreach ($record in $claudeRecords) { $claudeByLayer[$record.layer] = $record }
-$layerRecords = foreach ($layer in $layers) {
+# A layer that installs nothing this run is recorded disabled, and a pinned one keeps its pin.
+$layerRecords = foreach ($layer in $allLayers) {
     $record = $claudeByLayer[$layer.name]
-    if ($null -eq $layer.url) {
+    $commit = $layer.commit
+    if (($null -eq $layer.url) -and ($activeLayerNames -contains $layer.name)) {
         $head = (& git -C $layer.root rev-parse HEAD 2>$null)
         $commit = if ($head) { $head.Trim() } else { $null }
-    } else {
-        $commit = $layer.commit
     }
     if ($record) {
         $child = Join-Path $claudePluginsTarget $record.plugin
@@ -1644,6 +1884,14 @@ $layerRecords = foreach ($layer in $layers) {
                 kind       = 'junction'
                 child      = ".claude/plugins/$($record.plugin)"
                 target     = $record.target
+                treeSha256 = $treeSha
+            }
+        } elseif ($record.kind -eq 'copy') {
+            $claude = [pscustomobject]@{
+                enabled    = $true
+                plugin     = $record.plugin
+                kind       = 'copy'
+                child      = ".claude/plugins/$($record.plugin)"
                 treeSha256 = $treeSha
             }
         } else {
@@ -1710,7 +1958,7 @@ $copilotLock = if ($copilotCmdText) {
         shSha256   = Get-TextSha256 $copilotShText
     }
 } else {
-    $reason = if ($copilotLayers.Count -eq 0) { 'no layer declares copilot' } else { "no '$CopilotCommand' application outside .maxstack\bin" }
+    $reason = if (-not $copilotSelected) { 'not selected' } elseif ($copilotLayers.Count -eq 0) { 'no layer declares copilot' } else { "no '$CopilotCommand' application outside .maxstack\bin" }
     [pscustomobject]@{ enabled = $false; reason = $reason }
 }
 
@@ -1726,7 +1974,7 @@ $piLock = if ($piCmdText) {
         skills     = @($piSkillEntries)
     }
 } else {
-    $reason = if ($piLayers.Count -eq 0) { 'no layer declares pi' } else { "no '$PiCommand' application outside .maxstack\bin" }
+    $reason = if (-not $piSelected) { 'not selected' } elseif ($piLayers.Count -eq 0) { 'no layer declares pi' } else { "no '$PiCommand' application outside .maxstack\bin" }
     [pscustomobject]@{
         enabled  = $false
         reason   = $reason
@@ -1760,7 +2008,8 @@ $owned = Get-OwnedRecords -Plan $plan -CreatedKeys $createdKeys
 $stack = [pscustomobject]@{
     generatedAt  = (Get-Date).ToUniversalTime().ToString('o')
     workspace    = $workspaceName
-    configSha256 = Get-TextSha256 $document
+    selection    = [pscustomobject]@{ runtimes = @($selectedRuntimes); layers = @($selectedLayers) }
+    configSha256 = if ($null -ne $document) { Get-TextSha256 $document } else { $null }
     copilot      = $copilotLock
     pi           = $piLock
     layers       = $layerRecords
