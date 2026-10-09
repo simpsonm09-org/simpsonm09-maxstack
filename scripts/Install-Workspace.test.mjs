@@ -31,6 +31,7 @@ const installer = join(repoRoot, 'scripts', 'Install-Workspace.ps1');
 // matches its layer name. pstack is pinned to a git source and needs no local checkout.
 const LOCAL_LAYERS = ['projects/repos/simpsonm09-org-ai-plugin', 'projects/repos/simpsonm09-personal-ai-plugin'];
 const MISSING_COPILOT = 'maxstack-test-no-such-copilot';
+const MISSING_PI = 'maxstack-test-no-such-pi';
 
 let layersCounter = 0;
 
@@ -76,14 +77,19 @@ function plainOutput(run) {
 }
 
 // A local layer stub: an index.ts, a node_modules tree so the installer skips npm, a
-// fragment, and a layer.json. A claude runtime needs .claude-plugin in its files list.
-function writeLayerStub(root, { claudePlugin = null, manifestName = claudePlugin, withManifest = true, extra = {} } = {}) {
-  const files = ['index.ts', 'node_modules', ...Object.keys(extra)];
+// fragment, a skills folder, a package.json, and a layer.json. A claude runtime needs
+// .claude-plugin in its files list. A pi key adds a pi folder and lists it in the files.
+function writeLayerStub(root, { claudePlugin = null, manifestName = claudePlugin, withManifest = true, extra = {}, pi = null } = {}) {
+  const files = ['index.ts', 'node_modules', 'package.json', 'skills', ...Object.keys(extra)];
   if (claudePlugin) files.push('.claude-plugin');
+  if (pi) files.push('pi');
   writeFile(root, 'index.ts', 'export default {};\n');
   writeFile(root, 'layer.json', JSON.stringify({ files }));
+  writeFile(root, 'package.json', JSON.stringify({ name: manifestName ?? 'layer', version: '0.1.0', ...(pi ? { pi } : {}) }));
+  writeFile(root, 'skills/demo-skill/SKILL.md', '---\nname: demo-skill\ndescription: fixture\n---\nbody\n');
   writeFile(root, 'node_modules/@opencode/plugin/index.js', 'module.exports = {};\n');
   writeFile(root, 'opencode.fragment.jsonc', '{}');
+  if (pi) writeFile(root, 'pi/index.ts', 'export default {};\n');
   for (const [rel, content] of Object.entries(extra)) writeFile(root, rel, content);
   if (claudePlugin && withManifest) {
     writeFile(root, '.claude-plugin/plugin.json', JSON.stringify({ name: manifestName, version: '0.1.0' }));
@@ -106,6 +112,9 @@ function makeFixture(base) {
   writeFile(dir, `${plugin}/opencode/agents/pstack-agent.md`, '---\ndescription: worker\nmodel: opencode-go/deepseek-v4.1-flash\n---\nbody\nmodel: a body line\n');
   writeFile(dir, `${plugin}/opencode/agents/pstack-reviewer.md`, '---\ndescription: reviewer\n---\nreview\n');
   writeFile(dir, `${plugin}/opencode/agents/pstack-comment-sicko.md`, '---\ndescription: comments\n---\ncomments\n');
+  // The pinned repository root is the Pi package: its pi key names paths under plugins/pstack.
+  writeFile(dir, 'package.json', JSON.stringify({ name: 'pstack', version: '0.9.79', pi: { skills: ['./plugins/pstack/skills'], extensions: ['./plugins/pstack/pi/index.ts'] } }));
+  writeFile(dir, `${plugin}/pi/index.ts`, 'export default {};\n');
   writeFile(dir, 'other/notes.txt', 'outside the plugin folder\n');
   const git = (args) => {
     const run = spawnSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', ...args], { cwd: dir, encoding: 'utf8' });
@@ -127,6 +136,13 @@ function writeFakeCopilot(base) {
   return path;
 }
 
+// A stand-in for the Pi CLI: it echoes the agent folder, the ask switch, and its arguments.
+function writeFakePi(base) {
+  const path = join(base, 'fake-pi.cmd');
+  writeFileSync(path, '@echo off\r\necho AGENT_DIR=%PI_CODING_AGENT_DIR%\r\necho ASK=%AGENT_ACCESS_PI_ASK%\r\necho ARGS=%*\r\n');
+  return path;
+}
+
 function buildWorkspace({ withManifests = true } = {}) {
   const base = mkdtempSync(join(tmpdir(), 'maxstack-lock-'));
   const workspace = join(base, 'simpsonm09');
@@ -134,7 +150,7 @@ function buildWorkspace({ withManifests = true } = {}) {
     const name = layerPath.split('/').pop();
     writeLayerStub(join(workspace, layerPath), { claudePlugin: name, withManifest: withManifests });
   }
-  return { base, workspace, fixture: makeFixture(base), fakeCopilot: writeFakeCopilot(base) };
+  return { base, workspace, fixture: makeFixture(base), fakeCopilot: writeFakeCopilot(base), fakePi: writeFakePi(base) };
 }
 
 // The repository layers.json with the pstack source pointed at the fixture, and an
@@ -154,14 +170,16 @@ function layerNamed(manifest, name) {
   return manifest.layers.find((layer) => layer.name === name);
 }
 
-// Runs the installer. Copilot is the stand-in unless the caller names -CopilotCommand.
+// Runs the installer. Copilot and Pi are the stand-ins unless the caller names their command.
 function runInstaller(shell, ctx, extra = [], { apply = true, layersFile = writeLayers(ctx) } = {}) {
   const copilot = extra.includes('-CopilotCommand') ? [] : ['-CopilotCommand', ctx.fakeCopilot];
+  const pi = extra.includes('-PiCommand') ? [] : ['-PiCommand', ctx.fakePi];
   const args = [
     '-NoProfile', '-NonInteractive', '-File', installer,
     '-Workspace', ctx.workspace,
     ...(layersFile ? ['-LayersFile', layersFile] : []),
     ...copilot,
+    ...pi,
     ...(apply ? ['-Apply'] : []),
     ...extra,
   ];
@@ -220,13 +238,17 @@ withWorkspace('the lock records each layer once, with its runtimes and no absolu
     assert.equal(typeof record.name, 'string');
     assert.equal(typeof record.kind, 'string');
     assert.equal(typeof record.source, 'string', `layer ${record.name} records its source`);
-    for (const runtime of ['claude', 'opencode', 'copilot']) {
+    for (const runtime of ['claude', 'opencode', 'copilot', 'pi']) {
       assert.equal(typeof record[runtime]?.enabled, 'boolean', `layer ${record.name} has a ${runtime} record`);
     }
   }
   assert.equal(lock.copilot.enabled, true, 'the Copilot wrappers are recorded as written');
   assert.deepEqual(lock.copilot.wrappers, ['.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh']);
   assert.match(lock.copilot.cmdSha256, /^[0-9A-F]{64}$/);
+  assert.equal(lock.pi.enabled, true, 'the Pi wrappers are recorded as written');
+  assert.deepEqual(lock.pi.wrappers, ['.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh']);
+  assert.equal(lock.pi.agentDir, '.pi/agent');
+  assert.match(lock.pi.cmdSha256, /^[0-9A-F]{64}$/);
   assert.ok(!('claudeMarketplaceSha256' in lock), 'the marketplace hash is gone');
   assert.ok(!('claudeSettingsSha256' in lock), 'the settings hash is gone');
 }, {});
@@ -480,8 +502,9 @@ withWorkspace('a second apply is idempotent: the same links, tree hashes, and wr
   const audit = runInstaller(shell, ctx, [], { apply: false });
   assert.equal(audit.status, 0, audit.stderr);
   const drift = driftLines(audit);
-  // config, three Claude children, three OpenCode folders, and the two Copilot wrappers.
-  assert.equal(drift.length, 9, audit.stdout);
+  // config, three Claude children, three OpenCode folders, the two Copilot wrappers, the two
+  // Pi wrappers, and the Pi settings.
+  assert.equal(drift.length, 12, audit.stdout);
   for (const line of drift) assert.match(line, /: matches$/, line);
 }, {});
 
@@ -493,6 +516,9 @@ withWorkspace('audit reports drift in every runtime and writes nothing', (ctx) =
   }
   assert.match(before.stdout, /plugins\\pstack: missing/);
   assert.match(before.stdout, /copilot\.cmd: missing/);
+  assert.match(before.stdout, /pi\.cmd: missing/);
+  // The pinned cache is not synced until apply, so the settings cannot be checked before it.
+  assert.match(before.stdout, /\.pi\\agent\\settings\.json: unknown until -Apply/);
   assert.ok(!existsSync(join(ctx.workspace, '.claude')), 'audit created the Claude folder');
   assert.ok(!existsSync(join(ctx.workspace, '.maxstack')), 'audit created the Copilot folder');
   assert.ok(!existsSync(join(ctx.workspace, 'stack.lock.json')), 'audit wrote the lock');
@@ -583,9 +609,12 @@ withWorkspace('audit with the real layers.json needs no network and writes no ru
   const run = runInstaller(shell, ctx, args, { apply: false, layersFile: null });
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
   assert.match(run.stdout, /plugins\\pstack: missing/);
+  // The pinned cache is not synced in audit, so the Pi settings cannot be checked yet.
+  assert.match(run.stdout, /\.pi\\agent\\settings\.json: unknown until -Apply/);
   assert.ok(!existsSync(join(ctx.workspace, '.claude')), 'audit wrote under .claude');
   assert.ok(!existsSync(join(ctx.workspace, '.opencode')), 'audit wrote under .opencode');
   assert.ok(!existsSync(join(ctx.workspace, '.maxstack')), 'audit wrote under .maxstack');
+  assert.ok(!existsSync(join(ctx.workspace, '.pi')), 'audit wrote under .pi');
 }, {});
 
 // A layer that stops declaring its runtimes leaves its installed folder behind. The first
@@ -638,6 +667,162 @@ withWorkspace('audit reports a stale recorded plugin folder and removes nothing'
   assert.ok(existsSync(join(stale, 'index.ts')), 'audit removed the stale folder');
   assert.equal(readFileSync(lockPath, 'utf8'), lockBefore, 'audit rewrote the lock');
   assert.equal(readFileSync(configPath, 'utf8'), configBefore, 'audit rewrote the config');
+}, {});
+
+withWorkspace('pi.cmd sets the agent folder and the ask switch, runs the Pi CLI with the arguments, and honours MAXSTACK_PI_BIN', (ctx) => {
+  mustApply(ctx);
+  const wrapper = join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd');
+  const text = readFileSync(wrapper, 'utf8');
+  assert.match(text, /\r\n/, 'the wrapper has CRLF endings');
+  assert.ok(text.includes(`set "PI_CODING_AGENT_DIR=${join(ctx.workspace, '.pi', 'agent')}"`), 'the agent folder is not set');
+  assert.ok(text.includes('set "AGENT_ACCESS_PI_ASK=allow"'), 'the ask switch is not set');
+  assert.ok(text.includes(`set "PI_BIN=${ctx.fakePi}"`), 'the wrapper does not name the Pi CLI found at install time');
+
+  const run = spawnSync('cmd.exe', ['/d', '/s', '/c', `""${wrapper}" --mode rpc "a b""`], { encoding: 'utf8', windowsVerbatimArguments: true });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.ok(run.stdout.includes(`AGENT_DIR=${join(ctx.workspace, '.pi', 'agent')}`), run.stdout);
+  assert.match(run.stdout, /ASK=allow/);
+  assert.match(run.stdout, /ARGS=--mode rpc "a b"/);
+
+  const other = join(ctx.base, 'other-pi.cmd');
+  writeFileSync(other, '@echo off\r\necho OTHER=%PI_CODING_AGENT_DIR%\r\n');
+  const overridden = spawnSync('cmd.exe', ['/d', '/s', '/c', `""${wrapper}" --mode rpc"`], { encoding: 'utf8', windowsVerbatimArguments: true, env: { ...process.env, MAXSTACK_PI_BIN: other } });
+  assert.equal(overridden.status, 0, `${overridden.stdout}\n${overridden.stderr}`);
+  assert.ok(overridden.stdout.includes(`OTHER=${join(ctx.workspace, '.pi', 'agent')}`), 'MAXSTACK_PI_BIN did not name the CLI that ran');
+}, {});
+
+withWorkspace('pi.sh runs pi from PATH with the agent folder and the ask switch, and honours MAXSTACK_PI_BIN', (ctx) => {
+  const bash = findBash();
+  if (!bash) return;
+  mustApply(ctx);
+  const sh = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.sh'), 'utf8');
+  assert.doesNotMatch(sh, /\r/, 'the script has LF endings');
+  assert.match(sh, /^export PI_CODING_AGENT_DIR="[^"]*\/\.pi\/agent"$/m);
+  assert.match(sh, /^export AGENT_ACCESS_PI_ASK=allow$/m);
+  assert.match(sh, /^exec "\$pi_bin" "\$@"$/m);
+
+  const fakeBin = join(ctx.base, 'pi-fake-bin');
+  mkdirSync(fakeBin);
+  writeFileSync(join(fakeBin, 'pi'), '#!/bin/sh\nprintf "AGENT=%s\\n" "$PI_CODING_AGENT_DIR"\nprintf "ASK=%s\\n" "$AGENT_ACCESS_PI_ASK"\nfor arg in "$@"; do printf "ARG=%s\\n" "$arg"; done\n');
+  chmodSync(join(fakeBin, 'pi'), 0o755);
+  const env = { ...process.env };
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+  env[pathKey] = `${fakeBin}${process.platform === 'win32' ? ';' : ':'}${env[pathKey] ?? ''}`;
+  const script = join(ctx.workspace, '.maxstack', 'bin', 'pi.sh').replaceAll('\\', '/');
+  const agentDir = join(ctx.workspace, '.pi', 'agent').replaceAll('\\', '/');
+
+  const run = spawnSync(bash, [script, '--mode', 'rpc', 'a b'], { encoding: 'utf8', env });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.ok(run.stdout.includes(`AGENT=${agentDir}`), run.stdout);
+  assert.match(run.stdout, /ASK=allow/);
+  assert.match(run.stdout, /ARG=--mode\nARG=rpc\nARG=a b/, 'the caller arguments follow, unsplit');
+
+  const overrideBin = join(ctx.base, 'override-pi');
+  writeFileSync(overrideBin, '#!/bin/sh\nprintf "OVERRIDE=%s\\n" "$1"\n');
+  chmodSync(overrideBin, 0o755);
+  const noPi = { ...process.env, [pathKey]: '/nonexistent-maxstack-path', MAXSTACK_PI_BIN: overrideBin.replaceAll('\\', '/') };
+  const overridden = spawnSync(bash, [script, 'rpc'], { encoding: 'utf8', env: noPi });
+  assert.equal(overridden.status, 0, `${overridden.stdout}\n${overridden.stderr}`);
+  assert.match(overridden.stdout, /OVERRIDE=rpc/);
+}, {});
+
+withWorkspace('the Pi settings list each package and skills folder, and keep the keys and entries the installer does not own', (ctx) => {
+  const settingsPath = join(ctx.workspace, '.pi', 'agent', 'settings.json');
+  writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({
+    defaultProvider: 'user-provider',
+    defaultModel: 'user-model',
+    packages: ['../../user/own-package'],
+    skills: ['../../user/own-skills'],
+  }, null, 2));
+
+  mustApply(ctx);
+  const settings = readJson(settingsPath);
+  assert.equal(settings.defaultProvider, 'user-provider', 'the installer dropped a key it does not own');
+  assert.equal(settings.defaultModel, 'user-model', 'the installer dropped a model the user chose');
+  assert.deepEqual(settings.packages, ['../../user/own-package', '../../.claude/cache/pstack'], 'the packages list');
+  assert.deepEqual(settings.skills, [
+    '../../user/own-skills',
+    '../../.claude/plugins/pstack/skills',
+    '../../.claude/plugins/simpsonm09-org-ai-plugin/skills',
+    '../../.claude/plugins/simpsonm09-personal-ai-plugin/skills',
+  ], 'the skills list');
+  const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.deepEqual(lock.pi.packages, ['../../.claude/cache/pstack'], 'the lock records only the entries the installer wrote');
+
+  const again = mustApply(ctx);
+  assert.match(again.stdout, /Pi settings already match/, 'a second apply rewrote the settings');
+  assert.deepEqual(readJson(settingsPath).packages, settings.packages);
+
+  // pstack stops declaring pi. Its entries go, and the user's stay.
+  const layers = writeLayers(ctx, (manifest) => {
+    delete layerNamed(manifest, 'pstack').runtimes.pi;
+  });
+  mustApply(ctx, [], { layersFile: layers });
+  const dropped = readJson(settingsPath);
+  assert.equal(dropped.defaultProvider, 'user-provider');
+  assert.deepEqual(dropped.packages, ['../../user/own-package'], 'a layer that dropped pi left its package behind');
+  assert.ok(!dropped.skills.includes('../../.claude/plugins/pstack/skills'), 'a layer that dropped pi left its skills behind');
+  assert.ok(dropped.skills.includes('../../user/own-skills'), 'the user skills were removed');
+}, {});
+
+withWorkspace('a local layer is a Pi package only when its package.json names a pi key', (ctx) => {
+  writeLayerStub(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), {
+    claudePlugin: 'simpsonm09-org-ai-plugin',
+    pi: { extensions: ['./pi/index.ts'] },
+  });
+  mustApply(ctx);
+  const settings = readJson(join(ctx.workspace, '.pi', 'agent', 'settings.json'));
+  assert.ok(settings.packages.includes('../../.claude/plugins/simpsonm09-org-ai-plugin'), 'the org layer is not a package');
+  assert.ok(!settings.packages.includes('../../.claude/plugins/simpsonm09-personal-ai-plugin'), 'a layer without a pi key is a package');
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'pi', 'index.ts')), 'the pi folder is not installed');
+
+  const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  const byName = Object.fromEntries(lock.layers.map((record) => [record.name, record]));
+  assert.deepEqual(byName['simpsonm09-org-ai-plugin'].pi, {
+    enabled: true,
+    package: '.claude/plugins/simpsonm09-org-ai-plugin',
+    skills: '.claude/plugins/simpsonm09-org-ai-plugin/skills',
+  });
+  assert.deepEqual(byName['simpsonm09-personal-ai-plugin'].pi, {
+    enabled: true,
+    package: null,
+    skills: '.claude/plugins/simpsonm09-personal-ai-plugin/skills',
+  });
+}, {});
+
+withWorkspace('a pi key that names a file the installed copy lacks is refused', (ctx) => {
+  writeLayerStub(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), {
+    claudePlugin: 'simpsonm09-org-ai-plugin',
+    pi: { extensions: ['./pi/missing.ts'] },
+  });
+  const run = runInstaller(shell, ctx);
+  assert.notEqual(run.status, 0, 'the installer accepted a pi key that names a missing file');
+  assert.match(plainOutput(run), /names the extensions entry \.\/pi\/missing\.ts in its package\.json pi key, but .* does not carry it/);
+}, {});
+
+withWorkspace('a pi runtime without claude is rejected, because the Pi settings list the Claude folder skills', (ctx) => {
+  const layers = writeLayers(ctx, (manifest) => {
+    layerNamed(manifest, 'simpsonm09-personal-ai-plugin').runtimes = { opencode: {}, pi: {} };
+  });
+  const run = runInstaller(shell, ctx, [], { layersFile: layers });
+  assert.notEqual(run.status, 0, 'the installer accepted pi without claude');
+  assert.match(plainOutput(run), /declares pi, which lists the Claude plugin folder's skills, so it also needs claude/);
+}, {});
+
+withWorkspace('pi is skipped with a message when no executable is found, and its settings still list the layers', (ctx) => {
+  mustApply(ctx);
+  assert.ok(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd')));
+
+  const run = mustApply(ctx, ['-PiCommand', MISSING_PI]);
+  assert.match(plainOutput(run), /Pi CLI not found/, run.stdout);
+  assert.ok(!existsSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd')), 'the Pi wrapper is still there');
+  assert.ok(!existsSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.sh')), 'the Pi script is still there');
+  assert.ok(existsSync(join(ctx.workspace, '.pi', 'agent', 'settings.json')), 'the settings were not written without the CLI');
+
+  const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.equal(lock.pi.enabled, false);
+  assert.match(lock.pi.reason, /no 'maxstack-test-no-such-pi' application/);
+  assert.ok(lock.layers.every((record) => record.opencode.enabled), 'the OpenCode runtimes still install');
 }, {});
 
 function findPython() {

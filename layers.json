@@ -16,7 +16,8 @@
           "agents": "opencode/agents",
           "files": ["opencode", "skills"]
         },
-        "copilot": {}
+        "copilot": {},
+        "pi": {}
       }
     },
     {
@@ -27,7 +28,8 @@
       "runtimes": {
         "opencode": {},
         "claude": {},
-        "copilot": {}
+        "copilot": {},
+        "pi": {}
       }
     },
     {
@@ -38,7 +40,8 @@
       "runtimes": {
         "opencode": {},
         "claude": {},
-        "copilot": {}
+        "copilot": {},
+        "pi": {}
       }
     }
   ]
