@@ -123,8 +123,73 @@ def check_opencode_block(where: str, block: dict, failures: list[str]) -> None:
         failures.append(f"{where}.agents must be a relative folder")
     if "files" in block:
         files = block["files"]
-        if not isinstance(files, list) or not all(is_nonempty_str(item) for item in files):
+        if not isinstance(files, list) or not all(
+            is_nonempty_str(item) for item in files
+        ):
             failures.append(f"{where}.files must be a list of names")
+
+
+def check_source(where: str, layer: dict, failures: list[str]) -> dict | None:
+    """Check a layer's source; return the git pin it declares, if any."""
+    source = layer.get("source")
+    kind = layer.get("kind")
+    if isinstance(source, str):
+        if not GIT_URL.match(source):
+            failures.append(
+                f"{where} source must be an https github.com git URL: {source}"
+            )
+        if not is_relative_path(layer.get("path")):
+            failures.append(f"{where} is a local checkout, so it needs a relative path")
+        return None
+    if not isinstance(source, dict):
+        failures.append(
+            f"{where} needs a source: a URL string with a path, or a git source object"
+        )
+        return None
+
+    if kind != "plugin":
+        failures.append(
+            f"{where} is pinned to a git source, so its kind must be plugin"
+        )
+    if "path" in layer:
+        failures.append(
+            f"{where} has a git source, which carries its own path, so the layer needs no path"
+        )
+    url = source.get("url")
+    if not isinstance(url, str) or not GIT_URL.match(url):
+        failures.append(f"{where}.source.url must be an https github.com git URL")
+    if not is_relative_path(source.get("path")):
+        failures.append(
+            f"{where}.source.path must be a relative path inside the repository"
+        )
+    if not isinstance(source.get("commit"), str) or not HEX40.match(source["commit"]):
+        failures.append(
+            f"{where}.source.commit must be a 40-character lowercase commit SHA"
+        )
+    if not is_nonempty_str(source.get("ref")):
+        failures.append(f"{where}.source.ref must name the branch the commit came from")
+    return source
+
+
+def check_layer_runtimes(where: str, layer: dict, failures: list[str]) -> None:
+    """Check a layer's runtime map and the prerequisites between its runtimes."""
+    runtimes = layer.get("runtimes", {})
+    if not isinstance(runtimes, dict):
+        failures.append(f"{where}.runtimes must be an object")
+        return
+    check_runtime_block(f"{where}.runtimes", runtimes, failures)
+    if (
+        "claude" in runtimes
+        and isinstance(layer.get("source"), str)
+        and "opencode" not in runtimes
+    ):
+        failures.append(
+            f"{where} declares claude from a local checkout, which links to its OpenCode copy, so it also needs opencode"
+        )
+    if isinstance(runtimes.get("opencode"), dict):
+        check_opencode_block(
+            f"{where}.runtimes.opencode", runtimes["opencode"], failures
+        )
 
 
 def check_layers(layers: dict | None, failures: list[str]) -> list[dict]:
@@ -148,56 +213,27 @@ def check_layers(layers: dict | None, failures: list[str]) -> list[dict]:
             failures.append(f"{where} name must be a folder-safe name")
         else:
             names.append(name)
-        kind = layer.get("kind")
-        if kind not in LAYER_KINDS:
+        if layer.get("kind") not in LAYER_KINDS:
             failures.append(f"{where} kind must be one of {list(LAYER_KINDS)}")
-        if kind == "plugin":
+        if layer.get("kind") == "plugin":
             plugins += 1
-
-        source = layer.get("source")
-        if isinstance(source, str):
-            if not GIT_URL.match(source):
-                failures.append(f"{where} source must be an https github.com git URL: {source}")
-            if not is_relative_path(layer.get("path")):
-                failures.append(f"{where} is a local checkout, so it needs a relative path")
-        elif isinstance(source, dict):
-            if kind != "plugin":
-                failures.append(f"{where} is pinned to a git source, so its kind must be plugin")
-            if "path" in layer:
-                failures.append(f"{where} has a git source, which carries its own path, so the layer needs no path")
-            url = source.get("url")
-            if not isinstance(url, str) or not GIT_URL.match(url):
-                failures.append(f"{where}.source.url must be an https github.com git URL")
-            if not is_relative_path(source.get("path")):
-                failures.append(f"{where}.source.path must be a relative path inside the repository")
-            if not isinstance(source.get("commit"), str) or not HEX40.match(source["commit"]):
-                failures.append(f"{where}.source.commit must be a 40-character lowercase commit SHA")
-            if not is_nonempty_str(source.get("ref")):
-                failures.append(f"{where}.source.ref must name the branch the commit came from")
-            pins.append(source)
-        else:
-            failures.append(f"{where} needs a source: a URL string with a path, or a git source object")
-
-        runtimes = layer.get("runtimes", {})
-        if not isinstance(runtimes, dict):
-            failures.append(f"{where}.runtimes must be an object")
-            continue
-        check_runtime_block(f"{where}.runtimes", runtimes, failures)
-        if "claude" in runtimes and isinstance(source, str) and "opencode" not in runtimes:
-            failures.append(
-                f"{where} declares claude from a local checkout, which links to its OpenCode copy, so it also needs opencode"
-            )
-        if isinstance(runtimes.get("opencode"), dict):
-            check_opencode_block(f"{where}.runtimes.opencode", runtimes["opencode"], failures)
+        pin = check_source(where, layer, failures)
+        if pin is not None:
+            pins.append(pin)
+        check_layer_runtimes(where, layer, failures)
 
     if len(set(names)) != len(names):
         failures.append("layers.json: two layers share a name")
     if plugins != 1:
-        failures.append(f"layers.json: expected exactly one plugin layer, found {plugins}")
+        failures.append(
+            f"layers.json: expected exactly one plugin layer, found {plugins}"
+        )
     return pins
 
 
-def check_pin_lock(pin_lock: dict | None, pins: list[dict], failures: list[str]) -> None:
+def check_pin_lock(
+    pin_lock: dict | None, pins: list[dict], failures: list[str]
+) -> None:
     """The one pstack pin must name the same source as its git source in layers.json."""
     if not pins:
         if pin_lock is not None:
@@ -207,7 +243,9 @@ def check_pin_lock(pin_lock: dict | None, pins: list[dict], failures: list[str])
         failures.append(f"{PIN_LOCK} is required by the git source in layers.json")
         return
     if len(pins) != 1:
-        failures.append(f"layers.json pins {len(pins)} git sources; {PIN_LOCK} records exactly one")
+        failures.append(
+            f"layers.json pins {len(pins)} git sources; {PIN_LOCK} records exactly one"
+        )
         return
     pin = pins[0]
     for key in ("url", "path", "commit", "ref"):
@@ -296,11 +334,11 @@ def check_online(pins: list[dict], failures: list[str]) -> None:
         output = run_command(["git", "ls-remote", pin["url"], ref], failures)
         if output is None:
             continue
-        heads = dict(
-            (name, sha)
+        heads = {
+            name: sha
             for sha, _, name in (line.partition("\t") for line in output.splitlines())
             if name
-        )
+        }
         head = heads.get(ref)
         if head is None:
             failures.append(f"branch {pin['ref']} is not on {pin['url']}")
@@ -342,7 +380,9 @@ def main() -> int:
             print(f"FAIL: {failure}", file=sys.stderr)
         return 1
     mode = " (online)" if args.online else ""
-    print(f"PASS: workspace manifests agree with the installer and the pstack pin{mode}.")
+    print(
+        f"PASS: workspace manifests agree with the installer and the pstack pin{mode}."
+    )
     return 0
 
 

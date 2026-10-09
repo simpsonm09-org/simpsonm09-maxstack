@@ -63,7 +63,9 @@ def tree_sha256(root: pathlib.Path) -> str:
             dirnames[:] = [name for name in dirnames if name != "node_modules"]
         for name in filenames:
             full = pathlib.Path(dirpath) / name
-            lines.append(f"{full.relative_to(root).as_posix()}\t{sha256_hex(full.read_bytes())}")
+            lines.append(
+                f"{full.relative_to(root).as_posix()}\t{sha256_hex(full.read_bytes())}"
+            )
     text = "\n".join(sorted(lines)) + "\n"
     return sha256_hex(text.encode("utf-8"))
 
@@ -149,7 +151,9 @@ def check_opencode(lock: dict, workspace: pathlib.Path, failures: list[str]) -> 
     configured = config.get("plugin", [])
     for key in ("model", "small_model"):
         if key in config:
-            failures.append(f"{config_path} sets {key}; maxstack sets no model. Rerun Install-Workspace.ps1 -Apply")
+            failures.append(
+                f"{config_path} sets {key}; maxstack sets no model. Rerun Install-Workspace.ps1 -Apply"
+            )
 
     recorded = set()
     planned_plugins = []
@@ -166,14 +170,20 @@ def check_opencode(lock: dict, workspace: pathlib.Path, failures: list[str]) -> 
         if opencode.get("loader") == "config":
             planned_plugins.append(plugin)
             if plugin not in configured:
-                failures.append(f"{config_path} does not name the OpenCode entry {plugin} for '{layer['name']}'")
+                failures.append(
+                    f"{config_path} does not name the OpenCode entry {plugin} for '{layer['name']}'"
+                )
             if not (workspace / plugin.removeprefix("./")).is_dir():
-                failures.append(f"the OpenCode plugin path {plugin} for '{layer['name']}' is not a folder")
+                failures.append(
+                    f"the OpenCode plugin path {plugin} for '{layer['name']}' is not a folder"
+                )
         for agent in opencode.get("agents", []):
             profile = workspace / ".opencode" / "agents" / agent
             if not profile.is_file():
                 failures.append(f"missing agent profile: {profile}")
-            elif re.search(r"(?m)^model:", frontmatter(profile.read_text(encoding="utf-8"))):
+            elif re.search(
+                r"(?m)^model:", frontmatter(profile.read_text(encoding="utf-8"))
+            ):
                 failures.append(
                     f"agent profile {profile} sets a model; Install-Workspace.ps1 -Apply removes it"
                 )
@@ -187,9 +197,13 @@ def check_opencode(lock: dict, workspace: pathlib.Path, failures: list[str]) -> 
     if plugins_dir.is_dir():
         for entry in sorted(plugins_dir.iterdir()):
             if entry.name in RETIRED_OPENCODE_FOLDERS:
-                failures.append(f"retired OpenCode plugin folder is still present: {entry}")
+                failures.append(
+                    f"retired OpenCode plugin folder is still present: {entry}"
+                )
             elif entry.name not in recorded:
-                failures.append(f"stale OpenCode plugin folder not in stack.lock.json: {entry}")
+                failures.append(
+                    f"stale OpenCode plugin folder not in stack.lock.json: {entry}"
+                )
 
     skills = workspace / ".opencode" / "plugins" / PSTACK / "skills"
     if not skills.is_dir():
@@ -219,7 +233,9 @@ def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> N
         if not path.is_file():
             failures.append(f"missing Copilot wrapper: {path}")
         elif sha256_hex(path.read_bytes()) != str(copilot.get(key, "")).upper():
-            failures.append(f"Copilot wrapper {path} differs from the text recorded in stack.lock.json")
+            failures.append(
+                f"Copilot wrapper {path} differs from the text recorded in stack.lock.json"
+            )
 
     cmd = bin_dir / "copilot.cmd"
     if cmd.is_file():
@@ -227,21 +243,30 @@ def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> N
         if COPILOT_ASK_LINE not in text:
             failures.append(f"{cmd} does not set the ask switch: {COPILOT_ASK_LINE}")
         # The wrapper runs its executable on one line, which also names the plugin folders.
-        run_lines = [line.strip() for line in text.splitlines() if "--plugin-dir" in line]
+        run_lines = [
+            line.strip() for line in text.splitlines() if "--plugin-dir" in line
+        ]
         if len(run_lines) != 1:
-            failures.append(f"{cmd} must run the executable on one line, found {len(run_lines)}")
+            failures.append(
+                f"{cmd} must run the executable on one line, found {len(run_lines)}"
+            )
             return
         executable = re.match(r'^(?:call )?"([^"]+)"', run_lines[0])
         if executable is None or not pathlib.Path(executable.group(1)).is_file():
             failures.append(f"{cmd} does not run an executable that exists")
-        found = [pathlib.Path(folder) for folder in re.findall(r'--plugin-dir "([^"]+)"', run_lines[0])]
+        found = [
+            pathlib.Path(folder)
+            for folder in re.findall(r'--plugin-dir "([^"]+)"', run_lines[0])
+        ]
         expected = [
             workspace / layer["copilot"]["pluginDir"]
             for layer in lock["layers"]
             if layer["copilot"].get("enabled")
         ]
         if found != expected:
-            failures.append(f"{cmd} names plugin folders {found}, but stack.lock.json records {expected}")
+            failures.append(
+                f"{cmd} names plugin folders {found}, but stack.lock.json records {expected}"
+            )
 
 
 def check_global(home: pathlib.Path, failures: list[str]) -> None:
