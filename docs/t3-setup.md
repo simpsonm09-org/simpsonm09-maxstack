@@ -1,6 +1,6 @@
 # T3 setup
 
-T3 can run OpenCode, Claude Code, and the Copilot CLI against the same workspace. The three harnesses find the plugin layers differently, so each needs its own setup.
+T3 can run OpenCode, Claude Code, the Copilot CLI, and Pi against the same workspace. The four harnesses find the plugin layers differently, so each needs its own setup.
 
 ## T3 instances
 
@@ -12,6 +12,7 @@ T3 keeps its provider instances in `%USERPROFILE%\.t3\userdata\settings.json`. T
 | `claudeSimpsonm09` | Claude (maxstack) | Claude | launch args `--plugin-dir D:\dev\simpsonm09\.claude\plugins` | Claude Code with the workspace plugins |
 | `copilot` | Copilot (default) | Copilot | the registry `copilot.exe` | Plain Copilot CLI |
 | `copilotSimpsonm09` | Copilot (maxstack) | Copilot | `commandPath` `D:/dev/simpsonm09/.maxstack/bin/copilot.cmd` (macOS: `copilot.sh`) | Copilot CLI with the workspace plugins |
+| `piSimpsonm09` | Pi (maxstack) | Pi | `binaryPath` `D:/dev/simpsonm09/.maxstack/bin/pi.cmd` | Pi with the workspace packages and skills |
 
 The maxstack instances apply only to the simpsonm09 workspace. The default instances need no folder and no wrapper.
 
@@ -73,6 +74,31 @@ The variable is set in the wrapper, not in the T3 instance, so other Copilot run
 
 On Windows, pstack's PreToolUse hook is a no-op stub under Copilot, so its file-read and subagent-model checks do not run there. The SessionStart context, the skills, and the org gate work on Copilot. The macOS `copilot.sh` is untested.
 
+## Pi (maxstack)
+
+T3's native Pi provider runs `<binaryPath> --mode rpc <launchArgs>`. The installer writes a wrapper, `.maxstack\bin\pi.cmd`, and Pi's settings, `.pi\agent\settings.json`. The wrapper sets the agent folder to `.pi\agent`, so Pi loads the workspace layers and keeps its own login there. The `piSimpsonm09` instance starts the wrapper.
+
+1. Install the Pi CLI, `@earendil-works/pi-coding-agent`, so that `pi` is on `PATH`. Then generate the wrapper and the settings: `pwsh -File scripts/Install-Workspace.ps1 -Apply`. The installer writes the absolute path of the `pi` it finds into `pi.cmd`. If Pi is not on `PATH`, it skips the wrapper with a message and still writes the settings. Install Pi, then run the installer again.
+2. Sign in once, yourself. Run `D:\dev\simpsonm09\.maxstack\bin\pi.cmd`, enter `/login` in Pi, and sign in to a provider. The login is written under `D:\dev\simpsonm09\.pi\agent`, the folder T3's instance uses. Keep `.pi\agent\auth.json` out of git, and never paste it into a doc or a chat. An agent never logs in for you.
+3. In T3, select the `piSimpsonm09` instance, Pi (maxstack). Its driver is `pi`, its `binaryPath` is `D:/dev/simpsonm09/.maxstack/bin/pi.cmd`, and its `launchArgs` are empty. Leave `customModels` empty, and pick the model in T3's picker. maxstack sets no Pi model or provider. To set it up again, add a Pi provider instance with those values.
+
+What Pi loads:
+
+- `packages` lists each layer whose `package.json` has a `pi` key. The pstack package is the root of its pinned cache, `.claude\cache\pstack`, because its `pi` key names paths from the repository root. It loads the pstack extension (`/loop`) and its skills.
+- `skills` lists each layer's installed skills folder. The org and personal skills load this way today.
+- The org layer's Pi tool-call gate arrives as a `pi` key on its branch, which is not merged yet. When it merges, the installer lists the org layer as a package. The installer refuses a `pi` key that names a file the installed copy does not carry, so the org layer's `files` list must include its `pi` folder.
+
+The wrapper sets `AGENT_ACCESS_PI_ASK=allow`, as the Copilot wrapper does, so the org gate's `ask` becomes `allow` in T3 runs. Denials and the repository access level still apply. The variable has no effect until the org gate reads it.
+
+Known limits:
+
+- `PI_CODING_AGENT_DIR` does not isolate skills. Pi also loads `%USERPROFILE%\.agents\skills`, which the spike found held 40 skills on this machine. The wrapper does not redirect `USERPROFILE`, because that would also move the login.
+- Pi reads `AGENTS.md` and `CLAUDE.md` from the session folder and its parents. Pi needs an `AGENTS.md` at the workspace root only if one already exists there. The installer does not create one.
+
+Verified: with the generated `pi.cmd` and the pinned pstack commit in a temporary workspace, `get_commands` in `rpc` mode lists 68 skills (pstack 58, org 6, personal 4) and the pstack `loop` extension, with no model call. The installer tests cover the wrappers, the settings merge, and the verifier.
+
+Not verified: the `piSimpsonm09` instance in a T3 session, any model turn, a login, the org gate under Pi, and `pi.sh` run with the real Pi CLI.
+
 ## Not set up
 
 Cursor, Codex, and Antigravity are not set up for this workspace, because their quota is not available. They have no instance or wrapper here.
@@ -81,7 +107,7 @@ Cursor, Codex, and Antigravity are not set up for this workspace, because their 
 
 - The audit prints drift for each child and each wrapper without writing anything: `pwsh -File scripts/Install-Workspace.ps1`. It reports `missing`, `differs`, `matches`, or `stale`. A `stale` line also marks a folder under `.opencode\plugins` that no layer names. `-Apply` removes such a folder only when the previous `stack.lock.json` recorded it as a layer folder, or when it is the retired `pstack-opencode` port, and reports any other one as kept.
 - The OpenCode check runs from the workspace and starts no server: `pwsh -File scripts/verify-opencode-workspace.ps1`. It runs `opencode debug config` and `opencode debug agents`, each with a 60-second limit.
-- The workspace verifier checks each runtime against `stack.lock.json`: `python scripts/verify-workspace-install.py`. For Copilot it checks each wrapper's hash, the ask switch, the plugin folders in order, and that the executable exists.
+- The workspace verifier checks each runtime against `stack.lock.json`: `python scripts/verify-workspace-install.py`. For Copilot it checks each wrapper's hash, the ask switch, the plugin folders in order, and that the executable exists. For Pi it checks each wrapper's hash, the agent folder and ask switch, and that the settings list each recorded package and skills folder, and that each package has a `pi` key.
 - A live probe from a scratch repository under `projects\repos`: `claude -p --model haiku --plugin-dir D:\dev\simpsonm09\.claude\plugins --output-format stream-json --verbose "List the plugin skills you have whose names start with simpsonm09. Reply with just the names."` The init event lists the loaded plugins and skills.
 
 ## Why not `--settings`
@@ -116,6 +142,9 @@ The workspace root is not a git repository. Its `.gitignore` (`D:\dev\simpsonm09
 .claude/plugins/
 .claude/cache/
 .maxstack/bin/
+.pi/
 ```
+
+`.pi/` holds Pi's login in `.pi\agent\auth.json`, so ignore the whole folder.
 
 This repository does not edit that file, because it sits outside the repository.

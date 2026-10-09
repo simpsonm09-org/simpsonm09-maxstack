@@ -6,11 +6,12 @@ maxstack sets no model. The workspace `opencode.jsonc` has no `model` or `small_
 
 ## Hosts
 
-T3 Code hosts the agent sessions. It runs three providers against the same workspace:
+T3 Code hosts the agent sessions. It runs four providers against the same workspace:
 
 - The OpenCode provider can reuse an already-running `opencode serve` across sessions. OpenCode reads the workspace `opencode.jsonc` and `.opencode` directory from the session directory upward.
 - The Claude provider runs Claude Code with `--plugin-dir` pointing at `<workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
 - The Copilot provider runs `<workspace>\.maxstack\bin\copilot.cmd`, which starts the Copilot CLI with the same plugin folders. See [T3 setup](t3-setup.md#copilot).
+- The Pi provider runs `<workspace>\.maxstack\bin\pi.cmd`, which starts Pi with the agent folder `<workspace>\.pi\agent`. See [T3 setup](t3-setup.md#pi-maxstack).
 
 Ubuntu WSL can also run the OpenCode CLI. It reads the same workspace files under `D:\dev\simpsonm09`, which WSL sees at `/mnt/d/dev/simpsonm09`.
 
@@ -46,6 +47,10 @@ The same install also builds `.claude/plugins` at the workspace root: one child 
 The installer finds the Copilot executable with `Get-Command copilot`. It never uses a match inside `.maxstack\bin`. The `.cmd` names that executable by its absolute path, so a later move of Copilot needs an apply. If Copilot is not installed, the installer skips both wrappers with a message and still installs everything else. Install Copilot, then run the installer with `-Apply` again.
 
 To test the wrapper without an install, pass a different executable: `-CopilotCommand <path>`.
+
+## Pi
+
+`Install-Workspace.ps1` writes `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`. The wrappers set `PI_CODING_AGENT_DIR` to `.pi\agent`. `pi.cmd` runs the `pi` the installer found on `PATH`, so rerun the installer after moving Pi. `pi.sh` runs whichever `pi` is on `PATH` at run time. `MAXSTACK_PI_BIN` names another Pi for both. The settings hold a `packages` list and a `skills` list. The installer owns only those two keys and the entries it wrote last time: a `defaultProvider` or `defaultModel` the user sets stays, and the installer writes no model or provider. A layer is a Pi package only when its `package.json` has a `pi` key. See [T3 setup](t3-setup.md#pi-maxstack).
 
 ## Audit and apply
 

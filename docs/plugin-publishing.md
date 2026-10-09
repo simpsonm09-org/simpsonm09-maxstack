@@ -5,10 +5,11 @@ This repository does not own the PStack plugin. [`simpsonm09/pstack-claude`](htt
 ## Inputs
 
 - `layers.json` is the ordered layer manifest. Each layer has a `name`, which is its plugin id, and a `kind` (`plugin` or `config`). Its `source` is either a local checkout, a URL string with a `path` under the workspace, or a git pin, an object with `url`, `path`, `commit`, and `ref`.
-- A layer's `runtimes` map names the runtimes it installs for. Each key is optional, and each runtime needs its prerequisite: `copilot` needs `claude`, because the wrapper runs the Claude folder, and a local layer's `claude` needs its `opencode` copy, because the Claude folder links to it.
+- A layer's `runtimes` map names the runtimes it installs for. Each key is optional, and each runtime needs its prerequisite: `copilot` and `pi` need `claude`, because the wrapper runs the Claude folder and Pi reads its skills there, and a local layer's `claude` needs its `opencode` copy, because the Claude folder links to it.
   - `claude: {}` installs `.claude\plugins\<name>`. A local layer links to its OpenCode copy. A git layer is a copy of its pinned folder. Each folder must carry `.claude-plugin/plugin.json` with the same name.
   - `opencode: { entry, agents, files }` installs `.opencode\plugins\<name>`. `entry` is the file OpenCode loads, `index.ts` by default. `agents` names a folder of profiles that are copied to `.opencode\agents`. `files` names the items to copy, as a layer's `layer.json` `files` list does for a local layer.
   - `copilot: {}` adds the layer's Claude folder to `.maxstack\bin\copilot.cmd` and `copilot.sh`, in layer order.
+  - `pi: {}` lists the layer's skills folder in `.pi\agent\settings.json`. The layer is also a Pi package when its `package.json` has a `pi` key. A pinned layer's package is the root of its cache, because the key names paths from the repository root. A local layer's package is its installed Claude folder, so each path the key names must be in the layer's `files` list.
 - `pstack.lock.json` is the one pin for the pstack plugin: the repository, the `path`, the `commit`, and the `ref` the commit came from. It must agree with the pstack layer's `source` in `layers.json`.
 - `workspace/opencode.jsonc` is the config base. Layer fragments supply the MCP servers and extra permissions.
 - The installer sets no model. It writes no `model` or `small_model` key into the workspace config, and it removes any `model:` line from each agent profile it copies. The user picks the model in the harness.
@@ -34,7 +35,8 @@ The entry resolves its shared skills beside its own folder, so the installed fol
 5. Removes the folders under `.opencode\plugins` that no layer names and that the previous lock recorded. It always removes the folder of the retired `pstack-opencode` port. Any other unnamed folder is reported and kept.
 6. Builds `.claude\plugins`. A local layer becomes a junction to its installed copy, so both harnesses share it. A git layer becomes a copy of its pinned folder. A child that no layer declares is removed.
 7. Writes `.maxstack\bin\copilot.cmd` and `copilot.sh`. The executable is the first `copilot` application outside `.maxstack\bin`, found with `Get-Command` or the `-CopilotCommand` override. With no executable, both wrappers are skipped with a message, and any old wrapper is removed.
-8. Writes `stack.lock.json` at the workspace root.
+8. Checks each `pi` key's paths against the installed copy. Then it writes `.pi\agent\settings.json`, replacing only the `packages` and `skills` entries it wrote last time, and `.maxstack\bin\pi.cmd` and `pi.sh`, by the same rule as the Copilot wrappers, with `-PiCommand` as the override.
+9. Writes `stack.lock.json` at the workspace root.
 
 Audit mode computes each of these and reports `missing`, `differs`, `matches`, or `stale`. It writes nothing and reads no git source. An OpenCode folder differs when its entry, plugin path, or recorded state changed. A Claude child differs when it is missing, is not the expected link or copy, has a tree hash other than the one the last apply recorded, or its git commit has moved. A Copilot wrapper differs when its text is not what the installer would write.
 
