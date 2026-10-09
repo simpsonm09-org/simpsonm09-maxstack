@@ -1358,23 +1358,31 @@ function linkTargetText(path) {
 // top-level node_modules, without regard to case, is left out. Links are listed, never followed.
 function independentSha(root, rule) {
   const lines = [];
-  const walk = (dir, prefix) => {
-    for (const name of readdirSync(dir)) {
-      const full = join(dir, name);
-      const relative = prefix === '' ? name : `${prefix}/${name}`;
-      const stat = lstatSync(full);
-      if (stat.isSymbolicLink()) {
-        lines.push(`${relative}\tlink:${linkTargetText(full)}`);
-      } else if (stat.isDirectory()) {
-        const skipped = rule === 'owned' ? name === 'node_modules' || name === '.git' : prefix === '' && name.toLowerCase() === 'node_modules';
-        if (!skipped) walk(full, relative);
-      } else {
-        lines.push(`${relative}\t${sha256Upper(readFileSync(full))}`);
-      }
-    }
-  };
-  walk(root, '');
+  collectTreeLines(root, '', rule, lines);
   return sha256Upper(Buffer.from(sortUtf8(lines).map((line) => `${line}\n`).join(''), 'utf8'));
+}
+
+// Whether a folder is left out of the hash: by its name alone under the owned rule, and only at the
+// top of the tree under the legacy rule.
+function isLeftOut(name, prefix, rule) {
+  if (rule === 'owned') return name === 'node_modules' || name === '.git';
+  return prefix === '' && name.toLowerCase() === 'node_modules';
+}
+
+// The lines of one folder's entries, recursing into the folders that are not left out.
+function collectTreeLines(dir, prefix, rule, lines) {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const relative = prefix === '' ? name : `${prefix}/${name}`;
+    const stat = lstatSync(full);
+    if (stat.isSymbolicLink()) {
+      lines.push(`${relative}\tlink:${linkTargetText(full)}`);
+    } else if (stat.isDirectory()) {
+      if (!isLeftOut(name, prefix, rule)) collectTreeLines(full, relative, rule, lines);
+    } else {
+      lines.push(`${relative}\t${sha256Upper(readFileSync(full))}`);
+    }
+  }
 }
 
 function ownedRecord(lock, path, kind, key = '') {
