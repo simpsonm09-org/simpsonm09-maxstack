@@ -490,7 +490,8 @@ withWorkspace('copilot never wraps the generated wrapper itself', (ctx) => {
   writeFile(bin, 'copilot.cmd', '@echo off\r\necho self\r\n');
   const run = mustApply(ctx, ['-CopilotCommand', join(bin, 'copilot.cmd')]);
   assert.match(plainOutput(run), /Copilot CLI not found/);
-  assert.ok(!existsSync(join(bin, 'copilot.cmd')), 'the self-referencing wrapper is removed, not wrapped');
+  assert.ok(existsSync(join(bin, 'copilot.cmd')), 'an unrecorded file was deleted: only a file that matches its record is removed');
+  assert.match(plainOutput(run), /Kept .*copilot.cmd: it is not the installer's recorded copy/);
 }, {});
 
 withWorkspace('a git pin the repository cannot supply stops the run before anything is written', (ctx) => {
@@ -2449,4 +2450,74 @@ withWorkspace('a key the user adds to the Pi settings after the install survives
   writeFileSync(settingsPath(ctx), JSON.stringify({ ...readJson(settingsPath(ctx)), defaultModel: 'user-model' }, null, 2));
   assertOk(removal(ctx, ['-Uninstall']));
   assert.deepEqual(readJson(settingsPath(ctx)), { defaultModel: 'user-model' });
+}, {});
+
+// Backups and the Pi settings. The original backup is the one restore source; a hand edit made after it goes to a
+// numbered copy. The settings are edited as strict JSON, so dates, nulls, depth, and key order survive a write.
+const ORIGINAL_CONFIG = '{\n  "original": true\n}\n';
+
+withWorkspace('a hand edit after the first apply goes to a numbered backup, and the original backup is never overwritten', (ctx) => {
+  writeFile(ctx.workspace, 'opencode.jsonc', ORIGINAL_CONFIG);
+  mustApply(ctx);
+  writeFileSync(join(ctx.workspace, 'opencode.jsonc'), '{\n  "hand": "edit"\n}\n');
+  mustApply(ctx);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'utf8'), ORIGINAL_CONFIG, 'the original backup was overwritten');
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak.1'), 'utf8'), '{\n  "hand": "edit"\n}\n', 'the hand edit was not kept');
+  const lock = readJson(lockPath(ctx));
+  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak', 'file').role, 'original');
+  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak.1', 'file').role, 'edited');
+}, {});
+
+withWorkspace('a hand edit of the Pi settings after the first apply leaves the original settings backup as it was', (ctx) => {
+  writeFile(ctx.workspace, '.pi/agent/settings.json', USER_SETTINGS);
+  mustApply(ctx);
+  writeFileSync(settingsPath(ctx), JSON.stringify({ defaultModel: 'hand-edit' }, null, 2));
+  mustApply(ctx);
+  assert.equal(readFileSync(`${settingsPath(ctx)}.bak`, 'utf8'), USER_SETTINGS, 'the original settings backup was overwritten');
+}, {});
+
+withWorkspace('the first schema-2 apply over a schema-1 lock keeps an existing settings backup untouched', (ctx) => {
+  writeFile(ctx.workspace, '.pi/agent/settings.json', USER_SETTINGS);
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  lock.ownedSchema = 1;
+  delete lock.pi.settingsSha256;
+  setLock(ctx, lock);
+  writeFileSync(settingsPath(ctx), JSON.stringify({ defaultModel: 'hand-edit' }, null, 2));
+  mustApply(ctx);
+  assert.equal(readFileSync(`${settingsPath(ctx)}.bak`, 'utf8'), USER_SETTINGS, 'an existing backup was overwritten where the last write is unknown');
+}, {});
+
+withWorkspace('the Pi settings keep dates with offsets, nulls in lists, deep nesting, and key order exactly', (ctx) => {
+  let deep = { leaf: 'x' };
+  for (let level = 0; level < 40; level += 1) deep = { level: deep };
+  const user = `{\n  "zeta": "2024-01-02T03:04:05+02:00",\n  "packages": [null, "user-package"],\n  "nested": ${JSON.stringify(deep)},\n  "alpha": 1.50\n}\n`;
+  writeFile(ctx.workspace, '.pi/agent/settings.json', user);
+  mustApply(ctx);
+  const text = readFileSync(settingsPath(ctx), 'utf8');
+  const parsed = JSON.parse(text);
+  assert.equal(parsed.zeta, '2024-01-02T03:04:05+02:00', 'a date string changed');
+  assert.deepEqual(parsed.packages.slice(0, 2), [null, 'user-package'], 'a null list item was dropped');
+  assert.deepEqual(parsed.nested, deep, 'a deep value was truncated');
+  assert.deepEqual(Object.keys(parsed), ['zeta', 'packages', 'nested', 'alpha', 'skills'], 'the key order changed');
+  assert.match(text, /"alpha": 1\.50/, 'a number changed its text');
+}, {});
+
+withWorkspace('a Pi settings file with comments or trailing commas is refused by the apply, and is not rewritten', (ctx) => {
+  const commented = '{\n  // the user\'s note\n  "defaultProvider": "user-provider",\n}\n';
+  writeFile(ctx.workspace, '.pi/agent/settings.json', commented);
+  const run = runInstaller(shell, ctx, [], { apply: true });
+  assert.notEqual(run.status, 0, `the apply accepted a settings file that is not strict JSON\n${run.stdout}`);
+  assert.match(plainOutput(run), /not strict JSON/);
+  assert.equal(readFileSync(settingsPath(ctx), 'utf8'), commented, 'the settings file was rewritten');
+}, {});
+
+withWorkspace('-Remove -Apply keeps a hand-edited Copilot wrapper even when the apply finds no Copilot executable', (ctx) => {
+  mustApply(ctx);
+  const wrapper = join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd');
+  appendFileSync(wrapper, 'rem hand edit\r\n');
+  const run = runInstaller(shell, ctx, ['-Remove', '-Runtimes', 'pi', '-Apply', '-CopilotCommand', MISSING_COPILOT], { apply: false });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.ok(existsSync(wrapper), 'a hand-edited wrapper was deleted without its hash matching the record');
+  assert.match(run.stdout, /Kept .*copilot\.cmd: it is not the installer's recorded copy/);
 }, {});

@@ -935,38 +935,140 @@ function Get-PiEntryKey {
     return (ConvertTo-Json -InputObject $Entry -Compress -Depth 20)
 }
 
-# One Pi list. Each recorded entry accounts for one copy of itself in the list: the installer
-# removes that copy and writes the entry again as its own. A copy the user wrote beside it is kept,
-# and a wanted entry the user already lists, with no record of its own, stays the user's.
-function Merge-PiEntries {
-    param($Current, [string[]] $Wanted, [object[]] $Owned)
+# The Pi settings are edited with System.Text.Json, which keeps every string, null, number, and key order exactly.
+# ConvertFrom-Json and ConvertTo-Json convert dates, drop nulls, and cap the depth, so they are not used to write.
+# A file with comments or trailing commas is not strict JSON, and the installer does not rewrite it.
+function New-StrictJsonDocumentOptions {
+    $options = [System.Text.Json.JsonDocumentOptions]::new()
+    $options.CommentHandling = [System.Text.Json.JsonCommentHandling]::Disallow
+    $options.AllowTrailingCommas = $false
+    $options.MaxDepth = 1024
+    return $options
+}
 
-    $remaining = [System.Collections.Generic.List[object]]::new()
-    foreach ($entry in @($Current)) {
-        if ($null -ne $entry) { $remaining.Add($entry) }
+function New-JsonWriteOptions {
+    $options = [System.Text.Json.JsonSerializerOptions]::new()
+    $options.WriteIndented = $true
+    $options.MaxDepth = 1024
+    $options.Encoder = [System.Text.Encodings.Web.JavaScriptEncoder]::UnsafeRelaxedJsonEscaping
+    return $options
+}
+
+# The object a settings text holds. Text that is not strict JSON, or is not an object, throws 'not strict JSON'.
+function Read-StrictJsonObject {
+    param([string] $Text)
+
+    if ($Text.Trim().Length -eq 0) { return , [System.Text.Json.Nodes.JsonObject]::new() }
+    try {
+        $node = [System.Text.Json.Nodes.JsonNode]::Parse($Text, [System.Text.Json.Nodes.JsonNodeOptions]::new(), (New-StrictJsonDocumentOptions))
+    } catch {
+        throw 'not strict JSON'
+    }
+    if ($node -isnot [System.Text.Json.Nodes.JsonObject]) { throw 'not a JSON object' }
+    return , $node
+}
+
+# The text an entry is compared by: a string by its value, anything else by its canonical JSON.
+function Get-JsonEntryKey {
+    param($Node)
+
+    if ($null -eq $Node) { return 'null' }
+    if ($Node -is [System.Text.Json.Nodes.JsonValue] -and $Node.GetValueKind() -eq [System.Text.Json.JsonValueKind]::String) {
+        return 's:' + $Node.GetValue[string]()
+    }
+    return 'j:' + $Node.ToJsonString((New-JsonWriteOptions))
+}
+
+# The same key for an entry read from stack.lock.json, which PowerShell holds as an object.
+function Get-JsonEntryKeyFromPs {
+    param($Entry)
+
+    if ($null -eq $Entry) { return 'null' }
+    if ($Entry -is [string]) { return 's:' + $Entry }
+    return Get-JsonEntryKey ([System.Text.Json.Nodes.JsonNode]::Parse((ConvertTo-Json -InputObject $Entry -Compress -Depth 50)))
+}
+
+# The value of one property of a JSON object, or $null when the object has none.
+function Get-JsonProperty {
+    param($Root, [string] $Key)
+
+    $node = $null
+    if ($Root.TryGetPropertyValue($Key, [ref] $node)) { return , $node }
+    return $null
+}
+
+# Adds a property to a JSON object. Only a key the object lacks is added, so an existing key keeps its place.
+function Set-JsonProperty {
+    param($Root, [string] $Key, $Value)
+
+    $Root.Add($Key, $Value)
+}
+
+# One Pi list in place. Each recorded entry accounts for one copy of itself: the installer removes that copy and
+# writes the entry again as its own. A copy the user wrote beside it stays, and a wanted entry the user already
+# lists, with no record of its own, stays the user's. The list is created when the key is absent.
+function Merge-JsonEntries {
+    param($Root, [string] $Key, [string[]] $Wanted, [object[]] $Owned)
+
+    $list = (Get-JsonProperty -Root $Root -Key $Key) -as [System.Text.Json.Nodes.JsonArray]
+    if ($null -eq $list) {
+        $list = [System.Text.Json.Nodes.JsonArray]::new()
+        Set-JsonProperty -Root $Root -Key $Key -Value $list
     }
     $ownedKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($entry in @($Owned)) {
-        if ($null -eq $entry) { continue }
-        $key = Get-PiEntryKey $entry
-        $ownedKeys.Add($key) | Out-Null
-        for ($index = 0; $index -lt $remaining.Count; $index++) {
-            if ((Get-PiEntryKey $remaining[$index]) -ceq $key) {
-                $remaining.RemoveAt($index)
-                break
-            }
+    foreach ($entry in @($Owned | Where-Object { $null -ne $_ })) {
+        $entryKey = Get-JsonEntryKeyFromPs $entry
+        $ownedKeys.Add($entryKey) | Out-Null
+        for ($index = 0; $index -lt $list.Count; $index++) {
+            if ((Get-JsonEntryKey $list[$index]) -ceq $entryKey) { $list.RemoveAt($index); break }
         }
     }
     $present = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($entry in $remaining) { $present.Add((Get-PiEntryKey $entry)) | Out-Null }
-    $added = [System.Collections.Generic.List[object]]::new()
+    foreach ($node in $list) { $present.Add((Get-JsonEntryKey $node)) | Out-Null }
+    $added = [System.Collections.Generic.List[string]]::new()
     foreach ($entry in $Wanted) {
-        $key = Get-PiEntryKey $entry
-        if ($ownedKeys.Contains($key) -or -not $present.Contains($key)) { $added.Add($entry) }
+        $entryKey = 's:' + $entry
+        if ($ownedKeys.Contains($entryKey) -or -not $present.Contains($entryKey)) {
+            $list.Add([System.Text.Json.Nodes.JsonValue]::Create([string] $entry))
+            $added.Add($entry)
+        }
     }
-    return [pscustomobject]@{
-        merged = @($remaining.ToArray()) + @($added.ToArray())
-        added  = @($added.ToArray())
+    return $added.ToArray()
+}
+
+# Writes text to a path through a temporary file, so an interrupted write leaves the old file whole.
+function Write-FileAtomically {
+    param([string] $Path, [string] $Text)
+
+    $temp = "$Path.maxstack-tmp"
+    $old = "$Path.maxstack-old"
+    try {
+        [IO.File]::WriteAllText($temp, $Text, (New-Object System.Text.UTF8Encoding($false)))
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            if (Test-Path -LiteralPath $old) { [IO.File]::Delete($old) }
+            [IO.File]::Replace($temp, $Path, $old)
+            if (Test-Path -LiteralPath $old) { [IO.File]::Delete($old) }
+        } else {
+            [IO.File]::Move($temp, $Path)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temp -PathType Leaf) { [IO.File]::Delete($temp) }
+    }
+}
+
+# The SHA-256 of a file, or $null when it is absent. Compared before a write, so a file changed after planning is not overwritten.
+function Get-FileSha256OrNull {
+    param([string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+}
+
+function Assert-UnchangedSince {
+    param([string] $Path, $PlannedSha)
+
+    if ((Get-FileSha256OrNull $Path) -ne $PlannedSha) {
+        throw "$Path changed after the install planned its text, so nothing was written to it. Rerun -Apply."
     }
 }
 
@@ -981,28 +1083,103 @@ function Get-OwnedPiEntries {
     return @($record[0].entries)
 }
 
-# The workspace Pi settings the installer would write, and the entries it adds to each list.
-# packages and skills are the only keys the installer owns; every other key, such as
-# defaultProvider or defaultModel, is written back unchanged.
+# The workspace Pi settings the installer would write, and the entries it adds to each list. packages and skills are
+# the only keys the installer owns; every other key is written back exactly as it was. A file that is not strict
+# JSON is refused, with nothing written.
 function Get-PiSettings {
     param([string[]] $Packages, [string[]] $Skills, [object[]] $OwnedPackages, [object[]] $OwnedSkills)
 
-    $settings = [ordered]@{}
-    if (Test-Path -LiteralPath $piSettingsTarget -PathType Leaf) {
-        $existing = Get-Content -LiteralPath $piSettingsTarget -Raw | ConvertFrom-Json
-        if ($null -ne $existing) {
-            foreach ($property in $existing.PSObject.Properties) { $settings[$property.Name] = $property.Value }
+    $sourceSha = Get-FileSha256OrNull $piSettingsTarget
+    $root = [System.Text.Json.Nodes.JsonObject]::new()
+    if ($null -ne $sourceSha) {
+        try {
+            $root = Read-StrictJsonObject ([IO.File]::ReadAllText($piSettingsTarget))
+        } catch {
+            throw "$piSettingsTarget is not strict JSON ($($_.Exception.Message)): it has comments, trailing commas, or is not an object. The installer will not rewrite it. Remove those, then rerun -Apply."
         }
     }
-    $packagesMerge = Merge-PiEntries -Current $settings['packages'] -Wanted $Packages -Owned $OwnedPackages
-    $skillsMerge = Merge-PiEntries -Current $settings['skills'] -Wanted $Skills -Owned $OwnedSkills
-    # @() keeps a one-entry list an array; PowerShell would otherwise unroll it to a string.
-    $settings['packages'] = @($packagesMerge.merged)
-    $settings['skills'] = @($skillsMerge.merged)
+    $added = [ordered]@{}
+    $added['packages'] = @(Merge-JsonEntries -Root $root -Key 'packages' -Wanted $Packages -Owned $OwnedPackages)
+    $added['skills'] = @(Merge-JsonEntries -Root $root -Key 'skills' -Wanted $Skills -Owned $OwnedSkills)
     return [pscustomobject]@{
-        text  = (($settings | ConvertTo-Json -Depth 20) + "`n")
-        added = [ordered]@{ packages = @($packagesMerge.added); skills = @($skillsMerge.added) }
+        text      = $root.ToJsonString((New-JsonWriteOptions)) + "`n"
+        added     = $added
+        sourceSha = $sourceSha
     }
+}
+
+# The backup an apply takes before it replaces a file with its text. X.bak is the original: the first file the
+# installer replaced, and the only copy a removal restores. X.bak.N holds a hand edit made after that. An installer's
+# own last write is replaced without a copy. When the last write is unknown (a lock from before schema 2), an existing
+# X.bak is left untouched, and a file the install created gets no copy.
+function Get-BackupTarget {
+    param([string] $Path, $LastSha, [string] $NewText, [bool] $Created)
+
+    $none = [pscustomobject]@{ action = 'none'; path = $null }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $none }
+    if (([IO.File]::ReadAllText($Path)).Trim() -eq $NewText.Trim()) { return $none }
+    $current = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if ($LastSha -and $current -eq $LastSha) { return $none }
+    $original = "$Path.bak"
+    $hasOriginal = Test-Path -LiteralPath $original -PathType Leaf
+    if ($null -eq $LastSha) {
+        if ($hasOriginal -or $Created) { return $none }
+        return [pscustomobject]@{ action = 'original'; path = $original }
+    }
+    if (-not $hasOriginal) { return [pscustomobject]@{ action = 'original'; path = $original } }
+    return [pscustomobject]@{ action = 'edited'; path = (Get-NextBackupPath $Path) }
+}
+
+function Get-NextBackupPath {
+    param([string] $Path)
+
+    for ($number = 1; ; $number++) {
+        $candidate = "$Path.bak.$number"
+        if (-not (Test-Path -LiteralPath $candidate)) { return $candidate }
+    }
+}
+
+# The file records of one file's backups: the original, every numbered copy on disk, and the copy this apply will
+# write. A backup keeps the role it was written with; a copy from a lock before roles names none.
+function Get-BackupRecordsFor {
+    param([string] $Relative, $Target, [string] $Runtime)
+
+    $full = Join-Path $Workspace ($Relative -replace '/', '\')
+    $folder = Split-Path -Parent $full
+    $leaf = Split-Path -Leaf $full
+    $paths = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $folder -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $folder -File -Force -Filter "$leaf.bak*")) {
+            if ($file.Name -cmatch ('^' + [regex]::Escape($leaf) + '\.bak(\.\d+)?$')) { $paths.Add($file.FullName) }
+        }
+    }
+    $targetPath = $null
+    if ($Target.action -ne 'none') { $targetPath = $Target.path }
+    if ($null -ne $targetPath -and -not $paths.Contains($targetPath)) { $paths.Add($targetPath) }
+    $records = [System.Collections.Generic.List[object]]::new()
+    foreach ($backupPath in $paths) {
+        $relativeBackup = $backupPath.Substring($Workspace.Length + 1).Replace('\', '/')
+        if ($backupPath -eq $targetPath) {
+            $role = if ($Target.action -eq 'original') { 'original' } else { 'edited' }
+            $sha = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
+        } else {
+            $role = Get-PriorBackupRole $relativeBackup
+            $sha = (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash
+        }
+        $record = New-OwnedRecord -Path $relativeBackup -Kind 'file' -Sha256 $sha -Runtime $Runtime -Role $role
+        $record | Add-Member -NotePropertyName backup -NotePropertyValue $true
+        $records.Add($record)
+    }
+    return $records.ToArray()
+}
+
+# The role a backup had in the previous lock. A backup the previous lock never named has none.
+function Get-PriorBackupRole {
+    param([string] $Relative)
+
+    if ($null -eq $priorOwned) { return $null }
+    $prior = @($priorOwned | Where-Object { $_.path -ceq $Relative -and $_.kind -eq 'file' }) | Select-Object -First 1
+    return (Get-Field $prior 'role')
 }
 
 # One record of the ownership list. A file or folder holds its SHA-256, a folder a tree hash; a link
@@ -1020,7 +1197,9 @@ function New-OwnedRecord {
         [bool] $CreatedKey = $false,
         # Untyped, so that no runtime stays $null in the record rather than an empty string.
         $Runtime = $null,
-        [string[]] $Layers = @()
+        [string[]] $Layers = @(),
+        # The role of a backup: original, or edited. Null for every other record.
+        $Role = $null
     )
 
     switch ($Kind) {
@@ -1033,6 +1212,7 @@ function New-OwnedRecord {
     }
     $record | Add-Member -NotePropertyName runtime -NotePropertyValue $Runtime
     $record | Add-Member -NotePropertyName layers -NotePropertyValue @(Sort-Utf8 @($Layers | Where-Object { $_ }))
+    if ($null -ne $Role) { $record | Add-Member -NotePropertyName role -NotePropertyValue $Role }
     return $record
 }
 
@@ -1061,6 +1241,21 @@ function Assert-Written {
     if ($Disk -ne $Planned) {
         throw "$Path holds different content from what the install wrote, so no ownership record was written. Remove the file or folder and apply again."
     }
+}
+
+# A stale wrapper goes only when it is the installer's recorded copy. A hand-edited wrapper, or one the lock
+# never recorded, is kept and printed.
+function Remove-WrapperIfRecorded {
+    param([string] $Path)
+
+    $relative = '.maxstack/bin/' + (Split-Path -Leaf $Path)
+    $record = @($priorOwned | Where-Object { $null -ne $_ -and $_.path -ceq $relative -and $_.kind -eq 'file' }) | Select-Object -First 1
+    if ($null -eq $record -or -not (Test-RecordedFile -Full $Path -Sha256 $record.sha256)) {
+        Write-Host "Kept ${Path}: it is not the installer's recorded copy (changed by hand, or never recorded)"
+        return
+    }
+    Remove-OwnedTree $Path
+    Write-Host "Removed the stale wrapper $Path"
 }
 
 # What the installer would own after an apply, from the same layers and texts the apply writes.
@@ -1098,17 +1293,7 @@ function Get-OwnedPlan {
         if ($configUnchanged) { $configSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash }
         $records.Add((New-OwnedRecord -Path 'opencode.jsonc' -Kind 'file' -Sha256 $configSha -Runtime 'opencode'))
 
-        $backupSha = $null
-        if (Test-BackupNeeded -Path $configTarget -LastSha $priorOpenCodeSha -NewText $Document) {
-            $backupSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
-        } elseif (Test-Path -LiteralPath "$configTarget.bak" -PathType Leaf) {
-            $backupSha = (Get-FileHash -LiteralPath "$configTarget.bak" -Algorithm SHA256).Hash
-        }
-        if ($null -ne $backupSha) {
-            $backup = New-OwnedRecord -Path 'opencode.jsonc.bak' -Kind 'file' -Sha256 $backupSha -Runtime 'opencode'
-            $backup | Add-Member -NotePropertyName backup -NotePropertyValue $true
-            $records.Add($backup)
-        }
+        foreach ($backup in @(Get-BackupRecordsFor -Relative 'opencode.jsonc' -Target $configBackupTarget -Runtime 'opencode')) { $records.Add($backup) }
     }
 
     foreach ($record in $ClaudeRecords) {
@@ -1167,17 +1352,7 @@ function Get-OwnedPlan {
 
     if ($null -ne $PiSettings) {
         $settingsPath = Join-Path $Workspace '.pi\agent\settings.json'
-        $settingsBackupSha = $null
-        if (-not $PiPending -and (Test-BackupNeeded -Path $settingsPath -LastSha $priorSettingsSha -NewText $PiSettings.text)) {
-            $settingsBackupSha = (Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash
-        } elseif (Test-Path -LiteralPath "$settingsPath.bak" -PathType Leaf) {
-            $settingsBackupSha = (Get-FileHash -LiteralPath "$settingsPath.bak" -Algorithm SHA256).Hash
-        }
-        if ($null -ne $settingsBackupSha) {
-            $backup = New-OwnedRecord -Path '.pi/agent/settings.json.bak' -Kind 'file' -Sha256 $settingsBackupSha -Runtime 'pi'
-            $backup | Add-Member -NotePropertyName backup -NotePropertyValue $true
-            $records.Add($backup)
-        }
+        foreach ($backup in @(Get-BackupRecordsFor -Relative '.pi/agent/settings.json' -Target $settingsBackupTarget -Runtime 'pi')) { $records.Add($backup) }
 
         # The layers a Pi settings list may hold an entry of: every selected layer that declares pi.
         $piLayerNames = @($Layers | Where-Object { $_.runtimes.ContainsKey('pi') } | ForEach-Object { $_.name })
@@ -1193,19 +1368,6 @@ function Get-OwnedPlan {
     return $records.ToArray()
 }
 
-# Whether an apply must back up a file before it replaces it. The file is backed up when it exists, differs
-# from the new text, and holds something other than the installer's last write, so a hand edit is kept and an
-# installer-written file is not. $LastSha is that last write's hash, or $null when no apply recorded one.
-function Test-BackupNeeded {
-    param([string] $Path, [string] $LastSha, [string] $NewText)
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
-    if (([IO.File]::ReadAllText($Path)).Trim() -eq $NewText.Trim()) { return $false }
-    return ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $LastSha)
-}
-
-# The ownership list an apply writes, from the plan once the disk matches it. A json-entries record
-# holds only the entries the apply added, and none when it added none.
 function Get-OwnedRecords {
     param([object[]] $Plan, [hashtable] $CreatedKeys)
 
@@ -1213,7 +1375,7 @@ function Get-OwnedRecords {
         $full = Join-Path $Workspace ($record.path -replace '/', '\')
         # A planned backup is recorded once the apply has written it, and not before.
         if ((Get-Field $record 'backup') -and -not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
-        $attribution = @{ Runtime = $record.runtime; Layers = @($record.layers) }
+        $attribution = @{ Runtime = $record.runtime; Layers = @($record.layers); Role = (Get-Field $record 'role') }
         switch ($record.kind) {
             'file' {
                 $disk = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
@@ -1302,7 +1464,9 @@ function Get-OwnershipReport {
         }
         $settingsPath = Join-Path $Workspace ($record.path -replace '/', '\')
         $settings = $null
-        if (Test-Path -LiteralPath $settingsPath -PathType Leaf) { $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json }
+        if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
+            try { $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json } catch { $settings = $null }
+        }
         $present = [hashtable]::new([StringComparer]::Ordinal)
         foreach ($entry in @(Get-Field $settings $record.key)) {
             if ($null -ne $entry) { $present[(Get-PiEntryKey $entry)] = $true }
@@ -2266,6 +2430,19 @@ foreach ($record in $piRecords) {
     $piUnknown.skills += "../../.claude/plugins/$($record.layer)/skills"
 }
 
+# The backup each replaced file gets, and the text it had when the install read it. Decided before any write, so the
+# plan records the backup and the write makes exactly that copy.
+$configBackupTarget = [pscustomobject]@{ action = 'none'; path = $null }
+$configSourceSha = $null
+if ($null -ne $document) {
+    $configSourceSha = Get-FileSha256OrNull $configTarget
+    $configBackupTarget = Get-BackupTarget -Path $configTarget -LastSha $priorOpenCodeSha -NewText $document -Created ($priorCreatedFiles -ccontains 'opencode.jsonc')
+}
+$settingsBackupTarget = [pscustomobject]@{ action = 'none'; path = $null }
+if ($null -ne $piSettings -and -not $piPending) {
+    $settingsBackupTarget = Get-BackupTarget -Path $piSettingsTarget -LastSha $priorSettingsSha -NewText $piSettings.text -Created ($priorCreatedFiles -ccontains '.pi/agent/settings.json')
+}
+
 $plan = @()
 if ($Apply -or $removing -or ($Status -and $null -ne $priorOwned)) {
     $plan = Get-OwnedPlan -Document $document -Layers $layers -ClaudeRecords $claudeRecords -OpenCodeLayers $openCodeLayers `
@@ -2380,11 +2557,12 @@ if ($openCodeSelected) {
     if ((Test-Path -LiteralPath $configTarget) -and ((Get-Content -LiteralPath $configTarget -Raw).Trim() -eq $document.Trim())) {
         Write-Host "Config already matches: $configTarget"
     } else {
-        if (Test-BackupNeeded -Path $configTarget -LastSha $priorOpenCodeSha -NewText $document) {
-            Copy-Item -LiteralPath $configTarget -Destination "$configTarget.bak" -Force
-            Write-Host "Backed up the previous config to $configTarget.bak"
+        if ($configBackupTarget.action -ne 'none') {
+            Copy-Item -LiteralPath $configTarget -Destination $configBackupTarget.path -Force
+            Write-Host "Backed up the previous config to $($configBackupTarget.path)"
         }
-        [IO.File]::WriteAllText($configTarget, $document, (New-Object System.Text.UTF8Encoding($false)))
+        Assert-UnchangedSince $configTarget $configSourceSha
+        Write-FileAtomically $configTarget $document
         Write-Host "Wrote $configTarget"
     }
 }
@@ -2512,8 +2690,7 @@ if ($copilotCmdText) {
 } elseif ($copilotSelected) {
     foreach ($path in @($copilotCmdTarget, $copilotShTarget)) {
         if (Test-Path -LiteralPath $path -PathType Leaf) {
-            Remove-Item -LiteralPath $path -Force
-            Write-Host "Removed the stale Copilot wrapper $path"
+            Remove-WrapperIfRecorded -Path $path
         }
     }
 }
@@ -2532,11 +2709,12 @@ if ($piSettings) {
     if ((Test-Path -LiteralPath $piSettingsTarget -PathType Leaf) -and ((Get-Content -LiteralPath $piSettingsTarget -Raw).Trim() -eq $piSettingsText.Trim())) {
         Write-Host "Pi settings already match: $piSettingsTarget"
     } else {
-        if (Test-BackupNeeded -Path $piSettingsTarget -LastSha $priorSettingsSha -NewText $piSettingsText) {
-            Copy-Item -LiteralPath $piSettingsTarget -Destination "$piSettingsTarget.bak" -Force
-            Write-Host "Backed up the previous Pi settings to $piSettingsTarget.bak"
+        if ($settingsBackupTarget.action -ne 'none') {
+            Copy-Item -LiteralPath $piSettingsTarget -Destination $settingsBackupTarget.path -Force
+            Write-Host "Backed up the previous Pi settings to $($settingsBackupTarget.path)"
         }
-        [IO.File]::WriteAllText($piSettingsTarget, $piSettingsText, (New-Object System.Text.UTF8Encoding($false)))
+        Assert-UnchangedSince $piSettingsTarget $piSettings.sourceSha
+        Write-FileAtomically $piSettingsTarget $piSettingsText
         Write-Host "Wrote $piSettingsTarget"
     }
 }
@@ -2550,8 +2728,7 @@ if ($piCmdText) {
 } elseif ($piSelected) {
     foreach ($path in @($piCmdTarget, $piShTarget)) {
         if (Test-Path -LiteralPath $path -PathType Leaf) {
-            Remove-Item -LiteralPath $path -Force
-            Write-Host "Removed the stale Pi wrapper $path"
+            Remove-WrapperIfRecorded -Path $path
         }
     }
 }

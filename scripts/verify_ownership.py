@@ -15,6 +15,9 @@ OWNED_SCHEMA = 2
 OWNED_KINDS = ("file", "dir", "link", "json-entries")
 OWNED_PI_KEYS = ("packages", "skills")
 SHA256_UPPER = re.compile(r"^[0-9A-F]{64}$")
+# A backup of a replaced file: X.bak, the original, or X.bak.N, a numbered copy. Only these may name a role.
+BACKUP_PATH = re.compile(r"\.bak(\.\d+)?$")
+BACKUP_ROLES = ("original", "edited")
 
 
 def is_nonempty_str(value: object) -> bool:
@@ -70,6 +73,10 @@ def check_owned_record(record: object, where: str, failures: list[str]) -> str |
             if record["createdKey"] is not True:
                 failures.append(f"{where} createdKey, when present, must be true")
     expected = expected | {"runtime", "layers"}
+    if BACKUP_PATH.search(str(record.get("path", ""))) and "role" in record:
+        expected = expected | {"role"}
+        if record["role"] not in BACKUP_ROLES:
+            failures.append(f"{where} role must be one of {list(BACKUP_ROLES)}")
     check_attribution(record, where, failures)
     if set(record) != expected:
         failures.append(
