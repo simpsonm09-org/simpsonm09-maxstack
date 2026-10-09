@@ -4,21 +4,23 @@ This document names how the pieces fit together. It covers the repositories that
 
 ## Ownership
 
-`maxstack` owns AI composition. It holds the workspace config fragment, the ordered layer manifest, the installer, and the pin on the plugin package. It composes the AI layer and does not own any layer it installs.
+`maxstack` owns AI composition. It holds the workspace config fragment, the ordered layer manifest, the installer, and the pin on the PStack plugin. It composes the AI layers and does not own any layer it installs.
 
 `simpsonm09-dev-setup` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, the secrets loaders, and the Agent Vault wrappers. It does not own AI composition.
 
-The three plugin layers own the skills, the agents, and the MCP servers. Order matters, and each later layer builds on the one before it.
+The plugin layers own the skills, the agents, the entries, and the MCP servers. Order matters, and each later layer builds on the one before it.
 
 | Repository | Layer | Owns |
 | --- | --- | --- |
-| `pstack-opencode-plugin` | base | The plugin package: the PStack skills, the agent profiles, and the adapter that registers them. |
+| `simpsonm09/pstack-claude` (fork) | `pstack`, base | The PStack plugin in `plugins/pstack`: the shared skills, the OpenCode entry and agent profiles, the Claude Code manifest, and the Copilot manifest and hooks. |
 | `simpsonm09-org-ai-plugin` | general and portable | MCP servers and skills that apply to any person or machine. |
 | `simpsonm09-personal-ai-plugin` | person and machine | MCP servers and skills that name one person and one machine. |
-| `simpsonm09-maxstack` | none | AI composition: the config fragment, the layer manifest, the installer, and the plugin pin. |
+| `simpsonm09-maxstack` | none | AI composition: the config fragment, the layer manifest, the installer, and the PStack pin. |
 | `simpsonm09-dev-setup` | none | The machine and the human tool set: tool installs, `tools.yaml`, the secrets loaders, and the Agent Vault wrappers. |
 
-`layers.json` lists the three plugin layers in order. `maxstack` reads that order, copies each layer that carries a `pluginTarget` into `.opencode/plugins`, merges the config fragments, and installs the agent profiles. A later layer wins where two layers set the same value.
+`layers.json` lists the layers in order. Each layer names the runtimes it installs for: `claude`, `opencode`, and `copilot`. `maxstack` reads that order, builds each runtime's folders, merges the config fragments, and installs the agent profiles. A later layer wins where two layers set the same value.
+
+The PStack layer is a git source. The org and personal layers are local checkouts. All three install for the same runtimes, so one layer is one plugin in every harness.
 
 ## The cross-repo edge
 
@@ -50,4 +52,4 @@ The `.envrc` at the same root is the secret-loading boundary. The loaders read i
 
 Do not store an absolute root. The same workspace is `D:\dev\simpsonm09` on Windows and `/mnt/d/dev/simpsonm09` in WSL, so a stored path is wrong in the other runtime. Record what each tool needs relative to the workspace, or read it from an environment variable.
 
-The Claude plugin folder keeps to that rule. Its links and copies are created on each apply, and `stack.lock.json` holds only workspace-relative paths. The T3 instance's launch arguments name the folder by its absolute path, because T3 passes them as written. That string is T3 app state, not repository content. See [T3 setup](t3-setup.md).
+The generated runtime folders keep to that rule. Their links and copies are created on each apply, and `stack.lock.json` holds only workspace-relative paths. Two generated files name an absolute path, because the tool that reads them needs one: the T3 Claude instance's launch arguments name the Claude folder, and `.maxstack\bin\copilot.cmd` names the Copilot executable and the Claude folders. Both are app state or generated output, not repository content. See [T3 setup](t3-setup.md).

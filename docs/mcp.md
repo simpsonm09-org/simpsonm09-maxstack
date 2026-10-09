@@ -68,7 +68,7 @@ Remote secrets use `{env:NAME}`. Never write a secret into the config.
 
 ## Layer plugin entries
 
-A config layer can also register skills through an OpenCode plugin. `simpsonm09-org-ai-plugin` and `simpsonm09-personal-ai-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/simpsonm09-org-ai-plugin` and `.opencode/plugins/simpsonm09-personal-ai-plugin`, and OpenCode loads them next to `pstack-opencode`.
+A config layer can also register skills through an OpenCode plugin. `simpsonm09-org-ai-plugin` and `simpsonm09-personal-ai-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/simpsonm09-org-ai-plugin` and `.opencode/plugins/simpsonm09-personal-ai-plugin`, and OpenCode loads them next to `pstack`, whose entry is named in `opencode.jsonc`.
 
 | Plugin | Skill | Purpose |
 | --- | --- | --- |

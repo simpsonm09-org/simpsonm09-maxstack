@@ -1,58 +1,72 @@
 # Plugin publishing
 
-This repository does not own the plugin. [`simpsonm09-org/pstack-opencode-plugin`](https://github.com/simpsonm09-org/pstack-opencode-plugin) is the source of truth for the plugin package. `maxstack` pins that package and assembles the workspace bundle that the OpenCode runtimes load (the T3 OpenCode provider and the OpenCode CLI) and the Claude Code plugin folder that T3's Claude provider loads.
+This repository does not own the PStack plugin. [`simpsonm09/pstack-claude`](https://github.com/simpsonm09/pstack-claude), branch `feat/opencode-runtime`, is the source of truth. Its `plugins/pstack` folder holds the plugin for three runtimes: Claude Code (`.claude-plugin`), GitHub Copilot CLI (`.github/plugin`), and OpenCode (`opencode/`, with the shared `skills/` tree beside it). `maxstack` pins one commit of that folder and assembles the bundle each runtime loads.
 
 ## Inputs
 
-- `layers.json` is the ordered layer manifest. Each layer has a `name`, a `kind` (`plugin` or `config`), a checkout `path` under the workspace, and a `source` URL. A layer with a `pluginTarget` is copied into `.opencode/plugins`.
-- A layer may carry a `claude` block. `{ "plugin": "<name>" }` makes a local Claude plugin: the layer's `.claude-plugin/plugin.json` must exist, its `name` must match, and its `files` list must include `.claude-plugin`. The installer links `.claude/plugins/<name>` to the installed copy. `{ "plugin": "<name>", "git": { "url", "path", "commit", "tag" } }` makes a pinned Claude plugin: the installer copies the `path` folder of the repository at exactly `commit` into `.claude/plugins/<name>`.
-- `pstack-opencode.lock.json` pins the plugin repository and the exact commit to install.
-- `pstack-claude.lock.json` pins the pstack Claude plugin: the repository, the `path`, the `tag` it belongs to, the commit, and the upstream commit the OpenCode port pins.
-- The installer sets no model. It writes no `model` or `small_model` key into the workspace config, and it removes any `model:` line from each agent profile it copies. The user picks the model in the harness.
+- `layers.json` is the ordered layer manifest. Each layer has a `name`, which is its plugin id, and a `kind` (`plugin` or `config`). Its `source` is either a local checkout, a URL string with a `path` under the workspace, or a git pin, an object with `url`, `path`, `commit`, and `ref`.
+- A layer's `runtimes` map names the runtimes it installs for. Each key is optional, and each runtime needs its prerequisite: `copilot` needs `claude`, because the wrapper runs the Claude folder, and a local layer's `claude` needs its `opencode` copy, because the Claude folder links to it.
+  - `claude: {}` installs `.claude\plugins\<name>`. A local layer links to its OpenCode copy. A git layer is a copy of its pinned folder. Each folder must carry `.claude-plugin/plugin.json` with the same name.
+  - `opencode: { entry, agents, files }` installs `.opencode\plugins\<name>`. `entry` is the file OpenCode loads, `index.ts` by default. `agents` names a folder of profiles that are copied to `.opencode\agents`. `files` names the items to copy, as a layer's `layer.json` `files` list does for a local layer.
+  - `copilot: {}` adds the layer's Claude folder to `.maxstack\bin\copilot.cmd` and `copilot.sh`, in layer order.
+- `pstack.lock.json` is the one pin for the pstack plugin: the repository, the `path`, the `commit`, and the `ref` the commit came from. It must agree with the pstack layer's `source` in `layers.json`.
 - `workspace/opencode.jsonc` is the config base. Layer fragments supply the MCP servers and extra permissions.
+- The installer sets no model. It writes no `model` or `small_model` key into the workspace config, and it removes any `model:` line from each agent profile it copies. The user picks the model in the harness.
+
+## Entries OpenCode loads
+
+OpenCode loads a folder under `.opencode\plugins` on its own only when that folder's `index.ts` is at its root. An entry in a subfolder, such as the fork's `opencode/index.ts`, is not loaded that way. The installer therefore names such an entry in the `plugin` list of `opencode.jsonc`, as a folder path relative to the config file:
+
+```jsonc
+"plugin": ["./.opencode/plugins/pstack/opencode"]
+```
+
+The entry resolves its shared skills beside its own folder, so the installed folder keeps `opencode/` and `skills/` together. A root `index.ts` needs no entry in the list.
 
 ## Assembly
 
 `scripts/Install-Workspace.ps1` runs in audit mode by default and changes nothing. With `-Apply` it:
 
-1. Checks that each layer checkout exists and that the plugin layer has an `index.ts`. It checks each `claude` block against the layer's manifest, and for a `git` block it fetches the pinned commit into `.claude/cache` and checks it out. A pin the repository cannot supply stops the run here, before anything is written.
-2. Warns when the plugin checkout HEAD differs from the pinned commit.
-3. Merges every config layer's `opencode.fragment.jsonc` into `D:\dev\simpsonm09\opencode.jsonc`.
-4. Copies each plugin layer's `layer.json` `files` list, or the default item list, into `.opencode/plugins/<pluginTarget>`, then runs `npm install` there. A layer without a `claude` block gets no `.claude-plugin` directory, and any left from an earlier apply is removed. A folder under `.opencode/plugins` that no current `pluginTarget` names is stale: it is removed only if the previous `stack.lock.json` recorded it as a layer's `pluginTarget`, and otherwise it is reported and kept.
-5. Copies the plugin layer's `agents/*.md` into `.opencode/agents` and removes any `model:` line from each copy.
-6. Builds `.claude/plugins/`. A local layer becomes a junction to its installed copy, so both harnesses share it. A `git` layer becomes a copy of the pinned folder. Each child is checked for the manifest name it must carry. A child that no longer has a claude block is removed: a junction is removed as a link, and its target is never touched.
-7. Writes `stack.lock.json` at the workspace root.
+1. Checks each local checkout exists. For a git source it fetches the pinned commit into `.claude\cache\<name>` and checks it out. The cache's origin is set to the layer's url on each sync, so a cache cloned from another remote is never fetched from. A pin the remote cannot supply stops the run here, before anything is written.
+2. Validates each runtime block. A runtime without its prerequisite, an unknown runtime name, or an entry that is not a file under the folder stops the run.
+3. Merges every config layer's `opencode.fragment.jsonc` and writes `opencode.jsonc`, with the `plugin` list for nested entries. A backup of the previous file is kept.
+4. For each layer with an `opencode` runtime, copies the named items into `.opencode\plugins\<name>`, runs `npm install` in the entry's folder when that folder has a `package.json` and no SDK, and copies each `agents/*.md` profile to `.opencode\agents` with any model line removed. It then checks that the entry exists.
+5. Removes the folders under `.opencode\plugins` that no layer names and that the previous lock recorded. It always removes the folder of the retired `pstack-opencode` port. Any other unnamed folder is reported and kept.
+6. Builds `.claude\plugins`. A local layer becomes a junction to its installed copy, so both harnesses share it. A git layer becomes a copy of its pinned folder. A child that no layer declares is removed.
+7. Writes `.maxstack\bin\copilot.cmd` and `copilot.sh`. The executable is the first `copilot` application outside `.maxstack\bin`, found with `Get-Command` or the `-CopilotCommand` override. With no executable, both wrappers are skipped with a message, and any old wrapper is removed.
+8. Writes `stack.lock.json` at the workspace root.
 
-Audit mode computes the config and each child, and reports each as `missing`, `differs`, `matches`, or `stale`. A child differs when it is missing, is not the expected link or copy, has a tree hash other than the one the last apply recorded, or its git pin has moved. Audit writes nothing and makes no network call.
+Audit mode computes each of these and reports `missing`, `differs`, `matches`, or `stale`. It writes nothing and reads no git source. An OpenCode folder differs when its entry, plugin path, or recorded state changed. A Claude child differs when it is missing, is not the expected link or copy, has a tree hash other than the one the last apply recorded, or its git commit has moved. A Copilot wrapper differs when its text is not what the installer would write.
 
 ## The recorded lock
 
-`stack.lock.json` is the install-provenance record. `Install-Workspace.ps1` writes it at the workspace root, not in this repository. It records `generatedAt`, the SHA-256 of the written workspace config, and one entry per layer with its `name`, `kind`, `path`, `pluginTarget` (null for a layer with no plugin copy), `source`, and installed `commit`. The `pluginTarget` is what the next apply uses to recognise a stale `.opencode/plugins` folder. A lock written before this field existed records no targets, so no stale folder is removed until the next apply writes them. Each layer also has a `claude` record:
+`stack.lock.json` is the install-provenance record. `Install-Workspace.ps1` writes it at the workspace root, not in this repository. It records `generatedAt`, the SHA-256 of the written workspace config, the Copilot wrapper record, and one entry per layer with its `name`, `kind`, `path` (null for a git layer), `source`, and installed `commit`. Each layer has three runtime records, and a runtime the layer does not name has `enabled: false`.
 
-- a local plugin: `enabled`, `plugin`, `kind: "junction"`, `child` (`.claude/plugins/<name>`), `target` (`.opencode/plugins/<pluginTarget>`), and `treeSha256`;
-- a git plugin: `enabled`, `plugin`, `kind: "git"`, `child`, `repository`, `path`, `commit`, and `treeSha256`;
-- a layer with no Claude plugin: `enabled: false`.
+- `claude`: a local layer has `enabled`, `plugin`, `kind: "junction"`, `child` (`.claude/plugins/<name>`), `target` (`.opencode/plugins/<name>`), and `treeSha256`. A git layer has `enabled`, `plugin`, `kind: "git"`, `child`, `repository`, `path`, `commit`, and `treeSha256`.
+- `opencode`: `enabled`, `folder` (`.opencode/plugins/<name>`), `entry`, `loader` (`discovery` for a root `index.ts`, `config` for a nested entry), `plugin` (the path named in `opencode.jsonc`, or null), and `agents` (the profile names installed).
+- `copilot`: `enabled` and `pluginDir` (`.claude/plugins/<name>`).
+
+The top-level `copilot` record holds `enabled`, and when enabled, the `executable` file name, the `wrappers` relative paths, and the SHA-256 of each wrapper's text. When it is disabled, it holds the `reason`. The executable's absolute path is not recorded, because the lock holds no absolute path. It is written only into the wrapper.
 
 `treeSha256` is a hash over each file's relative path and SHA-256, leaving out a top-level `node_modules`. The lock holds only workspace-relative paths, so it holds no absolute path. The junction's target is an absolute path inside the filesystem, but the installer creates it on each apply and the lock does not record it.
 
 ## Generated files and git
 
-The generated files live at the workspace root, which is not a git repository, so no repository in this set tracks them. The root `.gitignore` covers the installer output, and `.opencode/plugins/` already holds the local plugin copies. The Claude folder needs two more entries there, `.claude/plugins/` and `.claude/cache/`. See [T3 setup](t3-setup.md#generated-files-and-git).
+The generated files live at the workspace root, which is not a git repository, so no repository in this set tracks them. The root `.gitignore` covers the installer output. The runtime folders need these entries there, `.claude/plugins/`, `.claude/cache/`, `.opencode/plugins/`, and `.maxstack/bin/`. See [T3 setup](t3-setup.md#generated-files-and-git).
 
 ## Validation
 
-`.github/workflows/ci.yml` runs `scripts/verify-manifests.py` in the `validate` job. The script checks that `layers.json`, `pstack-opencode.lock.json`, `pstack-claude.lock.json`, and `workspace/opencode.jsonc` agree with each other and with the installer, without cloning the private plugin repository. The plugin repository validates its own generated `skills/` tree in its `verify-pin.yml` workflow.
+`.github/workflows/ci.yml` runs `scripts/verify-manifests.py` in the `validate` job. The script checks that `layers.json`, `pstack.lock.json`, and `workspace/opencode.jsonc` agree with each other and with the installer, without reaching the network. It checks each layer's runtime names and their prerequisites, that each OpenCode entry is a file the folder can hold, that the pstack source and its pin name the same commit, and that the retired `pstack-opencode.lock.json` is gone. `scripts/verify-manifests.test.mjs` runs the script on changed copies of the manifests, so each check has a case that fails.
 
-The Claude pin is checked offline. The `pstack-claude.lock.json` repository, path, tag, and commit must match the `git` block in `layers.json`, and its `commit` must equal its `opencodeUpstream`, which is the upstream commit the OpenCode port pins. `python scripts/verify-manifests.py --online` also runs `git ls-remote` to confirm the tag still resolves to that commit, and `gh api` to read the port's `pstack.lock.json` at the commit `pstack-opencode.lock.json` names. Run it from a machine with `gh` signed in. CI does not run `--online`.
+`python scripts/verify-manifests.py --online` also runs `git ls-remote` to confirm the pinned branch still points at the pinned commit. Run it from a machine with network access. CI does not run `--online`.
 
-`python scripts/verify-workspace-install.py` checks an installed workspace: each recorded child exists, is the expected link or copy, carries the manifest name the lock records, and matches its `treeSha256`. It also reports any child the lock does not record, and any leftover marketplace or settings file from an earlier design.
+`python scripts/verify-workspace-install.py` checks an installed workspace against `stack.lock.json`. For each runtime it checks the files on disk: the Claude folders, the OpenCode folders and entries, the nested entries the config names, the agent profiles with no model line, the pstack skills, and the Copilot wrappers against their recorded hashes, switch, plugin folders, and executable. It also reports any folder the lock does not record, and any leftover marketplace, settings, or retired port folder.
 
 ## Publishing a new bundle
 
-1. Merge the plugin change in `pstack-opencode-plugin` and note the merge commit.
-2. Update the `commit` in `pstack-opencode.lock.json`, and the `path` or `source` if the layer moved.
-3. When the pstack release moves, update the `git` block in `layers.json` and `pstack-claude.lock.json` (`tag`, `commit`, `opencodeUpstream`), then run `python scripts/verify-manifests.py --online`.
-4. Run `pwsh -File scripts/Install-Workspace.ps1 -Apply`.
-5. Restart the running OpenCode server, then start a new T3 session. T3 can reuse an OpenCode server across sessions, so a new session alone does not reliably reload plugins or skills. Claude Code reads `.claude/plugins` when it starts. Then run `pwsh -File scripts/verify-opencode-workspace.ps1` and `python scripts/verify-workspace-install.py`.
+1. Merge the plugin change in `simpsonm09/pstack-claude` and note the commit on `feat/opencode-runtime`.
+2. Update `commit` in the pstack layer's `source` in `layers.json`, and `commit` in `pstack.lock.json`. Update `ref` too, if the branch moved. Run `python scripts/verify-manifests.py`.
+3. Run `pwsh -File scripts/Install-Workspace.ps1 -Apply`.
+4. Restart the running OpenCode server, then start a new T3 session. T3 can reuse an OpenCode server across sessions, so a new session alone does not reliably reload plugins or skills. Claude Code reads `.claude/plugins` when it starts, and Copilot reads its plugin folders when it starts. Then run `pwsh -File scripts/verify-opencode-workspace.ps1` and `python scripts/verify-workspace-install.py`.
 
-Merge the manifest changes in the org and personal repositories before a `claude` block that names their plugin lands here. Until a layer's `.claude-plugin/plugin.json` is on the checkout the installer reads, both audit and `-Apply` stop with a clear error. The `claude` checks run before any file is written, so a failure leaves the workspace unchanged, including for the OpenCode layers.
+Merge a layer's manifest changes in its own repository before a `claude` or `copilot` runtime that names it lands here. The Copilot runtime needs the layer's `.github/plugin/plugin.json` in the installed folder, so a layer's `files` list, or its `layer.json`, must name `.github/plugin` as well. Until a layer's `.claude-plugin/plugin.json` is on the checkout the installer reads, both audit and `-Apply` stop with a clear error. The checks run before any file is written, so a failure leaves the workspace unchanged.
