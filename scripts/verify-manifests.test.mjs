@@ -266,3 +266,41 @@ test('owned records out of order, or named twice, are refused', { skip }, () => 
   assert.equal(twice.status, 1, failureOf(twice));
   assert.match(failureOf(twice), /names one path, kind, and key twice/);
 });
+
+test('the owned list is sorted by UTF-8 bytes, so a fullwidth name comes before an emoji name', { skip }, () => {
+  // Code point order and UTF-8 order agree; UTF-16 would put the emoji (a surrogate pair) first.
+  const fullwidth = { path: 'Ａ-fullwidth/x', kind: 'dir', sha256: 'A'.repeat(64) };
+  const emoji = { path: '\u{1F642}-emoji/x', kind: 'dir', sha256: 'B'.repeat(64) };
+  const sorted = runVerifier({ lock: lockWith([fullwidth, emoji]) });
+  assert.equal(sorted.status, 0, failureOf(sorted));
+  const reversed = runVerifier({ lock: lockWith([emoji, fullwidth]) });
+  assert.equal(reversed.status, 1, failureOf(reversed));
+  assert.match(failureOf(reversed), /owned is not sorted by path, kind, and key/);
+});
+
+test('a json-entries record may carry createdKey true, and createdKey is refused in any other value', { skip }, () => {
+  const created = OWNED.map((record) => (record.key === 'skills' ? { ...record, createdKey: true } : record));
+  const passed = runVerifier({ lock: lockWith(created, { createdDirs: ['.claude', '.claude/plugins'], createdFiles: [] }) });
+  assert.equal(passed.status, 0, failureOf(passed));
+
+  const falsy = OWNED.map((record) => (record.key === 'skills' ? { ...record, createdKey: false } : record));
+  const refused = runVerifier({ lock: lockWith(falsy) });
+  assert.equal(refused.status, 1, failureOf(refused));
+  assert.match(failureOf(refused), /createdKey, when present, must be true/);
+});
+
+test('createdDirs and createdFiles are lists of workspace paths, sorted once each', { skip }, () => {
+  const backslash = runVerifier({ lock: lockWith(OWNED, { createdDirs: ['.maxstack\\bin'] }) });
+  assert.equal(backslash.status, 1, failureOf(backslash));
+  assert.match(failureOf(backslash), /createdDirs must be a list of workspace-relative paths/);
+
+  const twice = runVerifier({ lock: lockWith(OWNED, { createdFiles: ['.pi/agent/settings.json', '.pi/agent/settings.json'] }) });
+  assert.equal(twice.status, 1, failureOf(twice));
+  assert.match(failureOf(twice), /createdFiles names a path twice/);
+});
+
+test('a backup record is an ordinary file record, and it is accepted', { skip }, () => {
+  const backup = [...OWNED, { path: 'opencode.jsonc.bak', kind: 'file', sha256: 'E'.repeat(64) }];
+  const run = runVerifier({ lock: lockWith(backup) });
+  assert.equal(run.status, 0, failureOf(run));
+});

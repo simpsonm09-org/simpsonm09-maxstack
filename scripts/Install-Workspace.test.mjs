@@ -16,10 +16,13 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -578,8 +581,8 @@ withWorkspace('removing the claude runtime removes only its link and keeps the i
   const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
   const target = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin');
   assert.ok(isLink(child));
-  // Not an item in the layer's files list, so no apply copies over it.
-  writeFile(target, 'keep-me.txt', 'the installed copy must survive\n');
+  // Not an item in the layer's files list. The folder is wholly the installer's, so the apply removes it.
+  writeFile(target, 'keep-me.txt', 'a file the layer does not install\n');
 
   // copilot runs the Claude folder, so the layer loses both runtimes together.
   const layers = writeLayers(ctx, (manifest) => {
@@ -588,7 +591,7 @@ withWorkspace('removing the claude runtime removes only its link and keeps the i
   mustApply(ctx, [], { layersFile: layers });
 
   assert.equal(lstatSync(child, { throwIfNoEntry: false }), undefined, 'the link is gone');
-  assert.ok(existsSync(join(target, 'keep-me.txt')), 'the target lost a file');
+  assert.ok(!existsSync(join(target, 'keep-me.txt')), 'the apply left a file the layer does not install');
   assert.ok(existsSync(join(target, 'index.ts')), 'the target lost its entrypoint');
   assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal-ai-plugin')), 'the personal link was disturbed');
 
@@ -1250,13 +1253,28 @@ withWorkspace('a file in .maxstack/bin that the record does not name is untracke
   assert.equal(runStatus(ctx, ['-Strict']).status, 1, '-Strict accepted an untracked file');
 }, {});
 
-withWorkspace('a package-lock.json that npm writes beside an installed package.json is not part of the record', (ctx) => {
+withWorkspace('a file a user adds to an owned folder is modified, and the next apply removes it', (ctx) => {
   mustApply(ctx);
-  writeFile(ctx.workspace, '.opencode/plugins/simpsonm09-org-ai-plugin/package-lock.json', '{}\n');
+  const folder = '.opencode/plugins/simpsonm09-org-ai-plugin';
+  writeFile(ctx.workspace, `${folder}/notes.txt`, 'mine\n');
   const run = runStatus(ctx);
   assert.equal(run.status, 0, run.stderr);
-  assert.ok(statusRows(run).length > 0, 'the report named no path');
-  assert.deepEqual(problemRows(run), [], 'npm\'s lock file counted as a change to the folder');
+  assert.deepEqual(problemRows(run), [{ state: 'modified', label: folder }], run.stdout);
+
+  const applied = mustApply(ctx);
+  assert.match(applied.stdout, /Removed .*notes\.txt: the layer does not install it/, applied.stdout);
+  assert.ok(!existsSync(join(ctx.workspace, ...folder.split('/'), 'notes.txt')), 'the apply kept the user file');
+  assert.deepEqual(problemRows(runStatus(ctx)), [], 'the apply did not bring the folder back to matching');
+}, {});
+
+withWorkspace('the package-lock.json that npm writes beside an installed package.json is removed, and reported until then', (ctx) => {
+  mustApply(ctx);
+  const folder = '.opencode/plugins/simpsonm09-org-ai-plugin';
+  writeFile(ctx.workspace, `${folder}/package-lock.json`, '{}\n');
+  assert.deepEqual(problemRows(runStatus(ctx)), [{ state: 'modified', label: folder }]);
+  const applied = mustApply(ctx);
+  assert.match(applied.stdout, /Removed .*package-lock\.json/, applied.stdout);
+  assert.ok(!existsSync(join(ctx.workspace, ...folder.split('/'), 'package-lock.json')));
 }, {});
 
 withWorkspace('a lock without an owned list gets the clear message, and -Strict fails on it', (ctx) => {
@@ -1316,4 +1334,316 @@ withWorkspace('the workspace verifier checks each owned path against the disk an
   delete unowned.owned;
   writeFileSync(lockPath(ctx), JSON.stringify(unowned));
   assert.match(plainOutput(verify()), /has no owned list; rerun Install-Workspace\.ps1 -Apply/);
+}, {});
+
+// Round two: the ownership record is a claim about the disk, so each test below checks one claim
+// against a value this file computes itself, never against the installer's own output.
+function sha256Upper(bytes) {
+  return createHash('sha256').update(bytes).digest('hex').toUpperCase();
+}
+
+function sortUtf8(lines) {
+  return [...lines].sort((a, b) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8')));
+}
+
+function linkTargetText(path) {
+  let target = readlinkSync(path);
+  for (const prefix of ['\\\\?\\', '\\??\\']) {
+    if (target.startsWith(prefix)) target = target.slice(prefix.length);
+  }
+  return target.replace(/\\+$/, '');
+}
+
+// A tree hash computed here. Owned: node_modules and .git are left out at any depth. Legacy: only a
+// top-level node_modules, without regard to case, is left out. Links are listed, never followed.
+function independentSha(root, rule) {
+  const lines = [];
+  const walk = (dir, prefix) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      const relative = prefix === '' ? name : `${prefix}/${name}`;
+      const stat = lstatSync(full);
+      if (stat.isSymbolicLink()) {
+        lines.push(`${relative}\tlink:${linkTargetText(full)}`);
+      } else if (stat.isDirectory()) {
+        const skipped = rule === 'owned' ? name === 'node_modules' || name === '.git' : prefix === '' && name.toLowerCase() === 'node_modules';
+        if (!skipped) walk(full, relative);
+      } else {
+        lines.push(`${relative}\t${sha256Upper(readFileSync(full))}`);
+      }
+    }
+  };
+  walk(root, '');
+  return sha256Upper(Buffer.from(sortUtf8(lines).map((line) => `${line}\n`).join(''), 'utf8'));
+}
+
+function ownedRecord(lock, path, kind, key = '') {
+  return lock.owned.find((record) => record.path === path && record.kind === kind && (record.key ?? '') === key);
+}
+
+const ORG_FOLDER = '.opencode/plugins/simpsonm09-org-ai-plugin';
+const ORG_SOURCE = 'projects/repos/simpsonm09-org-ai-plugin';
+
+withWorkspace('the recorded hashes match an independent recomputation, and each link names its target', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  const at = (path) => join(ctx.workspace, ...path.split('/'));
+
+  assert.equal(ownedRecord(lock, 'opencode.jsonc', 'file').sha256, sha256Upper(readFileSync(at('opencode.jsonc'))));
+  for (const folder of ['.opencode/plugins/pstack', ORG_FOLDER, '.opencode/plugins/simpsonm09-personal-ai-plugin', '.claude/plugins/pstack', '.claude/cache/pstack']) {
+    assert.equal(ownedRecord(lock, folder, 'dir').sha256, independentSha(at(folder), 'owned'), `the tree hash of ${folder}`);
+  }
+  for (const wrapper of ['copilot.cmd', 'copilot.sh', 'pi.cmd', 'pi.sh']) {
+    assert.equal(ownedRecord(lock, `.maxstack/bin/${wrapper}`, 'file').sha256, sha256Upper(readFileSync(at(`.maxstack/bin/${wrapper}`))), wrapper);
+  }
+  assert.equal(ownedRecord(lock, '.opencode/agents/pstack-agent.md', 'file').sha256, sha256Upper(readFileSync(at('.opencode/agents/pstack-agent.md'))));
+  assert.equal(ownedRecord(lock, '.claude/plugins/simpsonm09-org-ai-plugin', 'link').target, ORG_FOLDER);
+  assert.deepEqual(ownedRecord(lock, '.pi/agent/settings.json', 'json-entries', 'packages').entries, ['../../.claude/cache/pstack']);
+  const check = spawnSync(python, [verifyManifestsScript, '--lock', lockPath(ctx)], { encoding: 'utf8' });
+  assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
+}, {});
+
+withWorkspace('names sort by code point, and the tree hash keeps case, emoji, and fullwidth names exact', (ctx) => {
+  // Node_Modules is an item, not npm's folder, so it is hashed. An emoji name sorts after a fullwidth
+  // one by code point, and before it by UTF-16, so a sort in the wrong order changes the hash.
+  const org = join(ctx.workspace, ...ORG_SOURCE.split('/'));
+  writeFile(org, 'Node_Modules/@opencode/plugin/index.js', 'module.exports = {};\n');
+  writeFile(org, 'Package-Lock.json', '{"lockfileVersion": 3}\n');
+  writeFile(org, '\u{1F642}-emoji/a.txt', 'emoji\n');
+  writeFile(org, 'Ａ-fullwidth/b.txt', 'fullwidth\n');
+  writeFile(org, 'layer.json', JSON.stringify({
+    files: ['index.ts', 'Node_Modules', 'Package-Lock.json', '\u{1F642}-emoji', 'Ａ-fullwidth', 'package.json', 'skills', '.claude-plugin'],
+  }));
+  mustApply(ctx);
+  const folder = join(ctx.workspace, ...ORG_FOLDER.split('/'));
+  assert.ok(existsSync(join(folder, 'Node_Modules', '@opencode', 'plugin', 'index.js')));
+  assert.ok(existsSync(join(folder, 'Package-Lock.json')), 'the item named Package-Lock.json was not kept');
+  assert.ok(existsSync(join(folder, '\u{1F642}-emoji', 'a.txt')));
+  assert.ok(existsSync(join(folder, 'Ａ-fullwidth', 'b.txt')));
+  const lock = readJson(lockPath(ctx));
+  assert.equal(ownedRecord(lock, ORG_FOLDER, 'dir').sha256, independentSha(folder, 'owned'));
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+withWorkspace('a junction inside an owned folder is hashed as a link, never followed, and the apply removes it and keeps its target', (ctx) => {
+  mustApply(ctx);
+  const folder = join(ctx.workspace, ...ORG_FOLDER.split('/'));
+  const outside = join(ctx.base, 'outside');
+  writeFile(ctx.base, 'outside/keep.txt', 'outside the workspace\n');
+  symlinkSync(outside, join(folder, 'outside-link'), 'junction');
+
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(problemRows(run), [{ state: 'modified', label: ORG_FOLDER }], run.stdout);
+
+  const applied = mustApply(ctx);
+  assert.match(applied.stdout, /Removed .*outside-link/, applied.stdout);
+  assert.ok(existsSync(join(outside, 'keep.txt')), 'the apply deleted the junction target');
+  assert.equal(lstatSync(join(folder, 'outside-link'), { throwIfNoEntry: false }), undefined, 'the junction is still there');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+withWorkspace('a junction that loops back into its own folder neither hangs the status nor survives the apply', (ctx) => {
+  mustApply(ctx);
+  const folder = join(ctx.workspace, ...ORG_FOLDER.split('/'));
+  symlinkSync(folder, join(folder, 'loop'), 'junction');
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(problemRows(run), [{ state: 'modified', label: ORG_FOLDER }], run.stdout);
+  mustApply(ctx);
+  assert.equal(lstatSync(join(folder, 'loop'), { throwIfNoEntry: false }), undefined, 'the loop is still there');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+withWorkspace('a link retargeted by hand is modified, and a file changed in a pinned claude copy is modified', (ctx) => {
+  mustApply(ctx);
+  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
+  rmdirSync(child);
+  const other = join(ctx.base, 'other-target');
+  mkdirSync(other);
+  symlinkSync(other, child, 'junction');
+  appendFileSync(join(ctx.workspace, '.claude', 'plugins', 'pstack', 'skills', 'poteto-mode', 'SKILL.md'), 'edit\n');
+
+  assert.deepEqual(problemRows(runStatus(ctx)), [
+    { state: 'modified', label: '.claude/plugins/pstack' },
+    { state: 'modified', label: '.claude/plugins/simpsonm09-org-ai-plugin' },
+  ]);
+  mustApply(ctx);
+  assert.equal(realpathSync(child).toLowerCase(), realpathSync(join(ctx.workspace, ...ORG_FOLDER.split('/'))).toLowerCase());
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+withWorkspace('node_modules and .git folders nested in an owned folder are not part of its hash', (ctx) => {
+  mustApply(ctx);
+  writeFile(ctx.workspace, `${ORG_FOLDER}/skills/demo/node_modules/pkg/index.js`, 'module.exports = {};\n');
+  writeFile(ctx.workspace, `${ORG_FOLDER}/skills/demo/.git/HEAD`, 'ref: refs/heads/main\n');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+withWorkspace('an unsynced pinned cache reports only the entries it cannot know, each once', (ctx) => {
+  mustApply(ctx);
+  // The pin moves to a commit the cache has not fetched: pstack's folders and entries are unknown.
+  writeFileSync(join(ctx.fixture.dir, 'bump.txt'), 'bump\n');
+  const commit = (args) => {
+    const run = spawnSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', '-C', ctx.fixture.dir, ...args], { encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    return run.stdout.trim();
+  };
+  commit(['add', '-A']);
+  commit(['commit', '-q', '-m', 'bump']);
+  const moved = commit(['rev-parse', 'HEAD']);
+  const layers = writeLayers(ctx, (manifest) => {
+    layerNamed(manifest, 'pstack').source.commit = moved;
+  });
+
+  const run = runInstaller(shell, ctx, ['-Status'], { apply: false, layersFile: layers });
+  assert.equal(run.status, 0, run.stderr);
+  const problems = problemRows(run);
+  assert.ok(problems.length > 0, run.stdout);
+  assert.ok(problems.every((row) => row.state === 'drifted'), run.stdout);
+  assert.ok(problems.every((row) => row.label.includes('pstack')), `a local layer is reported: ${run.stdout}`);
+  const labels = problems.map((row) => row.label);
+  assert.equal(new Set(labels).size, labels.length, `a path is reported twice: ${run.stdout}`);
+  const localSkills = problems.filter((row) => /simpsonm09-(org|personal)-ai-plugin\/skills/.test(row.label));
+  assert.deepEqual(localSkills, [], `a local layer's entry was reported: ${run.stdout}`);
+}, {});
+
+withWorkspace('a lock from before the ownership record reads quietly, and the claude hashes keep the legacy rule', (ctx) => {
+  // A nested node_modules is part of the legacy hash, because that rule leaves out only the top level.
+  writeFile(ctx.workspace, `${ORG_SOURCE}/skills/legacy/node_modules/pkg/index.js`, 'module.exports = {};\n');
+  mustApply(ctx);
+  const current = readJson(lockPath(ctx));
+  const orgLayer = current.layers.find((record) => record.name === 'simpsonm09-org-ai-plugin');
+  assert.equal(orgLayer.claude.treeSha256, independentSha(join(ctx.workspace, ...ORG_FOLDER.split('/')), 'legacy'));
+
+  const legacy = { ...current };
+  for (const field of ['owned', 'ownedSchema', 'createdDirs', 'createdFiles']) delete legacy[field];
+  writeFileSync(lockPath(ctx), JSON.stringify(legacy));
+
+  const audit = runInstaller(shell, ctx, [], { apply: false });
+  assert.equal(audit.status, 0, audit.stderr);
+  const drift = driftLines(audit);
+  assert.equal(drift.length, 12, audit.stdout);
+  for (const line of drift) assert.match(line, /: matches$/, line);
+  assert.match(runStatus(ctx).stdout, /no ownership record; run -Apply once to create it/);
+
+  mustApply(ctx);
+  assert.equal(readJson(lockPath(ctx)).ownedSchema, 1);
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+withWorkspace('a Pi entry the user already lists is the user\'s: the record does not hold it, and a second apply keeps it so', (ctx) => {
+  writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({
+    packages: ['../../.claude/cache/pstack'],
+    skills: ['../../.claude/plugins/pstack/skills', '../../.claude/plugins/simpsonm09-org-ai-plugin/skills', '../../.claude/plugins/simpsonm09-personal-ai-plugin/skills'],
+  }));
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  assert.equal(lock.owned.filter((record) => record.kind === 'json-entries').length, 0, 'the installer claimed entries the user already had');
+  assert.deepEqual(readJson(settingsPath(ctx)).packages, ['../../.claude/cache/pstack']);
+  mustApply(ctx);
+  assert.deepEqual(readJson(settingsPath(ctx)).packages, ['../../.claude/cache/pstack'], 'a second apply added a copy');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+withWorkspace('a copy the user wrote beside an installer entry stays the user\'s, and the record holds one copy', (ctx) => {
+  mustApply(ctx);
+  writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({
+    ...readJson(settingsPath(ctx)),
+    packages: ['../../.claude/cache/pstack', '../../.claude/cache/pstack'],
+  }));
+  mustApply(ctx);
+  assert.deepEqual(readJson(settingsPath(ctx)).packages, ['../../.claude/cache/pstack', '../../.claude/cache/pstack']);
+  const record = ownedRecord(readJson(lockPath(ctx)), '.pi/agent/settings.json', 'json-entries', 'packages');
+  assert.deepEqual(record.entries, ['../../.claude/cache/pstack'], 'the record holds more than the installer copy');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+withWorkspace('an apply over a legacy lock keeps one copy of an entry that lock lists under pi, and records it', (ctx) => {
+  mustApply(ctx);
+  // The legacy lock lists the entry under pi, and the settings hold one copy; the stand-in rule owns it.
+  const current = readJson(lockPath(ctx));
+  const legacy = { ...current };
+  for (const field of ['owned', 'ownedSchema', 'createdDirs', 'createdFiles']) delete legacy[field];
+  writeFileSync(lockPath(ctx), JSON.stringify(legacy));
+  mustApply(ctx);
+  assert.deepEqual(readJson(settingsPath(ctx)).packages, ['../../.claude/cache/pstack'], 'the legacy apply duplicated the entry');
+  assert.deepEqual(ownedRecord(readJson(lockPath(ctx)), '.pi/agent/settings.json', 'json-entries', 'packages').entries, ['../../.claude/cache/pstack']);
+}, {});
+
+withWorkspace('a layer that declares no Pi entries records none, and the apply still writes the settings file', (ctx) => {
+  const layers = writeLayers(ctx, (manifest) => {
+    delete layerNamed(manifest, 'pstack').runtimes.pi;
+  });
+  for (const name of ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']) {
+    const root = join(ctx.workspace, 'projects', 'repos', name);
+    const layer = readJson(join(root, 'layer.json'));
+    writeFile(root, 'layer.json', JSON.stringify({ ...layer, files: layer.files.filter((file) => file !== 'skills') }));
+    rmSync(join(root, 'skills'), { recursive: true, force: true });
+  }
+  mustApply(ctx, [], { layersFile: layers });
+  assert.equal(readJson(lockPath(ctx)).owned.filter((record) => record.kind === 'json-entries').length, 0);
+  assert.deepEqual(readJson(settingsPath(ctx)).packages, []);
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false, layersFile: layers });
+  assert.equal(status.status, 0, status.stderr);
+  assert.deepEqual(problemRows(status), [], 'an empty Pi list was reported');
+}, {});
+
+withWorkspace('the record names the directories and files the installer created, and not the ones that were there first', (ctx) => {
+  writeFile(ctx.workspace, '.maxstack/notes.txt', 'mine\n');
+  writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({ defaultProvider: 'user-provider' }));
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  assert.ok(!lock.createdDirs.includes('.maxstack'), 'the folder that was there first is listed as created');
+  assert.ok(!lock.createdDirs.includes('.pi'), 'the folder that was there first is listed as created');
+  for (const dir of ['.claude', '.claude/plugins', '.claude/cache', '.claude/cache/pstack', '.claude/plugins/pstack', '.opencode/plugins', '.opencode/agents', '.maxstack/bin']) {
+    assert.ok(lock.createdDirs.includes(dir), `${dir} was created by the install but is not listed`);
+  }
+  assert.deepEqual(lock.createdFiles, [], 'a settings file that was there first is listed as created');
+  assert.equal(ownedRecord(lock, '.pi/agent/settings.json', 'json-entries', 'packages').createdKey, true, 'a key the user file lacked is not marked as created');
+  assert.equal(readJson(settingsPath(ctx)).defaultProvider, 'user-provider');
+}, {});
+
+withWorkspace('a settings file the apply created is listed in createdFiles, with no created key', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  assert.deepEqual(lock.createdFiles, ['.pi/agent/settings.json']);
+  assert.equal(ownedRecord(lock, '.pi/agent/settings.json', 'json-entries', 'packages').createdKey, undefined);
+}, {});
+
+withWorkspace('a backup the apply writes is recorded with its hash, and it is reported once it exists', (ctx) => {
+  mustApply(ctx);
+  const config = join(ctx.workspace, 'opencode.jsonc');
+  const configBefore = '{ "user": "edit" }\n';
+  writeFileSync(config, configBefore);
+  const settingsBefore = JSON.stringify({ ...readJson(settingsPath(ctx)), defaultModel: 'user-model' }, null, 2);
+  writeFileSync(settingsPath(ctx), settingsBefore);
+  assert.deepEqual(problemRows(runStatus(ctx)), [{ state: 'modified', label: 'opencode.jsonc' }], 'a backup the apply has not written was reported');
+
+  mustApply(ctx);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'utf8'), configBefore);
+  assert.equal(readFileSync(join(ctx.workspace, '.pi', 'agent', 'settings.json.bak'), 'utf8'), settingsBefore);
+  const lock = readJson(lockPath(ctx));
+  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak', 'file').sha256, sha256Upper(Buffer.from(configBefore, 'utf8')));
+  assert.equal(ownedRecord(lock, '.pi/agent/settings.json.bak', 'file').sha256, sha256Upper(Buffer.from(settingsBefore, 'utf8')));
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+
+  appendFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'x');
+  assert.deepEqual(problemRows(runStatus(ctx)), [{ state: 'modified', label: 'opencode.jsonc.bak' }]);
+}, {});
+
+withWorkspace('a layer that stops naming a folder leaves no copy of it in the owned folder', (ctx) => {
+  // docs is not a Pi skills folder, so the layer can stop naming it without tripping the Pi check.
+  const root = join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+  writeFile(root, 'docs/readme.md', 'docs\n');
+  const withDocs = readJson(join(root, 'layer.json'));
+  writeFile(root, 'layer.json', JSON.stringify({ ...withDocs, files: [...withDocs.files, 'docs'] }));
+  mustApply(ctx);
+  assert.ok(existsSync(join(ctx.workspace, ...ORG_FOLDER.split('/'), 'docs', 'readme.md')));
+
+  writeFile(root, 'layer.json', JSON.stringify(withDocs));
+  const run = mustApply(ctx);
+  assert.match(run.stdout, /Removed .*docs: the layer does not install it/, run.stdout);
+  assert.ok(!existsSync(join(ctx.workspace, ...ORG_FOLDER.split('/'), 'docs')));
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
 }, {});

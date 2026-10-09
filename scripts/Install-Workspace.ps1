@@ -296,67 +296,132 @@ function Test-ClaudeJunction {
 function Remove-ClaudeChild {
     param([string] $Path)
 
-    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-    if ($null -eq $item) { return }
-    if ($item.LinkType -eq 'Junction') {
-        [IO.Directory]::Delete($item.FullName, $false)
-    } elseif ($item.PSIsContainer) {
-        Remove-Item -LiteralPath $Path -Recurse -Force
-    } else {
-        Remove-Item -LiteralPath $Path -Force
+    Remove-OwnedTree $Path
+}
+
+# Whether a path is a junction or a symbolic link. The walk lists such a path and never reads
+# what it points to.
+function Test-ReparsePoint {
+    param([string] $Path)
+
+    return [bool]([IO.File]::GetAttributes($Path) -band [IO.FileAttributes]::ReparsePoint)
+}
+
+# The target a link names, without the \?\ or \??\ prefix that the Windows API adds, so
+# PowerShell and Python write the same text for one junction.
+function Get-LinkTargetText {
+    param([string] $Path)
+
+    $text = [string] (@((Get-Item -LiteralPath $Path -Force).Target)[0])
+    foreach ($prefix in @('\?\', '\??\')) {
+        if ($text.StartsWith($prefix, [StringComparison]::Ordinal)) { $text = $text.Substring($prefix.Length) }
     }
+    return $text.TrimEnd('\')
 }
 
-# The paths a tree hash leaves out, as forward-slash relative paths. npm writes node_modules and
-# package-lock.json beside an installed package.json, and git writes .git. None is part of what
-# the installer copies, so none is hashed, on the disk side or the desired side.
-function Test-TreeExcluded {
-    param([string] $Relative)
+# The folders a tree hash leaves out, by the path relative to the tree root. The legacy rule is
+# the one the claude tree hashes have always used: the top-level node_modules, matched without
+# regard to case, because PowerShell's -ne did that. The owned rule leaves out node_modules and
+# .git at any depth, exactly, because npm and git write those beside what the installer copies.
+function Test-TreeFolderExcluded {
+    param([string] $Relative, [string] $Rule)
 
-    return (($Relative -match '(^|/)(node_modules|\.git)(/|$)') -or ($Relative -match '(^|/)package-lock\.json$'))
+    if ($Rule -eq 'legacy') { return ($Relative -imatch '^node_modules$') }
+    return ($Relative -cmatch '(^|/)(node_modules|\.git)$')
 }
 
-# Every file under a tree, with its path relative to the root in forward slashes. The folders and
-# files Test-TreeExcluded names are left out at any depth.
-function Get-TreeFiles {
-    param([string] $Root)
+# The entries of a tree, each with its path relative to the root in forward slashes. A link is
+# listed with its target and never followed, so a junction cannot pull outside content in, and a
+# junction that loops back cannot make the walk run forever. The root itself is read even when it
+# is a link: a claude child is a junction to its installed copy.
+function Get-TreeEntries {
+    param([string] $Root, [string] $Rule)
 
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     $pending = [System.Collections.Generic.Stack[string]]::new()
     $pending.Push($rootFull)
-    $files = [System.Collections.Generic.List[object]]::new()
+    $entries = [System.Collections.Generic.List[object]]::new()
     while ($pending.Count -gt 0) {
         $directory = $pending.Pop()
         foreach ($child in [IO.Directory]::GetDirectories($directory)) {
-            if ((Split-Path -Leaf $child) -notin @('node_modules', '.git')) { $pending.Push($child) }
+            $relative = $child.Substring($rootFull.Length + 1).Replace('\', '/')
+            if (Test-ReparsePoint $child) {
+                $entries.Add([pscustomobject]@{ relative = $relative; full = $child; link = (Get-LinkTargetText $child) })
+            } elseif (-not (Test-TreeFolderExcluded -Relative $relative -Rule $Rule)) {
+                $pending.Push($child)
+            }
         }
         foreach ($file in [IO.Directory]::GetFiles($directory)) {
             $relative = $file.Substring($rootFull.Length + 1).Replace('\', '/')
-            if (-not (Test-TreeExcluded $relative)) { $files.Add([pscustomobject]@{ relative = $relative; full = $file }) }
+            if (Test-ReparsePoint $file) {
+                $entries.Add([pscustomobject]@{ relative = $relative; full = $file; link = (Get-LinkTargetText $file) })
+            } else {
+                $entries.Add([pscustomobject]@{ relative = $relative; full = $file; link = $null })
+            }
         }
     }
-    return $files.ToArray()
+    return $entries.ToArray()
 }
 
-# The hash of a tree from its lines, one per file: the relative path, a tab, and the file's SHA-256.
+# One line per entry: the relative path, a tab, and the file's SHA-256, or the word link and the
+# target for a link. Prefix puts the lines under a folder name, for an item copied into a folder.
+function Get-EntryLines {
+    param($Entries, [string] $Prefix = '')
+
+    return @($Entries | ForEach-Object {
+        $name = if ($Prefix) { "$Prefix/$($_.relative)" } else { $_.relative }
+        if ($null -ne $_.link) { "$name`tlink:$($_.link)" } else { "$name`t$((Get-FileHash -LiteralPath $_.full -Algorithm SHA256).Hash)" }
+    })
+}
+
+# Compares two strings by their UTF-8 bytes. That order is the code point order, so PowerShell and
+# Python sort a name with any character the same way. A UTF-16 comparison would not.
+function Compare-Utf8Bytes {
+    param([string] $Left, [string] $Right)
+
+    $a = [Text.Encoding]::UTF8.GetBytes($Left)
+    $b = [Text.Encoding]::UTF8.GetBytes($Right)
+    $count = [Math]::Min($a.Length, $b.Length)
+    for ($i = 0; $i -lt $count; $i++) {
+        if ($a[$i] -ne $b[$i]) { return ([int] $a[$i]) - ([int] $b[$i]) }
+    }
+    return $a.Length - $b.Length
+}
+
+# The one sort every list the installer writes or hashes uses.
+function Sort-Utf8 {
+    param([string[]] $Values)
+
+    $list = [System.Collections.Generic.List[string]]::new()
+    foreach ($value in @($Values)) { $list.Add($value) }
+    $list.Sort([Comparison[string]] { param($left, $right) Compare-Utf8Bytes $left $right })
+    return $list.ToArray()
+}
+
+# The hash of a tree from its lines: sorted, one line per entry, then the SHA-256 of that text.
 function Get-TreeLinesSha256 {
     param([string[]] $Lines)
 
-    [string[]] $sorted = $Lines
-    [Array]::Sort($sorted, [StringComparer]::Ordinal)
-    return (Get-TextSha256 (($sorted -join "`n") + "`n"))
+    return (Get-TextSha256 ((@(Sort-Utf8 $Lines) -join "`n") + "`n"))
 }
 
-# A hash over a folder's relative paths and file hashes. Audit and the lock both use it, so a
-# changed or missing file shows.
+# The owned hash of a folder: every entry under it, under the owned rule. A folder the installer
+# owns is wholly its own, so each file a user adds to it changes this hash.
 function Get-TreeSha256 {
     param([string] $Root)
 
-    $lines = @(Get-TreeFiles $Root | ForEach-Object { "$($_.relative)`t$((Get-FileHash -LiteralPath $_.full -Algorithm SHA256).Hash)" })
-    return (Get-TreeLinesSha256 $lines)
+    return (Get-TreeLinesSha256 (Get-EntryLines (Get-TreeEntries -Root $Root -Rule 'owned')))
 }
 
-# The tree hash a folder holds once the named items are copied from a layer root, so the status
+# The legacy hash of a claude child, under the legacy rule. Lock values written before the owned
+# record use it, so it stays the rule for treeSha256 in stack.lock.json.
+function Get-LegacyTreeSha256 {
+    param([string] $Root)
+
+    return (Get-TreeLinesSha256 (Get-EntryLines (Get-TreeEntries -Root $Root -Rule 'legacy')))
+}
+
+# The owned hash a folder holds once the named items are copied from a layer root, so the status
 # report can compare it without copying. $null when an item is missing from the root.
 function Get-ItemsTreeSha256 {
     param([string] $Root, [string[]] $Items)
@@ -364,14 +429,12 @@ function Get-ItemsTreeSha256 {
     $lines = [System.Collections.Generic.List[string]]::new()
     foreach ($item in $Items) {
         $name = $item.Replace('\', '/')
-        if (Test-TreeExcluded $name) { continue }
+        if (Test-TreeFolderExcluded -Relative $name -Rule 'owned') { continue }
         $source = Join-Path $Root ($item -replace '/', '\')
         if (Test-Path -LiteralPath $source -PathType Leaf) {
-            $lines.Add("$name`t$((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash)")
+            $lines.AddRange([string[]] (Get-EntryLines @([pscustomobject]@{ relative = $name; full = $source; link = $null })))
         } elseif (Test-Path -LiteralPath $source -PathType Container) {
-            foreach ($file in Get-TreeFiles $source) {
-                $lines.Add("$name/$($file.relative)`t$((Get-FileHash -LiteralPath $file.full -Algorithm SHA256).Hash)")
-            }
+            $lines.AddRange([string[]] (Get-EntryLines (Get-TreeEntries -Root $source -Rule 'owned') $name))
         } else {
             return $null
         }
@@ -410,6 +473,8 @@ function Sync-GitPlugin {
     if ($LASTEXITCODE -ne 0) { throw "git checkout of $($Layer.commit) failed in $cache." }
     $head = (& git -C $cache rev-parse HEAD).Trim()
     if ($head -ne $Layer.commit) { throw "The cache is at $head, not the pinned $($Layer.commit) for '$($Layer.name)'." }
+    # The cache holds exactly the pinned commit: a file the checkout does not track is removed, and printed.
+    foreach ($line in @(& git -C $cache clean -ffdx)) { Write-Host "Cache $($Layer.name): $line" }
     return $cache
 }
 
@@ -449,7 +514,7 @@ function Get-ClaudeChildState {
     }
     if ($null -eq $Prior -or (Get-Field $Prior 'kind') -ne $Record.kind) { return 'differs' }
     if ($Record.kind -eq 'git' -and (Get-Field $Prior 'commit') -ne $Record.commit) { return 'differs' }
-    if ((Get-Field $Prior 'treeSha256') -ne (Get-TreeSha256 $Child)) { return 'differs' }
+    if ((Get-Field $Prior 'treeSha256') -ne (Get-LegacyTreeSha256 $Child)) { return 'differs' }
     return 'matches'
 }
 
@@ -649,39 +714,43 @@ function Get-PiEntryKey {
     return (ConvertTo-Json -InputObject $Entry -Compress -Depth 20)
 }
 
-# One Pi list: every current entry except the ones the installer owns from its last apply, in
-# order, then each wanted entry the list does not already hold. Entries the user wrote are kept
-# as they are, even when two are alike, because Pi reads each of them. added holds the wanted
-# entries this merge wrote, which are the entries the installer now owns.
+# One Pi list. Each recorded entry accounts for one copy of itself in the list: the installer
+# removes that copy and writes the entry again as its own. A copy the user wrote beside it is kept,
+# and a wanted entry the user already lists, with no record of its own, stays the user's.
 function Merge-PiEntries {
-    param($Current, [string[]] $Wanted, $Owned)
+    param($Current, [string[]] $Wanted, [object[]] $Owned)
 
-    $ownedKeys = @{}
-    foreach ($entry in @($Owned)) {
-        if ($null -ne $entry) { $ownedKeys[(Get-PiEntryKey $entry)] = $true }
-    }
-    $merged = [System.Collections.Generic.List[object]]::new()
-    $present = @{}
+    $remaining = [System.Collections.Generic.List[object]]::new()
     foreach ($entry in @($Current)) {
+        if ($null -ne $entry) { $remaining.Add($entry) }
+    }
+    $ownedKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in @($Owned)) {
         if ($null -eq $entry) { continue }
         $key = Get-PiEntryKey $entry
-        if ($ownedKeys.ContainsKey($key)) { continue }
-        $merged.Add($entry)
-        $present[$key] = $true
+        $ownedKeys.Add($key) | Out-Null
+        for ($index = 0; $index -lt $remaining.Count; $index++) {
+            if ((Get-PiEntryKey $remaining[$index]) -ceq $key) {
+                $remaining.RemoveAt($index)
+                break
+            }
+        }
     }
+    $present = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in $remaining) { $present.Add((Get-PiEntryKey $entry)) | Out-Null }
     $added = [System.Collections.Generic.List[object]]::new()
     foreach ($entry in $Wanted) {
         $key = Get-PiEntryKey $entry
-        if ($present.ContainsKey($key)) { continue }
-        $merged.Add($entry)
-        $added.Add($entry)
-        $present[$key] = $true
+        if ($ownedKeys.Contains($key) -or -not $present.Contains($key)) { $added.Add($entry) }
     }
-    return [pscustomobject]@{ merged = $merged.ToArray(); added = $added.ToArray() }
+    return [pscustomobject]@{
+        merged = @($remaining.ToArray()) + @($added.ToArray())
+        added  = @($added.ToArray())
+    }
 }
 
 # The Pi entries a previous apply recorded as its own under one key. A lock written before the
-# ownership record has none, so the entries it listed under that key stand in for them.
+# ownership record has no record, so the entries its pi section listed under that key stand in.
 function Get-OwnedPiEntries {
     param($Owned, $LegacyPi, [string] $Key)
 
@@ -715,15 +784,27 @@ function Get-PiSettings {
     }
 }
 
-# One record of the ownership list. A link holds its target, a json-entries record its key and
-# entries, and a file or a folder its SHA-256, a tree hash for a folder. A null hash or entries
-# means the value an apply would write is not known yet, and the status report calls that drifted.
+# One record of the ownership list. A file or folder holds its SHA-256, a folder a tree hash; a link
+# holds its target; a json-entries record holds its key and entries, and createdKey when the installer
+# created that key in a settings file that already existed.
 function New-OwnedRecord {
-    param([string] $Path, [string] $Kind, [string] $Sha256 = $null, [string] $Target = $null, [string] $Key = $null, [object[]] $Entries = $null)
+    param(
+        [string] $Path,
+        [string] $Kind,
+        [string] $Sha256 = $null,
+        [string] $Target = $null,
+        [string] $Key = $null,
+        [object[]] $Entries = $null,
+        [bool] $CreatedKey = $false
+    )
 
     switch ($Kind) {
         'link' { return [pscustomobject]@{ path = $Path; kind = $Kind; target = $Target } }
-        'json-entries' { return [pscustomobject]@{ path = $Path; kind = $Kind; key = $Key; entries = $Entries } }
+        'json-entries' {
+            $record = [pscustomobject]@{ path = $Path; kind = $Kind; key = $Key; entries = $Entries }
+            if ($CreatedKey) { $record | Add-Member -NotePropertyName createdKey -NotePropertyValue $true }
+            return $record
+        }
         default { return [pscustomobject]@{ path = $Path; kind = $Kind; sha256 = $Sha256 } }
     }
 }
@@ -735,19 +816,29 @@ function Get-OwnedKey {
     return "$($Record.path)`t$($Record.kind)`t$(Get-Field $Record 'key')"
 }
 
-# The records in one order, so the lock diffs cleanly: by path, then kind, then key.
+# The records in one order, so the lock diffs cleanly: by path, then kind, then key, by UTF-8 bytes.
 function Sort-OwnedRecords {
     param([object[]] $Records)
 
-    $byKey = @{}
-    foreach ($record in $Records) { $byKey[(Get-OwnedKey $record)] = $record }
-    [string[]] $keys = @($byKey.Keys)
-    [Array]::Sort($keys, [StringComparer]::Ordinal)
+    $byKey = [hashtable]::new([StringComparer]::Ordinal)
+    foreach ($record in @($Records)) { $byKey[(Get-OwnedKey $record)] = $record }
+    $keys = Sort-Utf8 @($byKey.Keys)
     return @($keys | ForEach-Object { $byKey[$_] })
 }
 
+# Fails when the disk does not hold what the plan says the install wrote. A record is never written
+# from a disk that disagrees with the plan, because the record would then hide the difference.
+function Assert-Written {
+    param([string] $Path, [string] $Disk, [string] $Planned)
+
+    if ($Disk -ne $Planned) {
+        throw "$Path holds different content from what the install wrote, so no ownership record was written. Remove the file or folder and apply again."
+    }
+}
+
 # What the installer would own after an apply, from the same layers and texts the apply writes.
-# -Apply records what it wrote from this plan's paths, and -Status compares the plan with the disk.
+# -Apply writes its record from this plan once the disk matches it, and -Status compares the plan
+# with the disk and with the record. A null hash or entries means the value is not known yet.
 function Get-OwnedPlan {
     param(
         [string] $Document,
@@ -760,7 +851,8 @@ function Get-OwnedPlan {
         [string] $PiCmdText,
         [string] $PiShText,
         $PiSettings,
-        [bool] $PiPending
+        [bool] $PiPending,
+        [hashtable] $PiUnknown
     )
 
     $records = [System.Collections.Generic.List[object]]::new()
@@ -768,14 +860,27 @@ function Get-OwnedPlan {
     foreach ($layer in $Layers) { $layerByName[$layer.name] = $layer }
 
     # An apply that finds the config matching by trimmed text leaves the file as it is.
+    $configExists = Test-Path -LiteralPath $configTarget -PathType Leaf
+    $configText = $null
+    if ($configExists) { $configText = Get-Content -LiteralPath $configTarget -Raw }
+    $configUnchanged = ($null -ne $configText) -and ($configText.Trim() -eq $Document.Trim())
     $configSha = Get-TextSha256 $Document
-    if (Test-Path -LiteralPath $configTarget -PathType Leaf) {
-        $existingConfig = Get-Content -LiteralPath $configTarget -Raw
-        if ($null -ne $existingConfig -and $existingConfig.Trim() -eq $Document.Trim()) {
-            $configSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
-        }
-    }
+    if ($configUnchanged) { $configSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash }
     $records.Add((New-OwnedRecord -Path 'opencode.jsonc' -Kind 'file' -Sha256 $configSha))
+
+    # A backup holds the config that the last change replaced, so an apply that changes the config
+    # writes a new one. An earlier backup stays as it is.
+    $backupSha = $null
+    if ($configExists -and -not $configUnchanged) {
+        $backupSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
+    } elseif (Test-Path -LiteralPath "$configTarget.bak" -PathType Leaf) {
+        $backupSha = (Get-FileHash -LiteralPath "$configTarget.bak" -Algorithm SHA256).Hash
+    }
+    if ($null -ne $backupSha) {
+        $backup = New-OwnedRecord -Path 'opencode.jsonc.bak' -Kind 'file' -Sha256 $backupSha
+        $backup | Add-Member -NotePropertyName backup -NotePropertyValue $true
+        $records.Add($backup)
+    }
 
     foreach ($record in $ClaudeRecords) {
         $path = ".claude/plugins/$($record.plugin)"
@@ -784,7 +889,8 @@ function Get-OwnedPlan {
             continue
         }
         $root = Get-LayerRoot $layerByName[$record.layer]
-        $sha = if ($null -ne $root) { Get-TreeSha256 $root } else { $null }
+        $sha = $null
+        if ($null -ne $root) { $sha = Get-TreeSha256 $root }
         $records.Add((New-OwnedRecord -Path $path -Kind 'dir' -Sha256 $sha))
     }
 
@@ -804,11 +910,13 @@ function Get-OwnedPlan {
             $items = @(Get-OpenCodeItems -Layer $layer -Root $root | Where-Object { $_ -ne '.claude-plugin' -or $claudeDeclared })
             $sha = Get-ItemsTreeSha256 -Root $root -Items $items
             $spec = $OpenCodeSpecs[$layer.name]
-            $agentsSource = if ($spec.agents) { Join-Path $root ($spec.agents -replace '/', '\') } else { $null }
+            $agentsSource = $null
+            if ($spec.agents) { $agentsSource = Join-Path $root ($spec.agents -replace '/', '\') }
             if ($agentsSource -and (Test-Path -LiteralPath $agentsSource -PathType Container)) {
                 foreach ($agent in @(Get-ChildItem -LiteralPath $agentsSource -Filter '*.md')) {
                     $text = Get-AgentProfileText $agent.FullName
-                    $agentSha = if ($null -eq $text) { (Get-FileHash -LiteralPath $agent.FullName -Algorithm SHA256).Hash } else { Get-TextSha256 $text }
+                    $agentSha = (Get-FileHash -LiteralPath $agent.FullName -Algorithm SHA256).Hash
+                    if ($null -ne $text) { $agentSha = Get-TextSha256 $text }
                     $path = ".opencode/agents/$($agent.Name)"
                     $agents[$path] = New-OwnedRecord -Path $path -Kind 'file' -Sha256 $agentSha
                 }
@@ -828,33 +936,72 @@ function Get-OwnedPlan {
     }
 
     if ($null -ne $PiSettings) {
+        $settingsPath = Join-Path $Workspace '.pi\agent\settings.json'
+        $settingsExists = Test-Path -LiteralPath $settingsPath -PathType Leaf
+        $settingsUnchanged = $PiPending
+        if ($settingsExists -and -not $PiPending) {
+            $existingSettings = Get-Content -LiteralPath $settingsPath -Raw
+            $settingsUnchanged = ($null -ne $existingSettings) -and ($existingSettings.Trim() -eq $PiSettings.text.Trim())
+        }
+        $settingsBackupSha = $null
+        if ($settingsExists -and -not $settingsUnchanged) {
+            $settingsBackupSha = (Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash
+        } elseif (Test-Path -LiteralPath "$settingsPath.bak" -PathType Leaf) {
+            $settingsBackupSha = (Get-FileHash -LiteralPath "$settingsPath.bak" -Algorithm SHA256).Hash
+        }
+        if ($null -ne $settingsBackupSha) {
+            $backup = New-OwnedRecord -Path '.pi/agent/settings.json.bak' -Kind 'file' -Sha256 $settingsBackupSha
+            $backup | Add-Member -NotePropertyName backup -NotePropertyValue $true
+            $records.Add($backup)
+        }
+
         foreach ($key in @('packages', 'skills')) {
-            $entries = if ($PiPending) { $null } else { @($PiSettings.added[$key]) }
-            $records.Add((New-OwnedRecord -Path '.pi/agent/settings.json' -Kind 'json-entries' -Key $key -Entries $entries))
+            $known = @($PiSettings.added[$key])
+            $unknown = @(@($PiUnknown[$key]) | Where-Object { $known -cnotcontains $_ })
+            if ($known.Count -eq 0 -and $unknown.Count -eq 0) { continue }
+            $record = New-OwnedRecord -Path '.pi/agent/settings.json' -Kind 'json-entries' -Key $key -Entries $known
+            $record | Add-Member -NotePropertyName unknown -NotePropertyValue $unknown
+            $records.Add($record)
         }
     }
     return $records.ToArray()
 }
 
-# The ownership list an apply writes: each planned path with what is on disk now, after the
-# writes. Files and folders are hashed here, so the record holds what the apply left.
+# The ownership list an apply writes, from the plan once the disk matches it. A json-entries record
+# holds only the entries the apply added, and none when it added none.
 function Get-OwnedRecords {
-    param([object[]] $Plan)
+    param([object[]] $Plan, [hashtable] $CreatedKeys)
 
     $records = foreach ($record in $Plan) {
         $full = Join-Path $Workspace ($record.path -replace '/', '\')
+        # A planned backup is recorded once the apply has written it, and not before.
+        if ((Get-Field $record 'backup') -and -not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
         switch ($record.kind) {
-            'file' { New-OwnedRecord -Path $record.path -Kind 'file' -Sha256 (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash }
-            'dir' { New-OwnedRecord -Path $record.path -Kind 'dir' -Sha256 (Get-TreeSha256 $full) }
-            'link' { $record }
-            'json-entries' { if (@($record.entries).Count -gt 0) { $record } }
+            'file' {
+                $disk = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
+                Assert-Written -Path $record.path -Disk $disk -Planned $record.sha256
+                New-OwnedRecord -Path $record.path -Kind 'file' -Sha256 $disk
+            }
+            'dir' {
+                $disk = Get-TreeSha256 $full
+                Assert-Written -Path $record.path -Disk $disk -Planned $record.sha256
+                New-OwnedRecord -Path $record.path -Kind 'dir' -Sha256 $disk
+            }
+            'link' { New-OwnedRecord -Path $record.path -Kind 'link' -Target $record.target }
+            'json-entries' {
+                $entries = @($record.entries | Where-Object { $null -ne $_ })
+                if ($entries.Count -gt 0) {
+                    New-OwnedRecord -Path $record.path -Kind 'json-entries' -Key $record.key -Entries $entries -CreatedKey ([bool] $CreatedKeys[$record.key])
+                }
+            }
         }
     }
-    return (Sort-OwnedRecords $records)
+    return (Sort-OwnedRecords @($records))
 }
 
-# The state of one recorded file, folder, or link: missing or modified against the disk, then
-# drifted when the apply would write something else, or matching when neither holds.
+# The state of one recorded file, folder, or link. missing and modified compare the disk with the
+# record; drifted means the disk matches the record but an apply would write something else; matching
+# means neither holds.
 function Get-OwnedState {
     param($Record, $Planned)
 
@@ -882,23 +1029,24 @@ function Get-OwnedState {
     return 'drifted'
 }
 
-# Compares the recorded ownership with the disk and with the plan. A Pi list is reported per entry,
-# so one removed entry shows alone. It writes nothing and reads no settings key the record does not own.
+# Compares the recorded ownership with the disk and with the plan, and writes nothing. A Pi list is
+# reported per entry, so one removed entry shows alone. An entry whose state cannot be known until an
+# apply syncs a pinned source is drifted, and it is reported once, like every other path.
 function Get-OwnershipReport {
     param([object[]] $Recorded, [object[]] $Plan)
 
     $results = [System.Collections.Generic.List[object]]::new()
-    $plannedByKey = @{}
-    foreach ($planned in $Plan) { $plannedByKey[(Get-OwnedKey $planned)] = $planned }
-    $recordedKeys = @{}
-    $recordedPaths = @{}
-    $recordedEntries = @{}
-    foreach ($record in $Recorded) {
-        $recordedKeys[(Get-OwnedKey $record)] = $true
-        $recordedPaths[$record.path] = $true
+    $plannedByKey = [hashtable]::new([StringComparer]::Ordinal)
+    foreach ($planned in @($Plan)) { $plannedByKey[(Get-OwnedKey $planned)] = $planned }
+    $recordedKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $recordedPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $recordedEntries = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($record in @($Recorded)) {
+        $recordedKeys.Add((Get-OwnedKey $record)) | Out-Null
+        $recordedPaths.Add($record.path) | Out-Null
     }
 
-    foreach ($record in $Recorded) {
+    foreach ($record in @($Recorded)) {
         if ($record.kind -ne 'json-entries') {
             $state = Get-OwnedState -Record $record -Planned $plannedByKey[(Get-OwnedKey $record)]
             $results.Add([pscustomobject]@{ state = $state; label = $record.path })
@@ -907,40 +1055,41 @@ function Get-OwnershipReport {
         $settingsPath = Join-Path $Workspace ($record.path -replace '/', '\')
         $settings = $null
         if (Test-Path -LiteralPath $settingsPath -PathType Leaf) { $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json }
-        $present = @{}
+        $present = [hashtable]::new([StringComparer]::Ordinal)
         foreach ($entry in @(Get-Field $settings $record.key)) {
             if ($null -ne $entry) { $present[(Get-PiEntryKey $entry)] = $true }
         }
         $planned = $plannedByKey[(Get-OwnedKey $record)]
-        $wanted = @{}
-        if ($null -ne $planned -and $null -ne $planned.entries) {
-            foreach ($entry in @($planned.entries)) { $wanted[(Get-PiEntryKey $entry)] = $true }
+        $known = [hashtable]::new([StringComparer]::Ordinal)
+        if ($null -ne $planned) {
+            foreach ($entry in @($planned.entries)) {
+                if ($null -ne $entry) { $known[(Get-PiEntryKey $entry)] = $true }
+            }
         }
         foreach ($entry in @($record.entries)) {
             $entryKey = Get-PiEntryKey $entry
-            $recordedEntries["$($record.path)`t$($record.key)`t$entryKey"] = $true
-            $label = "$($record.path) [$($record.key)] $entryKey"
+            $recordedEntries.Add("$($record.path)`t$($record.key)`t$entryKey") | Out-Null
             if (-not $present.ContainsKey($entryKey)) { $state = 'missing' }
-            elseif ($wanted.ContainsKey($entryKey)) { $state = 'matching' }
+            elseif ($known.ContainsKey($entryKey)) { $state = 'matching' }
             else { $state = 'drifted' }
-            $results.Add([pscustomobject]@{ state = $state; label = $label })
+            $results.Add([pscustomobject]@{ state = $state; label = "$($record.path) [$($record.key)] $entryKey" })
         }
     }
 
-    foreach ($planned in $Plan) {
+    foreach ($planned in @($Plan)) {
         if ($planned.kind -ne 'json-entries') {
-            if (-not $recordedKeys.ContainsKey((Get-OwnedKey $planned))) {
+            # A backup that the next apply would write is not reported until it exists.
+            if ((Get-Field $planned 'backup') -and -not (Test-Path -LiteralPath (Join-Path $Workspace ($planned.path -replace '/', '\')) -PathType Leaf)) { continue }
+            if (-not $recordedKeys.Contains((Get-OwnedKey $planned))) {
                 $results.Add([pscustomobject]@{ state = 'drifted'; label = $planned.path })
             }
             continue
         }
-        if ($null -eq $planned.entries) {
-            $results.Add([pscustomobject]@{ state = 'drifted'; label = "$($planned.path) [$($planned.key)] not known until -Apply syncs the pinned sources" })
-            continue
-        }
-        foreach ($entry in @($planned.entries)) {
+        $candidates = @($planned.entries) + @(Get-Field $planned 'unknown')
+        foreach ($entry in $candidates) {
+            if ($null -eq $entry) { continue }
             $entryKey = Get-PiEntryKey $entry
-            if ($recordedEntries.ContainsKey("$($planned.path)`t$($planned.key)`t$entryKey")) { continue }
+            if ($recordedEntries.Contains("$($planned.path)`t$($planned.key)`t$entryKey")) { continue }
             $results.Add([pscustomobject]@{ state = 'drifted'; label = "$($planned.path) [$($planned.key)] $entryKey" })
         }
     }
@@ -950,10 +1099,84 @@ function Get-OwnershipReport {
     if (Test-Path -LiteralPath $bin -PathType Container) {
         foreach ($file in @(Get-ChildItem -LiteralPath $bin -File -Force)) {
             $path = ".maxstack/bin/$($file.Name)"
-            if (-not $recordedPaths.ContainsKey($path)) { $results.Add([pscustomobject]@{ state = 'untracked'; label = $path }) }
+            if (-not $recordedPaths.Contains($path)) { $results.Add([pscustomobject]@{ state = 'untracked'; label = $path }) }
         }
     }
     return $results.ToArray()
+}
+
+# Deletes a file, or a folder and everything in it. A junction or a symbolic link is removed as a
+# link, so the folder it names and its contents are never touched.
+function Remove-OwnedTree {
+    param([string] $Path)
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return }
+    if (Test-ReparsePoint $item.FullName) {
+        if ($item.PSIsContainer) { [IO.Directory]::Delete($item.FullName, $false) } else { [IO.File]::Delete($item.FullName) }
+        return
+    }
+    if ($item.PSIsContainer) {
+        foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force)) { Remove-OwnedTree $child.FullName }
+        [IO.Directory]::Delete($item.FullName, $false)
+    } else {
+        [IO.File]::Delete($item.FullName)
+    }
+}
+
+# Removes from a layer folder what the layer does not install now. Items are relative paths under the
+# folder, forward-slashed. Each removal is printed, so a file that went away shows in the apply output.
+function Remove-FolderExtras {
+    param([string] $Folder, [string[]] $Items, [switch] $Top)
+
+    foreach ($child in @(Get-ChildItem -LiteralPath $Folder -Force)) {
+        $name = $child.Name
+        # The layer folder's node_modules is npm's output from the last install, so it stays.
+        if ($Top -and $child.PSIsContainer -and $name -ceq 'node_modules') { continue }
+        if (@($Items | Where-Object { $_ -ceq $name }).Count -gt 0) { continue }
+        $within = @($Items | Where-Object { $_.StartsWith("$name/", [StringComparison]::Ordinal) } | ForEach-Object { $_.Substring($name.Length + 1) })
+        if ($within.Count -gt 0 -and $child.PSIsContainer -and -not (Test-ReparsePoint $child.FullName)) {
+            Remove-FolderExtras -Folder $child.FullName -Items $within
+            continue
+        }
+        Remove-OwnedTree $child.FullName
+        Write-Host "Removed $($child.FullName): the layer does not install it"
+    }
+}
+
+# The directories an install may create, named relative to the workspace. An apply reads this list
+# before and after its writes, to tell what it created from what was there first.
+function Get-InstallerDirectories {
+    param([object[]] $Layers)
+
+    $dirs = [System.Collections.Generic.List[string]]::new()
+    foreach ($dir in @('.claude', '.claude/plugins', '.claude/cache', '.opencode', '.opencode/plugins', '.opencode/agents', '.maxstack', '.maxstack/bin', '.pi', '.pi/agent')) {
+        $dirs.Add($dir)
+    }
+    foreach ($layer in $Layers) {
+        $dirs.Add(".claude/plugins/$($layer.name)")
+        $dirs.Add(".claude/cache/$($layer.name)")
+        $dirs.Add(".opencode/plugins/$($layer.name)")
+    }
+    return $dirs.ToArray()
+}
+
+# The candidates that exist now and either were not there before this apply, or were recorded as
+# created by an earlier one. A prior entry that is gone from the disk is dropped.
+function Get-CreatedPaths {
+    param([string[]] $Candidates, [string[]] $Prior, [string[]] $ExistedBefore, [string] $Kind)
+
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $created = [System.Collections.Generic.List[string]]::new()
+    foreach ($path in @($Candidates) + @($Prior)) {
+        if (-not $seen.Add($path)) { continue }
+        $full = Join-Path $Workspace ($path -replace '/', '\')
+        if ($Kind -eq 'dir') { $exists = Test-Path -LiteralPath $full -PathType Container }
+        else { $exists = Test-Path -LiteralPath $full -PathType Leaf }
+        if (-not $exists) { continue }
+        if (($Prior -ccontains $path) -or -not ($ExistedBefore -ccontains $path)) { $created.Add($path) }
+    }
+    return (Sort-Utf8 $created.ToArray())
 }
 
 if (-not (Test-Path -LiteralPath $Workspace -PathType Container)) {
@@ -992,6 +1215,24 @@ foreach ($layer in $layers) {
     $layer.root = $root
 }
 
+# Before any write, an apply records what already exists: the directories an install may create, the
+# settings file, and its Pi keys. The ownership record then tells the paths this install created from
+# the paths that were there first, so an uninstall never removes what it did not create.
+$installerDirs = @(Get-InstallerDirectories -Layers $layers)
+$existedBefore = @()
+$existedBeforeFiles = @()
+$settingsKeysBefore = @()
+$settingsFileBefore = $false
+if ($Apply) {
+    $existedBefore = @($installerDirs | Where-Object { Test-Path -LiteralPath (Join-Path $Workspace ($_ -replace '/', '\')) -PathType Container })
+    $settingsFileBefore = Test-Path -LiteralPath $piSettingsTarget -PathType Leaf
+    if ($settingsFileBefore) {
+        $settingsBefore = Get-Content -LiteralPath $piSettingsTarget -Raw | ConvertFrom-Json
+        if ($null -ne $settingsBefore) { $settingsKeysBefore = @($settingsBefore.PSObject.Properties | ForEach-Object { $_.Name }) }
+        $existedBeforeFiles = @('.pi/agent/settings.json')
+    }
+}
+
 # Git sources are synced before anything is written, so a bad pin stops the run with
 # the workspace unchanged. Audit reads no git source; it reports what the last apply left.
 if ($Apply) {
@@ -1016,6 +1257,9 @@ $priorLayers = @{}
 $priorPi = $null
 # The ownership list the previous apply wrote. $null means the lock predates it, or there is no lock.
 $priorOwned = $null
+# The directories and files an earlier apply recorded as created by the installer.
+$priorCreatedDirs = @()
+$priorCreatedFiles = @()
 if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
     try {
         $priorStack = Get-Content -LiteralPath $stackTarget -Raw | ConvertFrom-Json
@@ -1024,6 +1268,8 @@ if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
         }
         $priorPi = Get-Field $priorStack 'pi'
         if ($null -ne $priorStack.PSObject.Properties['owned']) { $priorOwned = @($priorStack.owned) }
+        if ($null -ne $priorStack.PSObject.Properties['createdDirs']) { $priorCreatedDirs = @($priorStack.createdDirs) }
+        if ($null -ne $priorStack.PSObject.Properties['createdFiles']) { $priorCreatedFiles = @($priorStack.createdFiles) }
     } catch {
         Write-Warning "Could not read the previous $stackTarget; every Claude child and plugin folder will report as differs until the next apply."
     }
@@ -1117,11 +1363,20 @@ if ($pluginEntries.Count -gt 0) {
 $document = ($base | ConvertTo-Json -Depth 100)
 
 # Apply needs the plan, and status needs it only to compare with a record. Audit does not need it.
+# A pinned layer whose cache is not at its pin cannot say which Pi entries it adds. Only those entries
+# are unknown; every other entry is known.
+$piUnknown = @{ packages = @(); skills = @() }
+foreach ($record in $piRecords) {
+    if (-not $record.pending) { continue }
+    $piUnknown.packages += "../../.claude/cache/$($record.layer)"
+    $piUnknown.skills += "../../.claude/plugins/$($record.layer)/skills"
+}
+
 $plan = @()
 if ($Apply -or ($Status -and $null -ne $priorOwned)) {
     $plan = Get-OwnedPlan -Document $document -Layers $layers -ClaudeRecords $claudeRecords -OpenCodeLayers $openCodeLayers `
         -OpenCodeSpecs $openCodeSpecs -CopilotCmdText $copilotCmdText -CopilotShText $copilotShText `
-        -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending
+        -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown
 }
 
 if ($Status) {
@@ -1216,18 +1471,17 @@ foreach ($layer in $openCodeLayers) {
     $claudeDeclared = $layer.runtimes.ContainsKey('claude')
     $folder = Join-Path $opencodePluginsTarget $layer.name
     New-Item -ItemType Directory -Path $folder -Force | Out-Null
-    foreach ($item in (Get-OpenCodeItems -Layer $layer -Root $layer.root)) {
-        if ($item -eq '.claude-plugin' -and -not $claudeDeclared) { continue }
+    # The folder is wholly the installer's. What the layer no longer installs is removed, and each item is
+    # replaced by a fresh copy, so the folder holds exactly what the layer names.
+    $items = @(Get-OpenCodeItems -Layer $layer -Root $layer.root | Where-Object { $_ -ne '.claude-plugin' -or $claudeDeclared })
+    Remove-FolderExtras -Folder $folder -Items $items -Top
+    foreach ($item in $items) {
         $source = Join-Path $layer.root $item
         if (-not (Test-Path -LiteralPath $source)) { throw "Plugin layer '$($layer.name)' is missing: $source" }
         $destination = Join-Path $folder $item
-        if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
+        Remove-OwnedTree $destination
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
-    }
-    $staleManifest = Join-Path $folder '.claude-plugin'
-    if (-not $claudeDeclared -and (Test-Path -LiteralPath $staleManifest)) {
-        Remove-Item -LiteralPath $staleManifest -Recurse -Force
-        Write-Host "Removed the stale Claude manifest from $folder"
     }
     $entryPath = Join-Path $folder ($spec.entry -replace '/', '\')
     if (-not (Test-Path -LiteralPath $entryPath -PathType Leaf)) {
@@ -1240,6 +1494,17 @@ foreach ($layer in $openCodeLayers) {
         Write-Host 'Installing plugin dependencies'
         & npm install --prefix $installDir --omit=dev --no-audit --no-fund
         if ($LASTEXITCODE -ne 0) { throw "npm install failed in $installDir" }
+    }
+    # npm writes a package-lock.json beside the package.json it installs from. The folder holds what the
+    # installer copied, so that file goes unless a layer item named it.
+    $lockRelative = 'package-lock.json'
+    if ($spec.dir -ne '') { $lockRelative = "$($spec.dir)/package-lock.json" }
+    # Windows names are case-insensitive, so an item named Package-Lock.json is the same file as npm's.
+    $lockCopied = @($items | Where-Object { $lockRelative -ieq $_ -or $lockRelative.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+    $npmLock = Join-Path $installDir 'package-lock.json'
+    if (-not $lockCopied -and (Test-Path -LiteralPath $npmLock -PathType Leaf)) {
+        Remove-OwnedTree $npmLock
+        Write-Host "Removed the package-lock.json that npm wrote beside $($layer.name)'s package.json"
     }
 
     $agentNamesByLayer[$layer.name] = @()
@@ -1263,11 +1528,7 @@ foreach ($layer in $openCodeLayers) {
 # recorded it, or when it is the retired port's folder. Any other folder is kept.
 foreach ($entry in Get-StalePluginFolders -Wanted @($openCodeLayers | ForEach-Object { $_.name })) {
     if (($priorOpenCodeFolders -contains $entry.Name) -or ($retiredOpenCodeFolders -contains $entry.Name)) {
-        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            [IO.Directory]::Delete($entry.FullName, $false)
-        } else {
-            Remove-Item -LiteralPath $entry.FullName -Recurse -Force
-        }
+        Remove-OwnedTree $entry.FullName
         Write-Host "Removed the stale plugin folder $($entry.FullName)"
     } else {
         Write-Host ("Drift:          {0}: stale, kept because the previous stack.lock.json does not record it" -f $entry.FullName)
@@ -1375,7 +1636,7 @@ $layerRecords = foreach ($layer in $layers) {
     }
     if ($record) {
         $child = Join-Path $claudePluginsTarget $record.plugin
-        $treeSha = Get-TreeSha256 $child
+        $treeSha = Get-LegacyTreeSha256 $child
         if ($record.kind -eq 'junction') {
             $claude = [pscustomobject]@{
                 enabled    = $true
@@ -1475,9 +1736,26 @@ $piLock = if ($piCmdText) {
     }
 }
 
+# The Pi keys this apply created in a settings file that already existed, or kept from an earlier apply.
+# A settings file the apply created is listed in createdFiles instead.
+$priorCreatedKeys = @()
+if ($null -ne $priorOwned) {
+    $priorCreatedKeys = @($priorOwned | Where-Object { $_.kind -eq 'json-entries' -and (Get-Field $_ 'createdKey') -eq $true } | ForEach-Object { $_.key })
+}
+$settingsNow = $null
+if (Test-Path -LiteralPath $piSettingsTarget -PathType Leaf) { $settingsNow = Get-Content -LiteralPath $piSettingsTarget -Raw | ConvertFrom-Json }
+$createdKeys = @{}
+foreach ($key in @('packages', 'skills')) {
+    $presentNow = ($null -ne $settingsNow) -and ($null -ne $settingsNow.PSObject.Properties[$key])
+    $createdHere = $settingsFileBefore -and -not ($settingsKeysBefore -ccontains $key)
+    $createdKeys[$key] = [bool]($presentNow -and ($createdHere -or ($priorCreatedKeys -ccontains $key)))
+}
+$createdDirs = @(Get-CreatedPaths -Candidates $installerDirs -Prior $priorCreatedDirs -ExistedBefore $existedBefore -Kind 'dir')
+$createdFiles = @(Get-CreatedPaths -Candidates @('.pi/agent/settings.json') -Prior $priorCreatedFiles -ExistedBefore $existedBeforeFiles -Kind 'file')
+
 # The ownership record: every path this apply wrote, after the writes, so -Status and a later
 # remove or uninstall know what is theirs. It holds no path outside the workspace and not the lock.
-$owned = Get-OwnedRecords -Plan $plan
+$owned = Get-OwnedRecords -Plan $plan -CreatedKeys $createdKeys
 
 $stack = [pscustomobject]@{
     generatedAt  = (Get-Date).ToUniversalTime().ToString('o')
@@ -1488,6 +1766,8 @@ $stack = [pscustomobject]@{
     layers       = $layerRecords
     ownedSchema  = $ownedSchemaVersion
     owned        = @($owned)
+    createdDirs  = $createdDirs
+    createdFiles = $createdFiles
 }
 [IO.File]::WriteAllText($stackTarget, ($stack | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "Wrote $stackTarget"

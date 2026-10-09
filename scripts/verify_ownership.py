@@ -65,11 +65,36 @@ def check_owned_record(record: object, where: str, failures: list[str]) -> str |
         entries = record.get("entries")
         if not isinstance(entries, list) or not entries:
             failures.append(f"{where} entries must be a non-empty list")
+        if "createdKey" in record:
+            expected = expected | {"createdKey"}
+            if record["createdKey"] is not True:
+                failures.append(f"{where} createdKey, when present, must be true")
     if set(record) != expected:
         failures.append(
             f"{where} must hold exactly {sorted(expected)}, found {sorted(record)}"
         )
     return f"{record['path']}\t{kind}\t{record.get('key') or ''}"
+
+
+def check_created(lock: dict, field: str, failures: list[str]) -> None:
+    """createdDirs and createdFiles, when present, list workspace paths once each, in UTF-8 order."""
+    if field not in lock:
+        return
+    paths = lock[field]
+    if not isinstance(paths, list) or not all(is_owned_path(path) for path in paths):
+        failures.append(
+            f"stack.lock.json {field} must be a list of workspace-relative paths"
+        )
+        return
+    if len(set(paths)) != len(paths):
+        failures.append(f"stack.lock.json {field} names a path twice")
+    elif paths != sorted(paths, key=utf8_order):
+        failures.append(f"stack.lock.json {field} is not sorted by UTF-8 bytes")
+
+
+def utf8_order(text: str) -> bytes:
+    """The order every list is sorted in: UTF-8 bytes, which is code point order."""
+    return text.encode("utf-8")
 
 
 def check_owned(lock: dict, failures: list[str]) -> None:
@@ -91,8 +116,10 @@ def check_owned(lock: dict, failures: list[str]) -> None:
             keys.append(key)
     if len(set(keys)) != len(keys):
         failures.append("stack.lock.json owned names one path, kind, and key twice")
-    elif keys != sorted(keys):
+    elif keys != sorted(keys, key=utf8_order):
         failures.append("stack.lock.json owned is not sorted by path, kind, and key")
+    check_created(lock, "createdDirs", failures)
+    check_created(lock, "createdFiles", failures)
 
 
 def check_lock_file(path: Path, failures: list[str]) -> None:

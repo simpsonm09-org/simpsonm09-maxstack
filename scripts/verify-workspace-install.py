@@ -34,8 +34,6 @@ PI_WRAPPERS = ("pi.cmd", "pi.sh")
 PI_ASK_LINE = 'set "AGENT_ACCESS_PI_ASK=allow"'
 PI_SH_ASK_LINE = "export AGENT_ACCESS_PI_ASK=allow"
 RUNTIMES = ("claude", "opencode", "copilot", "pi")
-# Trees are hashed without these folders at any depth, as Get-TreeSha256 does.
-TREE_SKIPPED_DIRS = ("node_modules", ".git")
 
 
 def default_workspace() -> str:
@@ -62,22 +60,67 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest().upper()
 
 
-def tree_sha256(root: pathlib.Path) -> str:
-    """Mirror Get-TreeSha256 in Install-Workspace.ps1: one line per file, relative path and
-    SHA-256, sorted, leaving out node_modules, .git, and package-lock.json at any depth; then
-    the SHA-256 of that text."""
-    lines = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [name for name in dirnames if name not in TREE_SKIPPED_DIRS]
-        for name in filenames:
-            if name == "package-lock.json":
-                continue
-            full = pathlib.Path(dirpath) / name
-            lines.append(
-                f"{full.relative_to(root).as_posix()}\t{sha256_hex(full.read_bytes())}"
-            )
-    text = "\n".join(sorted(lines)) + "\n"
+def is_reparse_point(path: str) -> bool:
+    """A junction or a symbolic link. The tree walk lists it and never reads what it points to."""
+    return os.path.islink(path) or (
+        hasattr(os.path, "isjunction") and os.path.isjunction(path)
+    )
+
+
+def link_target_text(path: str) -> str:
+    """The target a link names, without the Windows API prefix, as Get-LinkTargetText writes it."""
+    text = os.readlink(path)
+    for prefix in ("\\\\?\\", "\\??\\"):
+        text = text.removeprefix(prefix)
+    return text.rstrip("\\")
+
+
+def folder_excluded(relative: str, rule: str) -> bool:
+    """Mirror Test-TreeFolderExcluded: the legacy rule names the top-level node_modules without
+    regard to case; the owned rule names node_modules and .git at any depth, exactly."""
+    if rule == "legacy":
+        return "/" not in relative and relative.lower() == "node_modules"
+    return relative.split("/")[-1] in ("node_modules", ".git")
+
+
+def tree_entries(root: pathlib.Path, rule: str) -> list[tuple[str, str]]:
+    """Mirror Get-TreeEntries: each entry as (relative path, value), where the value is the file's
+    SHA-256, or link: and the target. A link is never followed."""
+    root_text = os.path.normpath(str(root))
+    entries = []
+    pending = [root_text]
+    while pending:
+        directory = pending.pop()
+        for entry in os.scandir(directory):
+            relative = os.path.relpath(entry.path, root_text).replace("\\", "/")
+            if is_reparse_point(entry.path):
+                entries.append((relative, f"link:{link_target_text(entry.path)}"))
+            elif entry.is_dir(follow_symlinks=False):
+                if not folder_excluded(relative, rule):
+                    pending.append(entry.path)
+            else:
+                entries.append(
+                    (relative, sha256_hex(pathlib.Path(entry.path).read_bytes()))
+                )
+    return entries
+
+
+def tree_hash(entries: list[tuple[str, str]]) -> str:
+    """Mirror Get-TreeLinesSha256: one line per entry, sorted by UTF-8 bytes, then the SHA-256 of
+    that text."""
+    lines = [f"{relative}\t{value}" for relative, value in entries]
+    text = "\n".join(sorted(lines, key=lambda line: line.encode("utf-8"))) + "\n"
     return sha256_hex(text.encode("utf-8"))
+
+
+def tree_sha256(root: pathlib.Path) -> str:
+    """The owned hash of a folder, as Get-TreeSha256 computes it."""
+    return tree_hash(tree_entries(root, "owned"))
+
+
+def tree_sha256_legacy(root: pathlib.Path) -> str:
+    """The legacy hash of a claude child, as Get-LegacyTreeSha256 computes it."""
+    return tree_hash(tree_entries(root, "legacy"))
 
 
 def load_lock(workspace: pathlib.Path, failures: list[str]) -> dict | None:
@@ -142,7 +185,7 @@ def check_claude(lock: dict, workspace: pathlib.Path, failures: list[str]) -> No
             failures.append(
                 f"Claude plugin '{name}' does not match the name in {manifest}"
             )
-        if tree_sha256(child) != str(claude.get("treeSha256", "")).upper():
+        if tree_sha256_legacy(child) != str(claude.get("treeSha256", "")).upper():
             failures.append(
                 f"Claude plugin '{name}' differs from the tree recorded in stack.lock.json"
             )
