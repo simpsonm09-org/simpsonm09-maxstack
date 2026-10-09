@@ -2,18 +2,35 @@
 
 T3 can run OpenCode, Claude Code, and the Copilot CLI against the same workspace. The three harnesses find the plugin layers differently, so each needs its own setup.
 
+## T3 instances
+
+T3 keeps its provider instances in `%USERPROFILE%\.t3\userdata\settings.json`. T3 reloads that file while it runs, so an edit needs no restart.
+
+| Instance id | Display name | Provider | Points at | Use |
+| --- | --- | --- | --- | --- |
+| `claudeAgent` | Claude (default) | Claude | no plugin folder | Plain Claude Code |
+| `claudeSimpsonm09` | Claude (maxstack) | Claude | launch args `--plugin-dir D:\dev\simpsonm09\.claude\plugins` | Claude Code with the workspace plugins |
+| `copilot` | Copilot (default) | Copilot | the registry `copilot.exe` | Plain Copilot CLI |
+| `copilotSimpsonm09` | Copilot (maxstack) | Copilot | `commandPath` `D:/dev/simpsonm09/.maxstack/bin/copilot.cmd` (macOS: `copilot.sh`) | Copilot CLI with the workspace plugins |
+
+The maxstack instances apply only to the simpsonm09 workspace. The default instances need no folder and no wrapper.
+
 ## OpenCode
 
 Nothing to configure. OpenCode walks up from the session directory to the filesystem root and merges each `opencode.jsonc` and `.opencode` it finds. So `D:\dev\simpsonm09\opencode.jsonc` and `D:\dev\simpsonm09\.opencode` apply to every repository and git worktree under the workspace. This was verified with OpenCode 2.0.24.
 
 The installer lists the PStack entry in the workspace `opencode.jsonc`, as `./.opencode/plugins/pstack/opencode`. The path is relative to that file, so it holds no machine-specific root and works from any session directory under the workspace.
 
+### Models
+
+Use an `opencode-go/*` model. `opencode/*` models report insufficient funds. No default model is set for OpenCode or Claude, so pick one in the T3 model picker.
+
 ## Claude Code
 
-Claude Code does not walk up for plugins. The installer therefore builds one folder of Claude plugins at the workspace root, `D:\dev\simpsonm09\.claude\plugins`. Each child folder is one plugin. A T3 Claude provider instance points at that folder:
+Claude Code does not walk up for plugins. The installer therefore builds one folder of Claude plugins at the workspace root, `D:\dev\simpsonm09\.claude\plugins`. Each child folder is one plugin. The `claudeSimpsonm09` instance points at that folder:
 
 1. Generate the folder: `pwsh -File scripts/Install-Workspace.ps1 -Apply`.
-2. In T3, add a Claude provider instance whose launch arguments are `--plugin-dir D:\dev\simpsonm09\.claude\plugins`.
+2. In T3, select the `claudeSimpsonm09` instance, Claude (maxstack). Its launch arguments are `--plugin-dir D:\dev\simpsonm09\.claude\plugins`. To set it up again, add a Claude provider instance with those launch arguments.
 3. Fleet projects select that instance through the project's default model.
 
 Plain `claude` outside T3 takes the same flag, so `claude --plugin-dir D:\dev\simpsonm09\.claude\plugins` gives the same plugins.
@@ -32,25 +49,33 @@ The pstack folder is a copy, not a junction. It is not a junction because the Op
 
 ## Copilot
 
-The Copilot provider does not take plugin folders from the instance's arguments. T3 ignores `commandArgs` for registry ACP agents. So the installer writes a wrapper, `.maxstack\bin\copilot.cmd`, and the T3 instance starts the wrapper instead of `copilot`.
+The Copilot provider does not take plugin folders from the instance's arguments. T3 ignores `commandArgs` for registry ACP agents. So the installer writes a wrapper, `.maxstack\bin\copilot.cmd`, and the `copilotSimpsonm09` instance starts the wrapper instead of `copilot`. The default `copilot` instance starts the registry `copilot.exe` and needs no wrapper.
 
 1. Generate the wrapper: `pwsh -File scripts/Install-Workspace.ps1 -Apply`. It needs the Copilot CLI installed. If Copilot is not on `PATH`, the installer skips the wrapper and says so. Install Copilot, then run it again.
-2. In T3, copy the registry `copilot` provider instance. Set the copy's `config.commandPath` to `<workspace>/.maxstack/bin/copilot.cmd`, for example `D:/dev/simpsonm09/.maxstack/bin/copilot.cmd`.
+2. In T3, select the `copilotSimpsonm09` instance, Copilot (maxstack). Its `config.commandPath` is `D:/dev/simpsonm09/.maxstack/bin/copilot.cmd`. To set it up again, copy the registry `copilot` instance and set the copy's `config.commandPath` to `<workspace>/.maxstack/bin/copilot.cmd`. On macOS, use `copilot.sh` in the same folder.
 3. Fleet projects select that instance through the project's default model.
 
 The wrapper runs the Copilot CLI with one `--plugin-dir` for each layer that lists `copilot`, in layer order: pstack, then the org layer, then the personal layer. Each folder is the same `.claude\plugins` folder Claude Code uses. The wrapper then passes its own arguments through. The installer writes the Copilot executable's absolute path into the wrapper. If you move or reinstall Copilot, run the installer again.
 
 ### The ask switch
 
-The wrapper sets `AGENT_ACCESS_COPILOT_ASK=allow` before it starts Copilot. This is needed because of how the org gate asks for approval.
+The wrapper sets `AGENT_ACCESS_COPILOT_ASK=allow` before it starts Copilot. This is needed because of how T3 handles approval.
 
-The org gate answers a GitHub write that the access level permits with `ask`. Copilot then shows a prompt. Under T3 no one can answer that prompt, so the call fails. With the variable set to `allow`, the Copilot adapter turns that `ask` into `allow`. The denial reason and the rewrite stay the same.
+The org gate answers a GitHub write that the access level permits with `ask`. Copilot then asks for approval. T3 talks to Copilot over ACP, and ACP auto-denies an `ask`, so without the variable the write would be denied. With the variable set to `allow`, the Copilot adapter turns that `ask` into `allow`. The denial reason and the rewrite stay the same.
 
 The switch changes only that `ask`. Denials still apply, and the repository access level still applies. A call the gate denies is still denied.
 
 A plain interactive `copilot` does not set the variable, so it keeps the prompt. The wrapper sets the variable only in its own process. Your shell and other programs do not see it.
 
 The variable is set in the wrapper, not in the T3 instance, so other Copilot runs are not affected.
+
+### What works on Copilot
+
+On Windows, pstack's PreToolUse hook is a no-op stub under Copilot, so its file-read and subagent-model checks do not run there. The SessionStart context, the skills, and the org gate work on Copilot. The macOS `copilot.sh` is untested.
+
+## Not set up
+
+Cursor, Codex, and Antigravity are not set up for this workspace, because their quota is not available. They have no instance or wrapper here.
 
 ## Checks
 
@@ -79,9 +104,9 @@ An earlier design gave each T3 instance `--settings <file>`, which holds a marke
 - The org SessionStart hook runs through the junction, and `${CLAUDE_PLUGIN_ROOT}` resolves there.
 - The org PreToolUse hook runs through the junction. A Bash command that mentions the GitHub token launcher is denied by it.
 - OpenCode 2.0.26 loads the nested pstack entry named in `opencode.jsonc`, and the root org and personal entries, from an installed workspace. The check used a temporary workspace and an unavailable model, so it made no model call.
-- The generated `copilot.cmd` runs its executable with the switch set and every plugin folder in order, and passes arguments through. This was tested with a stand-in executable, not with T3 or a live Copilot session.
+- The generated `copilot.cmd` runs its executable with the switch set and every plugin folder in order, and passes arguments through. This was first tested with a stand-in executable. It has since been verified live on Windows through the `copilotSimpsonm09` instance: the SessionStart context, the skills, and the org gate work.
 
-Not yet verified: a T3 Copilot provider instance that uses the wrapper, and a live Copilot session that loads the plugins through it.
+Not yet verified: `copilot.sh` on macOS.
 
 ## Generated files and git
 
