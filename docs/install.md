@@ -64,6 +64,53 @@ pwsh -File scripts/Install-Workspace.ps1
 
 A layer that stops naming a runtime leaves its folder behind. `-Apply` removes an OpenCode folder that no layer names only when the previous `stack.lock.json` recorded it, so the installer made it. It also removes the folder of the retired `pstack-opencode` port on every apply. Any other unnamed folder is reported as stale and kept. The same cleanup applies to `.claude\plugins`: `-Apply` removes a child that no layer declares, and audit reports it as stale.
 
+## Ownership and status
+
+`-Apply` writes an ownership record into `stack.lock.json`: the `owned` list, with `ownedSchema: 1`. It names each path the apply wrote, sorted by path, kind, and key:
+
+- `opencode.jsonc`, `.maxstack\bin\copilot.*`, `.maxstack\bin\pi.*`, and each agent profile in `.opencode\agents`: a `file` with its SHA-256.
+- `.claude\plugins\<layer>`: a `link` with its `target` for a local layer, or a `dir` for a pinned copy.
+- `.claude\cache\<layer>`: a `dir` for each pinned layer.
+- `.opencode\plugins\<layer>`: a `dir`.
+- `.pi\agent\settings.json`: one `json-entries` record for `packages` and one for `skills`. Each holds only the entries the installer added, and none when it added none. An entry the user already listed is the user's, so it is not recorded, and a second copy the user wrote beside an installer entry stays the user's.
+- `opencode.jsonc.bak` and `.pi\agent\settings.json.bak`: a `file` record each, once an apply has written the backup.
+
+A `json-entries` record for a key the installer created in a settings file that already existed carries `createdKey: true`. The top-level `createdDirs` lists each directory an apply created, and `createdFiles` each file it created (a settings file that already existed is not listed). Both are sorted, and both lists name only what was not there before the first apply.
+
+A `dir` record is the hash of what the installer wrote. An owned folder is wholly the installer's: each apply removes whatever the layer does not install, printing each removal, and replaces each item with a fresh copy. The hash covers each file's relative path and SHA-256, and each link by its target, and it leaves out `node_modules` and `.git` at any depth. The record holds no absolute path and does not list the lock itself. Re-applying with nothing to change leaves the lock the same except `generatedAt`.
+
+```json
+"owned": [
+  { "path": ".maxstack/bin/copilot.cmd", "kind": "file", "sha256": "…" },
+  { "path": ".pi/agent/settings.json", "kind": "json-entries", "key": "packages", "entries": ["../../.claude/cache/pstack"] }
+]
+```
+
+`-Status` compares the record with the disk and with what an apply would write. It writes nothing. It prints one line per path, then a summary:
+
+```powershell
+pwsh -File scripts/Install-Workspace.ps1 -Status
+pwsh -File scripts/Install-Workspace.ps1 -Status -Strict
+```
+
+| State | Meaning |
+| --- | --- |
+| `matching` | It matches the record, and an apply would leave it as it is. |
+| `drifted` | It matches the record, but an apply would write something else, such as a layer whose source changed. |
+| `modified` | It differs from the recorded hash, target, or entry, usually because of a hand edit. |
+| `missing` | The record names it and the disk does not hold it. A Pi entry shows alone when it is missing from its list. |
+| `untracked` | A file in `.maxstack\bin` that no record names. |
+
+`-Strict` exits 1 when any path is not `matching`. A workspace whose lock has no `owned` list prints `no ownership record; run -Apply once to create it`, and exits 0, or 1 with `-Strict`.
+
+Limits of the record:
+
+- Owned folders must not hold user files. `.opencode\plugins\<layer>`, `.claude\plugins\<layer>`, and `.claude\cache\<layer>` belong to the installer: an apply removes any file a user adds to them, and status reports such a file as `modified` until then. Keep your own files elsewhere.
+- For a pinned layer, status reads only the local cache. Each path or entry that depends on a pinned commit the cache is not at reports as `drifted`, once, until an apply syncs the cache. An apply also removes untracked files from the cache.
+- A backup the next apply would write is not reported until it exists.
+- Apply does not remove the agent profiles of a layer that stopped installing them, nor the cache of a removed pinned layer. Those files drop out of the record at the next apply.
+- A lock from before the record has no `owned` list, so status reports no record until one apply. That apply takes the entries its `pi` section lists as the installer's, and the claude `treeSha256` values keep the legacy rule, so they do not report `differs` after the upgrade.
+
 ## A legacy global install
 
 The workspace bundle is the only PStack install. If an older global install is ever found, remove it by hand, on Windows under `%USERPROFILE%` and on WSL under `$HOME`. `scripts/verify-workspace-install.py` reports what remains. It checks these paths:

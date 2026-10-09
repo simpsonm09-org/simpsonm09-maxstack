@@ -30,7 +30,7 @@ function shipped(path) {
 
 // Copies the manifests and the files the verifier reads into a temporary repository
 // layout, applies the change, and runs the verifier there.
-function runVerifier({ layers = (manifest) => manifest, pinLock = null, omitPinLock = false, extraFiles = {} } = {}) {
+function runVerifier({ layers = (manifest) => manifest, pinLock = null, omitPinLock = false, extraFiles = {}, lock = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'maxstack-manifests-'));
   try {
     const manifest = layers(shipped('layers.json'));
@@ -45,8 +45,14 @@ function runVerifier({ layers = (manifest) => manifest, pinLock = null, omitPinL
     mkdirSync(join(root, 'scripts'));
     writeFileSync(join(root, 'scripts', 'Install-Workspace.ps1'), '# installer\n');
     copyFileSync(verifier, join(root, 'scripts', 'verify-manifests.py'));
+    copyFileSync(join(repoRoot, 'scripts', 'verify_ownership.py'), join(root, 'scripts', 'verify_ownership.py'));
     for (const [rel, content] of Object.entries(extraFiles)) writeFileSync(join(root, rel), content);
-    return spawnSync(python, [join(root, 'scripts', 'verify-manifests.py')], { encoding: 'utf8' });
+    const args = [join(root, 'scripts', 'verify-manifests.py')];
+    if (lock !== null) {
+      writeFileSync(join(root, 'stack.lock.json'), JSON.stringify(lock));
+      args.push('--lock', join(root, 'stack.lock.json'));
+    }
+    return spawnSync(python, args, { encoding: 'utf8' });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -181,4 +187,120 @@ test('the layer names and the single plugin layer are checked', { skip }, () => 
   });
   assert.equal(run.status, 1, failureOf(run));
   assert.match(failureOf(run), /two layers share a name/);
+});
+
+// An ownership record in the order the installer writes it: by path, then kind, then key.
+const OWNED = [
+  { path: '.claude/cache/pstack', kind: 'dir', sha256: 'A'.repeat(64) },
+  { path: '.claude/plugins/pstack', kind: 'dir', sha256: 'B'.repeat(64) },
+  { path: '.claude/plugins/simpsonm09-org-ai-plugin', kind: 'link', target: '.opencode/plugins/simpsonm09-org-ai-plugin' },
+  { path: '.maxstack/bin/pi.cmd', kind: 'file', sha256: 'C'.repeat(64) },
+  { path: '.pi/agent/settings.json', kind: 'json-entries', key: 'packages', entries: ['../../.claude/cache/pstack'] },
+  { path: '.pi/agent/settings.json', kind: 'json-entries', key: 'skills', entries: ['../../.claude/plugins/pstack/skills'] },
+  { path: 'opencode.jsonc', kind: 'file', sha256: 'D'.repeat(64) },
+];
+
+function lockWith(owned, extra = {}) {
+  return { ownedSchema: 1, layers: [], owned, ...extra };
+}
+
+test('a well-formed ownership record passes --lock', { skip }, () => {
+  const run = runVerifier({ lock: lockWith(OWNED) });
+  assert.equal(run.status, 0, failureOf(run));
+  assert.match(run.stdout, /^PASS:/);
+});
+
+test('an ownership record with no schema version, or no owned list, is refused', { skip }, () => {
+  const noSchema = runVerifier({ lock: { owned: OWNED, layers: [] } });
+  assert.equal(noSchema.status, 1, failureOf(noSchema));
+  assert.match(failureOf(noSchema), /ownedSchema must be 1/);
+
+  const noOwned = runVerifier({ lock: { ownedSchema: 1, layers: [] } });
+  assert.equal(noOwned.status, 1, failureOf(noOwned));
+  assert.match(failureOf(noOwned), /has no owned list/);
+});
+
+test('an owned path that is not a workspace-relative forward-slash path is refused', { skip }, () => {
+  for (const path of ['.maxstack\\bin\\pi.cmd', 'C:/dev/x', '/etc/passwd', '../outside', 'stack.lock.json']) {
+    const owned = OWNED.map((record, index) => (index === 0 ? { ...record, path } : record));
+    const run = runVerifier({ lock: lockWith(owned) });
+    assert.equal(run.status, 1, `${path}: ${failureOf(run)}`);
+    assert.match(failureOf(run), /path must be a workspace-relative path with forward slashes/, path);
+  }
+});
+
+test('an owned record with a short hash, an unknown kind, or an extra field is refused', { skip }, () => {
+  const cases = [
+    [{ ...OWNED[0], sha256: 'abc' }, /sha256 must be 64 upper-case hex digits/],
+    [{ ...OWNED[0], sha256: 'a'.repeat(64) }, /sha256 must be 64 upper-case hex digits/],
+    [{ ...OWNED[0], kind: 'folder' }, /kind must be one of/],
+    [{ ...OWNED[0], note: 'extra' }, /must hold exactly/],
+    [{ ...OWNED[2], target: '' }, /target must be a workspace-relative path/],
+  ];
+  for (const [record, pattern] of cases) {
+    const owned = OWNED.map((existing, index) => (index === 0 ? record : existing));
+    const run = runVerifier({ lock: lockWith(owned) });
+    assert.equal(run.status, 1, failureOf(run));
+    assert.match(failureOf(run), pattern);
+  }
+});
+
+test('a json-entries record with an unknown key, or no entries, is refused', { skip }, () => {
+  const unknownKey = OWNED.map((record) => (record.key === 'skills' ? { ...record, key: 'extensions' } : record));
+  const unknown = runVerifier({ lock: lockWith(unknownKey) });
+  assert.equal(unknown.status, 1, failureOf(unknown));
+  assert.match(failureOf(unknown), /key must be one of \[/);
+
+  const empty = OWNED.map((record) => (record.key === 'skills' ? { ...record, entries: [] } : record));
+  const none = runVerifier({ lock: lockWith(empty) });
+  assert.equal(none.status, 1, failureOf(none));
+  assert.match(failureOf(none), /entries must be a non-empty list/);
+});
+
+test('owned records out of order, or named twice, are refused', { skip }, () => {
+  const reversed = runVerifier({ lock: lockWith([...OWNED].reverse()) });
+  assert.equal(reversed.status, 1, failureOf(reversed));
+  assert.match(failureOf(reversed), /owned is not sorted by path, kind, and key/);
+
+  const twice = runVerifier({ lock: lockWith([OWNED[0], OWNED[0], ...OWNED.slice(1)]) });
+  assert.equal(twice.status, 1, failureOf(twice));
+  assert.match(failureOf(twice), /names one path, kind, and key twice/);
+});
+
+test('the owned list is sorted by UTF-8 bytes, so a fullwidth name comes before an emoji name', { skip }, () => {
+  // Code point order and UTF-8 order agree; UTF-16 would put the emoji (a surrogate pair) first.
+  const fullwidth = { path: 'Ａ-fullwidth/x', kind: 'dir', sha256: 'A'.repeat(64) };
+  const emoji = { path: '\u{1F642}-emoji/x', kind: 'dir', sha256: 'B'.repeat(64) };
+  const sorted = runVerifier({ lock: lockWith([fullwidth, emoji]) });
+  assert.equal(sorted.status, 0, failureOf(sorted));
+  const reversed = runVerifier({ lock: lockWith([emoji, fullwidth]) });
+  assert.equal(reversed.status, 1, failureOf(reversed));
+  assert.match(failureOf(reversed), /owned is not sorted by path, kind, and key/);
+});
+
+test('a json-entries record may carry createdKey true, and createdKey is refused in any other value', { skip }, () => {
+  const created = OWNED.map((record) => (record.key === 'skills' ? { ...record, createdKey: true } : record));
+  const passed = runVerifier({ lock: lockWith(created, { createdDirs: ['.claude', '.claude/plugins'], createdFiles: [] }) });
+  assert.equal(passed.status, 0, failureOf(passed));
+
+  const falsy = OWNED.map((record) => (record.key === 'skills' ? { ...record, createdKey: false } : record));
+  const refused = runVerifier({ lock: lockWith(falsy) });
+  assert.equal(refused.status, 1, failureOf(refused));
+  assert.match(failureOf(refused), /createdKey, when present, must be true/);
+});
+
+test('createdDirs and createdFiles are lists of workspace paths, sorted once each', { skip }, () => {
+  const backslash = runVerifier({ lock: lockWith(OWNED, { createdDirs: ['.maxstack\\bin'] }) });
+  assert.equal(backslash.status, 1, failureOf(backslash));
+  assert.match(failureOf(backslash), /createdDirs must be a list of workspace-relative paths/);
+
+  const twice = runVerifier({ lock: lockWith(OWNED, { createdFiles: ['.pi/agent/settings.json', '.pi/agent/settings.json'] }) });
+  assert.equal(twice.status, 1, failureOf(twice));
+  assert.match(failureOf(twice), /createdFiles names a path twice/);
+});
+
+test('a backup record is an ordinary file record, and it is accepted', { skip }, () => {
+  const backup = [...OWNED, { path: 'opencode.jsonc.bak', kind: 'file', sha256: 'E'.repeat(64) }];
+  const run = runVerifier({ lock: lockWith(backup) });
+  assert.equal(run.status, 0, failureOf(run));
 });

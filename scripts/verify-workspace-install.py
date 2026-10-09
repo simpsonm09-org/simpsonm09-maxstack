@@ -15,6 +15,8 @@ import re
 import shutil
 import sys
 
+from verify_ownership import check_owned
+
 REQUIRED_SKILLS = (
     "poteto-mode",
     "setup-pstack",
@@ -58,20 +60,67 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest().upper()
 
 
-def tree_sha256(root: pathlib.Path) -> str:
-    """Mirror Get-TreeSha256 in Install-Workspace.ps1: one line per file, relative path and
-    SHA-256, sorted, leaving out a top-level node_modules; then the SHA-256 of that text."""
-    lines = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        if pathlib.Path(dirpath) == root:
-            dirnames[:] = [name for name in dirnames if name != "node_modules"]
-        for name in filenames:
-            full = pathlib.Path(dirpath) / name
-            lines.append(
-                f"{full.relative_to(root).as_posix()}\t{sha256_hex(full.read_bytes())}"
-            )
-    text = "\n".join(sorted(lines)) + "\n"
+def is_reparse_point(path: str) -> bool:
+    """A junction or a symbolic link. The tree walk lists it and never reads what it points to."""
+    return os.path.islink(path) or (
+        hasattr(os.path, "isjunction") and os.path.isjunction(path)
+    )
+
+
+def link_target_text(path: str) -> str:
+    """The target a link names, without the Windows API prefix, as Get-LinkTargetText writes it."""
+    text = os.readlink(path)
+    for prefix in ("\\\\?\\", "\\??\\"):
+        text = text.removeprefix(prefix)
+    return text.rstrip("\\")
+
+
+def folder_excluded(relative: str, rule: str) -> bool:
+    """Mirror Test-TreeFolderExcluded: the legacy rule names the top-level node_modules without
+    regard to case; the owned rule names node_modules and .git at any depth, exactly."""
+    if rule == "legacy":
+        return "/" not in relative and relative.lower() == "node_modules"
+    return relative.split("/")[-1] in ("node_modules", ".git")
+
+
+def tree_entries(root: pathlib.Path, rule: str) -> list[tuple[str, str]]:
+    """Mirror Get-TreeEntries: each entry as (relative path, value), where the value is the file's
+    SHA-256, or link: and the target. A link is never followed."""
+    root_text = os.path.normpath(str(root))
+    entries = []
+    pending = [root_text]
+    while pending:
+        directory = pending.pop()
+        for entry in os.scandir(directory):
+            relative = os.path.relpath(entry.path, root_text).replace("\\", "/")
+            if is_reparse_point(entry.path):
+                entries.append((relative, f"link:{link_target_text(entry.path)}"))
+            elif entry.is_dir(follow_symlinks=False):
+                if not folder_excluded(relative, rule):
+                    pending.append(entry.path)
+            else:
+                entries.append(
+                    (relative, sha256_hex(pathlib.Path(entry.path).read_bytes()))
+                )
+    return entries
+
+
+def tree_hash(entries: list[tuple[str, str]]) -> str:
+    """Mirror Get-TreeLinesSha256: one line per entry, sorted by UTF-8 bytes, then the SHA-256 of
+    that text."""
+    lines = [f"{relative}\t{value}" for relative, value in entries]
+    text = "\n".join(sorted(lines, key=lambda line: line.encode("utf-8"))) + "\n"
     return sha256_hex(text.encode("utf-8"))
+
+
+def tree_sha256(root: pathlib.Path) -> str:
+    """The owned hash of a folder, as Get-TreeSha256 computes it."""
+    return tree_hash(tree_entries(root, "owned"))
+
+
+def tree_sha256_legacy(root: pathlib.Path) -> str:
+    """The legacy hash of a claude child, as Get-LegacyTreeSha256 computes it."""
+    return tree_hash(tree_entries(root, "legacy"))
 
 
 def load_lock(workspace: pathlib.Path, failures: list[str]) -> dict | None:
@@ -136,7 +185,7 @@ def check_claude(lock: dict, workspace: pathlib.Path, failures: list[str]) -> No
             failures.append(
                 f"Claude plugin '{name}' does not match the name in {manifest}"
             )
-        if tree_sha256(child) != str(claude.get("treeSha256", "")).upper():
+        if tree_sha256_legacy(child) != str(claude.get("treeSha256", "")).upper():
             failures.append(
                 f"Claude plugin '{name}' differs from the tree recorded in stack.lock.json"
             )
@@ -450,6 +499,46 @@ def check_pi(lock: dict, workspace: pathlib.Path, failures: list[str]) -> None:
     check_pi_layers(lock, workspace, agent_dir, failures)
 
 
+def check_owned_on_disk(
+    lock: dict, workspace: pathlib.Path, failures: list[str]
+) -> None:
+    """Each owned record matches the disk: the file's hash, the folder's tree hash, the link's
+    target, or the Pi entries the settings list. The shape is checked by check_owned first."""
+    for record in lock.get("owned", []):
+        path = workspace / record["path"]
+        kind = record["kind"]
+        if kind == "file":
+            if not path.is_file():
+                failures.append(f"missing owned file: {path}")
+            elif sha256_hex(path.read_bytes()) != record["sha256"]:
+                failures.append(
+                    f"owned file {path} differs from the hash recorded in stack.lock.json"
+                )
+        elif kind == "dir":
+            if not path.is_dir():
+                failures.append(f"missing owned folder: {path}")
+            elif tree_sha256(path) != record["sha256"]:
+                failures.append(
+                    f"owned folder {path} differs from the tree hash recorded in stack.lock.json"
+                )
+        elif kind == "link":
+            target = workspace / record["target"]
+            if not is_link(path) or os.path.normcase(
+                os.path.realpath(path)
+            ) != os.path.normcase(os.path.realpath(target)):
+                failures.append(f"owned link {path} does not point at {target}")
+        else:
+            settings = read_json_object(path, failures)
+            if settings is None:
+                continue
+            listed = settings.get(record["key"], [])
+            for entry in record["entries"]:
+                if entry not in listed:
+                    failures.append(
+                        f"{path} does not list the owned {record['key']} entry {json.dumps(entry)}"
+                    )
+
+
 def check_global(home: pathlib.Path, failures: list[str]) -> None:
     global_skills = home / ".agents" / "skills"
     # Other tools own this folder too (the Cursor CLI installs its skills here), so
@@ -493,6 +582,10 @@ def main() -> int:
         check_opencode(lock, workspace, failures)
         check_copilot(lock, workspace, failures)
         check_pi(lock, workspace, failures)
+        owned_failures = len(failures)
+        check_owned(lock, failures)
+        if len(failures) == owned_failures:
+            check_owned_on_disk(lock, workspace, failures)
 
     check_global(home, failures)
 

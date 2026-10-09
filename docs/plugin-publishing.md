@@ -50,7 +50,7 @@ Audit mode computes each of these and reports `missing`, `differs`, `matches`, o
 
 The top-level `copilot` record holds `enabled`, and when enabled, the `executable` file name, the `wrappers` relative paths, and the SHA-256 of each wrapper's text. When it is disabled, it holds the `reason`. The executable's absolute path is not recorded, because the lock holds no absolute path. It is written only into the wrapper.
 
-`treeSha256` is a hash over each file's relative path and SHA-256, leaving out a top-level `node_modules`. The lock holds only workspace-relative paths, so it holds no absolute path. The junction's target is an absolute path inside the filesystem, but the installer creates it on each apply and the lock does not record it.
+`treeSha256` is the legacy claude hash: one line per entry, the relative path and SHA-256 of each file, sorted by UTF-8 bytes. It leaves out only a top-level `node_modules`, matched without regard to case, as earlier versions did. A link inside the tree is hashed by its target and never followed. The owned hashes in `owned` use a stricter rule and are described in [Ownership and status](install.md#ownership-and-status): `node_modules` and `.git` are left out at any depth, and names compare exactly. The lock holds only workspace-relative paths, so it holds no absolute path. The junction's target is an absolute path inside the filesystem, but the installer creates it on each apply and the lock does not record it.
 
 ## Generated files and git
 
@@ -62,7 +62,7 @@ The generated files live at the workspace root, which is not a git repository, s
 
 `python scripts/verify-manifests.py --online` also runs `git ls-remote` to confirm the pinned branch still points at the pinned commit. Run it from a machine with network access. CI does not run `--online`.
 
-`python scripts/verify-workspace-install.py` checks an installed workspace against `stack.lock.json`. For each runtime it checks the files on disk: the Claude folders, the OpenCode folders and entries, the nested entries the config names, the agent profiles with no model line, the pstack skills, and the Copilot wrappers against their recorded hashes, switch, plugin folders, and executable. It also reports any folder the lock does not record, and any leftover marketplace, settings, or retired port folder.
+`python scripts/verify-workspace-install.py` checks an installed workspace against `stack.lock.json`, and each path in its `owned` list against the disk. The ownership record itself, and the `-Status` report that reads it, are described in [Ownership and status](install.md#ownership-and-status). `python scripts/verify-manifests.py --lock <path>` checks the shape of a record without a workspace. For each runtime it checks the files on disk: the Claude folders, the OpenCode folders and entries, the nested entries the config names, the agent profiles with no model line, the pstack skills, and the Copilot wrappers against their recorded hashes, switch, plugin folders, and executable. It also reports any folder the lock does not record, and any leftover marketplace, settings, or retired port folder.
 
 ## Publishing a new bundle
 
