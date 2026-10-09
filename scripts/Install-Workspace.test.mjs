@@ -18,6 +18,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -863,6 +864,40 @@ withWorkspace('the verifier fails when a configured CLI is on PATH but its wrapp
   assert.notEqual(run.status, 0, 'the verifier passed with the Pi CLI on PATH and no Pi wrapper');
   assert.match(plainOutput(run), /the pi CLI is on PATH.*rerun Install-Workspace\.ps1 -Apply/);
 }, {});
+
+// T3 spawns binaryPath directly, so the .sh wrappers need the executable bit off Windows.
+// Windows has no mode bits to check, so only those assertions are skipped there.
+test('the shell wrappers are executable off Windows, and the verifier checks the bit', { skip }, async (t) => {
+  const posix = process.platform !== 'win32';
+  const ctx = buildWorkspace();
+  try {
+    const extra = posix
+      ? ['-PiCommand', writeFakeCli(ctx.base, 'stand-in-pi'), '-CopilotCommand', writeFakeCli(ctx.base, 'stand-in-copilot')]
+      : [];
+    mustApply(ctx, extra);
+    const bin = join(ctx.workspace, '.maxstack', 'bin');
+    const home = join(ctx.base, 'home');
+    mkdirSync(home);
+    const verify = () => spawnSync(python, [join(repoRoot, 'scripts', 'verify-workspace-install.py'), '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8' });
+
+    await t.test('pi.sh and copilot.sh have the executable bit', { skip: posix ? false : 'the executable bit is POSIX-only' }, () => {
+      for (const name of ['pi.sh', 'copilot.sh']) {
+        assert.notEqual(statSync(join(bin, name)).mode & 0o111, 0, `${name} is not executable`);
+      }
+    });
+
+    await t.test('the verifier fails when the bit is missing, and passes once it is back', { skip: !python || !posix ? 'needs POSIX and python' : false }, () => {
+      chmodSync(join(bin, 'pi.sh'), 0o644);
+      const missing = verify();
+      assert.notEqual(missing.status, 0, 'the verifier accepted a Pi script that is not executable');
+      assert.match(plainOutput(missing), /pi\.sh is not executable/);
+      chmodSync(join(bin, 'pi.sh'), 0o755);
+      assert.equal(verify().status, 0);
+    });
+  } finally {
+    rmSync(ctx.base, { recursive: true, force: true });
+  }
+});
 
 // The wrapper target filter, called with each platform as a parameter, so the macOS cases run
 // on Windows too. The harness takes the function's text from the installer's own parse tree.

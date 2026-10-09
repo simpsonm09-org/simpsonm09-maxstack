@@ -225,6 +225,14 @@ def configured(lock: dict, runtime: str) -> bool:
     return any((layer.get(runtime) or {}).get("enabled") for layer in lock["layers"])
 
 
+def check_shell_bit(path: pathlib.Path, failures: list[str]) -> None:
+    """A .sh wrapper is spawned directly, so off Windows it needs the executable bit."""
+    if os.name != "nt" and path.is_file() and not os.access(path, os.X_OK):
+        failures.append(
+            f"{path} is not executable; rerun Install-Workspace.ps1 -Apply, which sets the bit"
+        )
+
+
 def check_missing_wrapper(
     lock: dict, runtime: str, command: str, bin_dir: pathlib.Path, failures: list[str]
 ) -> None:
@@ -267,6 +275,8 @@ def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> N
             failures.append(
                 f"Copilot wrapper {path} differs from the text recorded in stack.lock.json"
             )
+        if name.endswith(".sh"):
+            check_shell_bit(path, failures)
 
     cmd = bin_dir / "copilot.cmd"
     if cmd.is_file():
@@ -326,6 +336,8 @@ def check_pi_wrappers(
             failures.append(
                 f"Pi wrapper {path} differs from the text recorded in stack.lock.json"
             )
+        if name.endswith(".sh"):
+            check_shell_bit(path, failures)
 
     cmd = bin_dir / "pi.cmd"
     if cmd.is_file():

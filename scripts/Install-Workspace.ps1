@@ -388,6 +388,18 @@ function Find-WrappedExecutable {
     return $null
 }
 
+# T3 spawns binaryPath directly, so a .sh wrapper must carry the executable bit off Windows.
+# Windows has no mode bits to set, and the call is skipped there.
+function Set-ShellExecutable {
+    param([string] $Path)
+
+    if ($IsWindows) { return }
+    $mode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute `
+        -bor [IO.UnixFileMode]::GroupRead -bor [IO.UnixFileMode]::GroupExecute `
+        -bor [IO.UnixFileMode]::OtherRead -bor [IO.UnixFileMode]::OtherExecute
+    [IO.File]::SetUnixFileMode($Path, $mode)
+}
+
 function Assert-QuotablePath {
     param([string[]] $Paths)
 
@@ -871,6 +883,7 @@ if ($copilotCmdText) {
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($copilotCmdTarget, $copilotCmdText, $utf8)
     [IO.File]::WriteAllText($copilotShTarget, $copilotShText, $utf8)
+    Set-ShellExecutable $copilotShTarget
     Write-Host "Wrote $copilotCmdTarget and $copilotShTarget"
 } else {
     foreach ($path in @($copilotCmdTarget, $copilotShTarget)) {
@@ -907,6 +920,7 @@ if ($piCmdText) {
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($piCmdTarget, $piCmdText, $utf8)
     [IO.File]::WriteAllText($piShTarget, $piShText, $utf8)
+    Set-ShellExecutable $piShTarget
     Write-Host "Wrote $piCmdTarget and $piShTarget"
 } else {
     foreach ($path in @($piCmdTarget, $piShTarget)) {
