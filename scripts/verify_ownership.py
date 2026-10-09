@@ -97,8 +97,117 @@ def utf8_order(text: str) -> bytes:
     return text.encode("utf-8")
 
 
+SELECTION_RUNTIMES = ("claude", "opencode", "copilot", "pi")
+# Each runtime whose wrapper or settings name the Claude plugin folders, which only claude writes.
+NEEDS_CLAUDE = ("copilot", "pi")
+
+
+def owned_runtime(path: str) -> str | None:
+    """The runtime an owned path belongs to. The claude cache is read by every runtime, so it has none."""
+    if path.startswith(("opencode.jsonc", ".opencode/")):
+        return "opencode"
+    if path.startswith(".claude/plugins/"):
+        return "claude"
+    if path in (".maxstack/bin/copilot.cmd", ".maxstack/bin/copilot.sh"):
+        return "copilot"
+    if path.startswith((".maxstack/bin/pi.", ".pi/")):
+        return "pi"
+    return None
+
+
+def layer_names(lock: dict) -> list[str]:
+    return [layer.get("name") for layer in lock.get("layers", [])]
+
+
+def selected(lock: dict) -> tuple[set[str], set[str]]:
+    """The runtimes and layers the lock selects. A lock with no selection reads as all of them, and so
+    does a malformed one, because check_selection reports the malformation."""
+    selection = lock.get("selection")
+    if "selection" not in lock or not _well_formed_selection(selection):
+        return set(SELECTION_RUNTIMES), set(layer_names(lock))
+    return set(selection["runtimes"]), set(selection["layers"])
+
+
+def _well_formed_selection(selection: object) -> bool:
+    return (
+        isinstance(selection, dict)
+        and sorted(selection) == ["layers", "runtimes"]
+        and isinstance(selection["runtimes"], list)
+        and isinstance(selection["layers"], list)
+        and all(
+            isinstance(name, str)
+            for name in selection["runtimes"] + selection["layers"]
+        )
+    )
+
+
+def check_name_list(where: str, values: list, valid, failures: list[str]) -> None:
+    """A selection list is non-empty, names only valid values once each, and is sorted by UTF-8 bytes."""
+    if not values:
+        failures.append(f"stack.lock.json selection {where} names no value")
+        return
+    unknown = [value for value in values if value not in valid]
+    if unknown:
+        failures.append(
+            f"stack.lock.json selection {where} names unknown {unknown}; valid names are {list(valid)}"
+        )
+    if len(set(values)) != len(values):
+        failures.append(f"stack.lock.json selection {where} names one value twice")
+    elif values != sorted(values, key=utf8_order):
+        failures.append(
+            f"stack.lock.json selection {where} is not sorted by UTF-8 bytes"
+        )
+
+
+def check_selection(lock: dict, failures: list[str]) -> None:
+    """The recorded selection: well formed, naming known values, with pi and copilot only beside claude.
+    Every enabled runtime record and every owned path must belong to a selected runtime and layer."""
+    if "selection" not in lock:
+        return
+    if not _well_formed_selection(lock["selection"]):
+        failures.append(
+            "stack.lock.json selection must hold exactly a runtimes list and a layers list"
+        )
+        return
+    runtimes, layers = selected(lock)
+    check_name_list(
+        "runtimes", lock["selection"]["runtimes"], SELECTION_RUNTIMES, failures
+    )
+    check_name_list("layers", lock["selection"]["layers"], layer_names(lock), failures)
+    for dependent in NEEDS_CLAUDE:
+        if dependent in runtimes and "claude" not in runtimes:
+            failures.append(
+                f"stack.lock.json selects {dependent} without claude, which its wrapper or settings need"
+            )
+    for layer in lock.get("layers", []):
+        for runtime in SELECTION_RUNTIMES:
+            enabled = (layer.get(runtime) or {}).get("enabled") is True
+            if enabled and (runtime not in runtimes or layer.get("name") not in layers):
+                failures.append(
+                    f"stack.lock.json records {runtime} enabled for layer '{layer.get('name')}', which the selection does not select"
+                )
+    for runtime in ("copilot", "pi"):
+        block = lock.get(runtime)
+        if (
+            isinstance(block, dict)
+            and block.get("enabled") is True
+            and runtime not in runtimes
+        ):
+            failures.append(
+                f"stack.lock.json records {runtime} enabled, which the selection does not select"
+            )
+    for index, record in enumerate(lock.get("owned", []) or []):
+        path = record.get("path") if isinstance(record, dict) else None
+        runtime = owned_runtime(path) if isinstance(path, str) else None
+        if runtime is not None and runtime not in runtimes:
+            failures.append(
+                f"stack.lock.json owned[{index}] is {path}, which belongs to {runtime}, and {runtime} is not selected"
+            )
+
+
 def check_owned(lock: dict, failures: list[str]) -> None:
     """The ownership record in stack.lock.json: a schema version, and one sorted list of records."""
+    check_selection(lock, failures)
     if lock.get("ownedSchema") != OWNED_SCHEMA or isinstance(
         lock.get("ownedSchema"), bool
     ):
