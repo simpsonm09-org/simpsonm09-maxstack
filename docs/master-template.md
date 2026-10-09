@@ -48,6 +48,36 @@ Three behaviors constrain the design:
 5. **PStack follows upstream.** The fork branch carries only what upstream lacks. The generator converts PStack's agents for other runtimes, so the fork keeps no per-runtime copies.
 6. **A workspace selects layers.** A second workspace, such as `mds368`, lists its own layers and runtimes. It needs no new code.
 
+## Installer lifecycle
+
+The installer today installs all four runtimes on every apply, has no way to remove what it wrote, and declares itself Windows-only. The target is one entry point with these commands, the same on Windows and macOS:
+
+| Command | Effect |
+| --- | --- |
+| `install` | Adds the selected runtimes and layers. Running it again changes nothing. Adding a runtime later is another `install`. |
+| `update` | Re-resolves the pins, regenerates, and applies the drift for the recorded selection. `-Check` reports the drift and writes nothing. |
+| `remove` | Removes one runtime or one layer, such as `-Runtimes copilot` or `-Layers personal`, and nothing else. |
+| `uninstall` | Removes everything `maxstack` wrote, and the lock. |
+| `status` | Today's audit: reports each path as matching, missing, drifted, or modified by hand. |
+
+Selection:
+
+- `-Runtimes claude,copilot` picks runtimes by name. `all` picks every supported runtime. `-Layers` picks layers the same way.
+- The selection is recorded in the workspace lock, so `update` and `status` reuse it.
+- Every command shows the plan first and writes only with `-Apply`, as the installer does now.
+
+Ownership is what makes removal safe:
+
+- The lock records every path the installer wrote: a file's hash, or a link's target.
+- For a merged JSON file such as Pi's `settings.json`, the lock records only the keys and entries the installer added. Removal takes those out and leaves every other key.
+- `remove` and `uninstall` delete a file only when its hash still matches the lock. A file changed by hand is reported and skipped.
+- They delete a directory only when the installer created it and it is empty.
+- Nothing outside the workspace is read or written. Nothing is global. A removed runtime leaves no wrapper, link, or generated file behind.
+
+The proof is a round trip. A test snapshots a workspace, runs `install` then `uninstall`, and requires the tree to match the snapshot. Another runs `install`, `remove` for one runtime, and `update`, and requires the other runtimes' files to stay byte-identical.
+
+macOS needs the installer to stop assuming Windows. PowerShell 7 runs on macOS, but the installer uses junctions. On POSIX it uses symbolic links and sets the executable bit on the shell wrappers. CI runs the lifecycle tests on Windows and macOS.
+
 ## Constraints that carry over
 
 - Pi runs with no third-party extensions. The org gate and PStack's own Pi extension are the only extensions.
@@ -59,7 +89,7 @@ Three behaviors constrain the design:
 
 | Phase | Scope | Proof |
 | --- | --- | --- |
-| 0 | Neutral schema, and generation of skills, instructions, and MCP. One PStack pin. The duplicate skill trees go. | The generated output for the four installed runtimes matches today's installs. |
+| 0 | Neutral schema, and generation of skills, instructions, and MCP. One PStack pin. The duplicate skill trees go. The lifecycle: runtime and layer selection, the ownership record, `update`, `remove`, `uninstall`, and macOS support. | The generated output for the four installed runtimes matches today's installs, and the install and uninstall round trip leaves the tree unchanged on Windows and macOS. |
 | 1 | Agents and hooks conversion for those four runtimes. | The gate denies the same commands as today in each runtime. |
 | 2 | Codex: a `codex` runtime key, a `CODEX_HOME` wrapper, a gate adapter. | A denied command is blocked in a Codex session. |
 | 3 | Cursor and Antigravity: stamping and workspace-root files. | A skill and the gate work in each, quota permitting. |
