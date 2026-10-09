@@ -5,7 +5,7 @@
 // command, so the tests need no network and no Copilot install.
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   appendFileSync,
@@ -2164,7 +2164,7 @@ function collectSnapshot(dir, prefix, entries, options) {
     if (stat.isSymbolicLink()) {
       entries.set(rel, `link:${linkTargetText(full)}`);
     } else if (stat.isDirectory()) {
-      if (name === '.git') continue;
+      if (options.skipGit && name === '.git') continue;
       entries.set(rel, 'dir');
       collectSnapshot(full, rel, entries, options);
     } else {
@@ -2218,11 +2218,11 @@ withWorkspace('removing pi leaves the tree and the lock that a fresh install of 
   seedUserFiles(ctx);
   mustApply(ctx, ['-Runtimes', 'claude,copilot,pi']);
   assertOk(removal(ctx, ['-Remove', '-Runtimes', 'pi']));
-  const removed = snapshotTree(ctx.workspace, { skipLockBackup: true });
+  const removed = snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true });
 
   assertOk(removal(ctx, ['-Uninstall']));
   mustApply(ctx, ['-Runtimes', 'claude,copilot']);
-  assert.deepEqual(snapshotTree(ctx.workspace, { skipLockBackup: true }), removed);
+  assert.deepEqual(snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true }), removed);
 }, {});
 
 withWorkspace('removing claude is refused while copilot or pi is selected, and writes nothing', (ctx) => {
@@ -2248,10 +2248,10 @@ withWorkspace('removing opencode turns the claude junctions into copies, and lea
   assert.equal(existsSync(join(ctx.workspace, '.opencode')), false, 'the OpenCode folders remain');
   assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), USER_CONFIG, 'the user config was not restored');
 
-  const removed = snapshotTree(ctx.workspace, { skipLockBackup: true });
+  const removed = snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true });
   assertOk(removal(ctx, ['-Uninstall']));
   mustApply(ctx, ['-Runtimes', 'claude,copilot,pi']);
-  assert.deepEqual(snapshotTree(ctx.workspace, { skipLockBackup: true }), removed, 'the copies differ from a fresh install without opencode');
+  assert.deepEqual(snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true }), removed, 'the copies differ from a fresh install without opencode');
 }, {});
 
 withWorkspace('removing a layer removes its folders and keeps the others, and the result is a fresh install without it', (ctx) => {
@@ -2266,10 +2266,10 @@ withWorkspace('removing a layer removes its folders and keeps the others, and th
   assert.deepEqual(lock.selection.layers, ['pstack', 'simpsonm09-org-ai-plugin']);
   assert.ok(!lock.owned.some((record) => record.layers.includes('simpsonm09-personal-ai-plugin')), 'a record of the removed layer remains');
 
-  const removed = snapshotTree(ctx.workspace, { skipLockBackup: true });
+  const removed = snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true });
   assertOk(removal(ctx, ['-Uninstall']));
   mustApply(ctx, ['-Layers', 'pstack,simpsonm09-org-ai-plugin']);
-  assert.deepEqual(snapshotTree(ctx.workspace, { skipLockBackup: true }), removed);
+  assert.deepEqual(snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true }), removed);
 }, {});
 
 withWorkspace('a hand-edited owned file is skipped and reported, the rest is removed, and a retry after the fix finishes', (ctx) => {
@@ -2338,7 +2338,8 @@ withWorkspace('a tampered record that names a path outside the workspace is skip
 
   const run = removal(ctx, ['-Uninstall']);
   assertOk(run);
-  assert.match(run.stdout, /^SKIP\s+\.\.\/outside-relative\.txt\s+outside the workspace/m, run.stdout);
+  assert.match(run.stdout, /^SKIP\s+\.\.\/outside-relative\.txt\s+outside the workspace: the record does not name a workspace path/m, run.stdout);
+  assert.match(run.stdout, /^SKIP\s+.+outside-absolute\.txt\s+outside the workspace: the record does not name a workspace path/m, run.stdout);
   assert.equal(readFileSync(relativeFile, 'utf8'), 'keep\n');
   assert.equal(readFileSync(absoluteFile, 'utf8'), 'keep too\n');
   assert.equal(readJson(lockPath(ctx)).owned.length, 2, 'the lock dropped a skipped record');
@@ -2409,15 +2410,18 @@ withWorkspace('-Remove and -Uninstall refuse a lock with no usable record, and w
   mustApply(ctx);
   const lock = readJson(lockPath(ctx));
   const { owned, ...withoutOwned } = lock;
+  // A schema-1 lock with an owned list still uninstalls (item 9), so only -Remove refuses it.
+  const both = [['-Uninstall', '-Apply'], ['-Remove', '-Runtimes', 'pi', '-Apply']];
+  const removeOnly = [['-Remove', '-Runtimes', 'pi', '-Apply']];
   const cases = [
-    ['no lock', null, /There is no usable ownership record/],
-    ['ownedSchema 1', { ...lock, ownedSchema: 1 }, /its ownedSchema is 1, and version 2/],
-    ['no owned list', withoutOwned, /it has no owned list/],
+    ['no lock', null, /There is no usable ownership record/, both],
+    ['ownedSchema 1', { ...lock, ownedSchema: 1 }, /its ownedSchema is 1, and -Remove needs version 2/, removeOnly],
+    ['no owned list', withoutOwned, /it has no owned list/, both],
   ];
-  for (const [label, value, pattern] of cases) {
+  for (const [label, value, pattern, argsList] of cases) {
     if (value === null) rmSync(lockPath(ctx)); else setLock(ctx, value);
     const before = snapshotTree(ctx.workspace);
-    for (const args of [['-Uninstall', '-Apply'], ['-Remove', '-Runtimes', 'pi', '-Apply']]) {
+    for (const args of argsList) {
       const run = runInstaller(shell, ctx, args, { apply: false });
       assert.equal(run.status, 1, `${label}: ${args.join(' ')}\n${run.stdout}\n${run.stderr}`);
       assert.match(plainOutput(run), pattern, label);
@@ -2520,4 +2524,226 @@ withWorkspace('-Remove -Apply keeps a hand-edited Copilot wrapper even when the 
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
   assert.ok(existsSync(wrapper), 'a hand-edited wrapper was deleted without its hash matching the record');
   assert.match(run.stdout, /Kept .*copilot\.cmd: it is not the installer's recorded copy/);
+}, {});
+
+// Removal fixes: quarantine, already-gone records, the restore fallback, excluded folders, the swap check, the summary
+// line, strays, and offline uninstall from a schema-1 lock.
+
+// Holds a file open without sharing, from another process, until the returned child is killed.
+// The ready marker goes to the temp folder, not beside the file: a marker inside an owned folder would change its hash.
+function holdExclusive(path) {
+  const ready = join(tmpdir(), `maxstack-ready-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const script = `$f = [IO.File]::Open('${path.replaceAll("'", "''")}', 'Open', 'Read', 'Read'); New-Item -ItemType File -Path '${ready.replaceAll("'", "''")}' | Out-Null; Start-Sleep -Seconds 300`;
+  const child = spawn(shell, ['-NoProfile', '-Command', script], { stdio: 'ignore' });
+  const deadline = Date.now() + 60000;
+  while (!existsSync(ready)) {
+    if (Date.now() > deadline) throw new Error(`the holder did not open ${path}`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  }
+  rmSync(ready, { force: true });
+  return child;
+}
+
+// Runs one removal with a fault in MAXSTACK_TEST_HOOK, and clears it again.
+function withHook(hook, body) {
+  process.env.MAXSTACK_TEST_HOOK = hook;
+  try {
+    return body();
+  } finally {
+    delete process.env.MAXSTACK_TEST_HOOK;
+  }
+}
+
+const ORIGINAL_CONFIG_B = '{\n  "original": true\n}\n';
+
+withWorkspace('a folder with a file held open by another process is kept, and a retry after the file is released finishes', (ctx) => {
+  seedUserFiles(ctx);
+  const before = snapshotTree(ctx.workspace, { skipGit: true });
+  mustApply(ctx);
+  const held = join(ctx.workspace, ORG_FOLDER, 'skills', 'demo-skill', 'SKILL.md');
+  const holder = holdExclusive(held);
+  try {
+    const first = removal(ctx, ['-Uninstall']);
+    assertOk(first);
+    assert.match(first.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+in use/m, first.stdout);
+    assert.ok(existsSync(ORG_FOLDER_FULL(ctx)) || existsSync(`${ORG_FOLDER_FULL(ctx)}.maxstack-removing`), 'the folder in use was lost');
+  } finally {
+    holder.kill();
+  }
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(existsSync(lockPath(ctx)), false, 'the retry did not finish');
+  assert.deepEqual(snapshotTree(ctx.workspace, { skipGit: true }), before);
+}, {});
+
+function ORG_FOLDER_FULL(ctx) {
+  return join(ctx.workspace, ...ORG_FOLDER.split('/'));
+}
+
+withWorkspace('a recorded file the user already deleted is complete, not a skip, and the uninstall removes the lock', (ctx) => {
+  mustApply(ctx);
+  rmSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh'));
+  const run = removal(ctx, ['-Uninstall', '-Strict']);
+  assertOk(run);
+  assert.match(run.stdout, /^GONE\s+\.maxstack\/bin\/copilot\.sh\s/m, run.stdout);
+  assert.equal(existsSync(lockPath(ctx)), false, 'the lock was kept for an already-gone record');
+}, {});
+
+withWorkspace('a run that stops between a delete and its lock write finishes on the next run', (ctx) => {
+  const before = snapshotTree(ctx.workspace);
+  mustApply(ctx);
+  const target = '.maxstack/bin/copilot.cmd';
+  const crashed = withHook(`crash:${target}`, () => removal(ctx, ['-Uninstall']));
+  assert.notEqual(crashed.status, 0, `the injected fault did not stop the run\n${crashed.stdout}`);
+  assert.equal(readJson(lockPath(ctx)).owned.some((record) => record.path === target), true, 'the lock lost the record before its write');
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(existsSync(lockPath(ctx)), false);
+  assert.deepEqual(snapshotTree(ctx.workspace), before);
+}, {});
+
+withWorkspace('a Pi settings file with a backup and a user-added key keeps the key, loses the installer entries, and keeps the backup', (ctx) => {
+  writeFile(ctx.workspace, '.pi/agent/settings.json', USER_SETTINGS);
+  mustApply(ctx);
+  writeFileSync(settingsPath(ctx), JSON.stringify({ ...readJson(settingsPath(ctx)), defaultModel: 'user-model' }, null, 2));
+  assertOk(removal(ctx, ['-Uninstall']));
+  const settings = readJson(settingsPath(ctx));
+  assert.equal(settings.defaultModel, 'user-model', 'the user key was lost');
+  assert.deepEqual(settings.packages, ['user-package'], 'an installer entry stayed');
+  assert.equal(readFileSync(`${settingsPath(ctx)}.bak`, 'utf8'), USER_SETTINGS, 'the backup was lost');
+}, {});
+
+withWorkspace('uninstall restores the original config, never a hand edit, and keeps the numbered copy', (ctx) => {
+  writeFile(ctx.workspace, 'opencode.jsonc', ORIGINAL_CONFIG_B);
+  mustApply(ctx);
+  writeFileSync(join(ctx.workspace, 'opencode.jsonc'), '{\n  "hand": "edit"\n}\n');
+  mustApply(ctx);
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), ORIGINAL_CONFIG_B, 'the restore did not use the original');
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak.1'), 'utf8'), '{\n  "hand": "edit"\n}\n', 'the hand edit was not kept');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), false);
+}, {});
+
+withWorkspace('a modified original backup is kept and not restored, and the config goes by its own record', (ctx) => {
+  writeFile(ctx.workspace, 'opencode.jsonc', ORIGINAL_CONFIG_B);
+  mustApply(ctx);
+  const edited = '{\n  "edited": "backup"\n}\n';
+  writeFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), edited);
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  assert.match(run.stdout, /^KEEP\s+opencode\.jsonc\.bak\s+kept: the original backup changed by hand, so it is not restored/m, run.stdout);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'utf8'), edited, 'the modified backup was changed');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc')), false, 'the config was not removed by its own record');
+}, {});
+
+withWorkspace('a settings backup with no role, from an older lock, is never restored: only the installer entries are removed', (ctx) => {
+  writeFile(ctx.workspace, '.pi/agent/settings.json', USER_SETTINGS);
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  delete ownedRecord(lock, '.pi/agent/settings.json.bak', 'file').role;
+  setLock(ctx, lock);
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(readFileSync(`${settingsPath(ctx)}.bak`, 'utf8'), USER_SETTINGS, 'the old backup was deleted');
+  assert.deepEqual(readJson(settingsPath(ctx)).packages, ['user-package'], 'the user entry was lost');
+}, {});
+
+withWorkspace('a node_modules folder inside an owned folder is counted in the plan, and a junction under it that leads outside refuses the folder', (ctx) => {
+  mustApply(ctx);
+  writeFile(ctx.workspace, `${ORG_FOLDER}/node_modules/extra/index.js`, 'module.exports = 1;\n');
+  const plan = removal(ctx, ['-Uninstall'], { apply: false });
+  assertOk(plan);
+  assert.match(plan.stdout, /^DELETE\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+.*node_modules \(\d+ files, \d+ bytes\)/m, plan.stdout);
+
+  const outside = join(ctx.base, 'outside-modules');
+  writeFile(outside, 'keep.txt', 'outside\n');
+  symlinkSync(outside, join(ORG_FOLDER_FULL(ctx), 'node_modules', 'linked'), 'junction');
+  const refused = removal(ctx, ['-Uninstall']);
+  assertOk(refused);
+  assert.match(refused.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+refused: a junction under/m, refused.stdout);
+  assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf8'), 'outside\n', 'the junction target was changed');
+  assert.ok(existsSync(ORG_FOLDER_FULL(ctx)), 'the refused folder was deleted');
+}, {});
+
+withWorkspace('a file swapped for a folder after the plan is refused, and the folder is not deleted', (ctx) => {
+  mustApply(ctx);
+  const target = '.maxstack/bin/copilot.cmd';
+  const run = withHook(`swap:${target}`, () => removal(ctx, ['-Uninstall']));
+  assertOk(run);
+  assert.match(run.stdout, /^SKIP\s+\.maxstack\/bin\/copilot\.cmd\s+could not be removed: changed since the plan/m, run.stdout);
+  assert.ok(statSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd')).isDirectory(), 'the swapped folder was deleted');
+}, {});
+
+withWorkspace('a partial uninstall ends with one line that says how many items were skipped and that the lock is kept', (ctx) => {
+  mustApply(ctx);
+  appendFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd'), 'rem hand edit\r\n');
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  const lines = run.stdout.split(/\r?\n/).filter((line) => line.trim() !== '');
+  assert.equal(lines[lines.length - 1], '1 items skipped; lock kept; rerun -Uninstall -Apply to retry.', run.stdout);
+}, {});
+
+withWorkspace('a restore that cannot replace its file leaves no uninstall copy behind, and a rerun finishes', (ctx) => {
+  writeFile(ctx.workspace, '.pi/agent/settings.json', USER_SETTINGS);
+  mustApply(ctx);
+  const holder = holdExclusive(settingsPath(ctx));
+  let first;
+  try {
+    first = removal(ctx, ['-Uninstall']);
+    assertOk(first);
+    assert.equal(existsSync(`${settingsPath(ctx)}.uninstall-restore`), false, 'a copy was left behind');
+    assert.equal(existsSync(`${settingsPath(ctx)}.uninstall-replaced`), false, 'a copy was left behind');
+    assert.match(first.stdout, /^SKIP\s+\.pi\/agent\/settings\.json\s+could not be removed/m, first.stdout);
+  } finally {
+    holder.kill();
+  }
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(readFileSync(settingsPath(ctx), 'utf8'), USER_SETTINGS);
+}, {});
+
+withWorkspace('uninstall works from a schema-1 lock that has an owned list, and remove still refuses it', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  lock.ownedSchema = 1;
+  delete lock.pi.settingsSha256;
+  for (const record of lock.owned) {
+    delete record.runtime;
+    delete record.layers;
+    delete record.role;
+  }
+  setLock(ctx, lock);
+  const refused = removal(ctx, ['-Remove', '-Runtimes', 'pi']);
+  assert.notEqual(refused.status, 0, refused.stdout);
+  assert.match(plainOutput(refused), /its ownedSchema is 1, and -Remove needs version 2/, refused.stdout);
+  assert.equal(existsSync(lockPath(ctx)), true, 'the refused -Remove removed the lock');
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(existsSync(lockPath(ctx)), false, 'the lock remains');
+  assert.equal(existsSync(join(ctx.workspace, '.opencode')), false, 'the OpenCode folders remain');
+}, {});
+
+withWorkspace('a record whose sha256 is null is skipped, and the file is kept', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  ownedRecord(lock, '.maxstack/bin/copilot.sh', 'file').sha256 = null;
+  setLock(ctx, lock);
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  assert.match(run.stdout, /^SKIP\s+\.maxstack\/bin\/copilot\.sh\s+modified by hand/m, run.stdout);
+  assert.ok(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh')));
+}, {});
+
+withWorkspace('the folders that were there before the install are kept, with their user files, and the round trip holds', (ctx) => {
+  writeFile(ctx.workspace, '.claude/user-note.txt', 'mine\n');
+  writeFile(ctx.workspace, '.opencode/mine/x.txt', 'mine\n');
+  const before = snapshotTree(ctx.workspace);
+  mustApply(ctx);
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.deepEqual(snapshotTree(ctx.workspace), before);
+}, {});
+
+withWorkspace('the user removed a backup: its copy is gone, the config is restored by deleting the installer copy, and the lock is removed', (ctx) => {
+  writeFile(ctx.workspace, 'opencode.jsonc', ORIGINAL_CONFIG_B);
+  mustApply(ctx);
+  rmSync(join(ctx.workspace, 'opencode.jsonc.bak'));
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  assert.match(run.stdout, /^GONE\s+opencode\.jsonc\.bak\s/m, run.stdout);
+  assert.equal(existsSync(lockPath(ctx)), false);
 }, {});

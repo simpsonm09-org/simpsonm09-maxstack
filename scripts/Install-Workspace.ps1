@@ -1594,17 +1594,21 @@ function Get-CreatedPaths {
 }
 
 # ---- Removal: -Remove and -Uninstall ----------------------------------------------------------------------
-# Both delete only what the ownership record names. Each record is checked against the disk before anything is
-# deleted, and the check sets the state its plan line prints:
+# Both delete only what the ownership record names. Each record is checked against the disk when it is planned,
+# and again just before its action. The check sets the state its plan line prints:
 #   DELETE   the disk matches the record, so the installer removes it.
-#   RESTORE  the installer replaced a file, and the backup of that file goes back in its place.
+#   RESTORE  the original backup goes back in place of the file it replaced, and the backup is removed.
+#   GONE     the path is already absent, so the record is complete and nothing is deleted.
 #   KEEP     the record is finished, and what is left is not the installer's to delete.
-#   SKIP     the disk differs from the record, or the path is not safe to act on. Nothing is deleted, and the
-#            record stays in the lock so a later run retries it.
-# A junction is removed as a link and its target is kept. Nothing is deleted through a junction.
+#   SKIP     the disk differs from the record, the path is not safe to act on, or the folder is in use. Nothing is
+#            deleted for it, and the record stays in the lock so a later run retries it.
+# A junction is removed as a link, and its target is kept. A folder is renamed to a quarantine name beside it before
+# it is deleted, so a file that is open makes the rename fail with the folder unchanged. Nothing is deleted through
+# a junction, and a deletion never leaves the workspace.
 
-# Folders the installer alone writes. The config and the Pi settings are not among them, because a user keeps those
-# too, and a restored user file must not make a second uninstall refuse.
+$quarantineSuffix = '.maxstack-removing'
+$groupFileNames = @('opencode.jsonc', '.pi/agent/settings.json')
+
 function Test-InstallerOutputs {
     foreach ($path in @('.opencode/plugins', '.opencode/agents', '.claude/plugins', '.claude/cache', '.maxstack/bin')) {
         if (Test-Path -LiteralPath (Join-Path $Workspace ($path -replace '/', '\'))) { return $true }
@@ -1612,14 +1616,14 @@ function Test-InstallerOutputs {
     return $false
 }
 
-# The full path of a recorded workspace-relative path. It is refused unless it stays inside the workspace and no
-# folder between the workspace and the path is a junction. A record can be edited by hand, so this is checked here
-# as well as by the verifier.
+# The full path of a recorded workspace-relative path. It is refused unless it is a relative path that stays inside
+# the workspace and no folder between the workspace and the path is a junction.
 function Resolve-WorkspaceEntry {
     param([string] $Relative)
 
+    $refused = 'outside the workspace: the record does not name a workspace path'
     if (-not (Test-RelativePath $Relative) -or $Relative.Contains('\') -or $Relative -in @('stack.lock.json', 'stack.lock.json.bak', 'stack.lock.json.new')) {
-        return [pscustomobject]@{ ok = $false; full = $null; reason = 'outside the workspace: the record does not name a workspace path' }
+        return [pscustomobject]@{ ok = $false; full = $null; reason = $refused }
     }
     $root = [IO.Path]::GetFullPath($Workspace).TrimEnd('\')
     $full = [IO.Path]::GetFullPath((Join-Path $root ($Relative -replace '/', '\')))
@@ -1636,13 +1640,24 @@ function Resolve-WorkspaceEntry {
     return [pscustomobject]@{ ok = $true; full = $full; reason = $null }
 }
 
+# Whether a target, read from a link, is inside the workspace. An empty target is not.
+function Test-InsideWorkspace {
+    param([string] $Target)
+
+    if (-not $Target) { return $false }
+    $root = [IO.Path]::GetFullPath($Workspace).TrimEnd('\')
+    $full = [IO.Path]::GetFullPath($Target).TrimEnd('\')
+    return (($full -ieq $root) -or $full.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase))
+}
+
 function Get-EntryItem {
     param([string] $Path)
 
     return Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
 }
 
-# Whether a path is a real file whose SHA-256 is the recorded one. A link, a folder, or a missing file is not.
+# Whether a path is a real file whose SHA-256 is the recorded one. A link, a folder, a missing file, or a record with
+# no hash is not.
 function Test-RecordedFile {
     param([string] $Full, [string] $Sha256)
 
@@ -1662,19 +1677,27 @@ function New-RemovalItem {
         [string[]] $Gone = @(),
         [string] $Full = $null,
         [string] $Source = $null,
-        [string] $Text = $null
+        [string] $Text = $null,
+        [string] $ExpectSha = $null,
+        [string] $ExpectSource = $null,
+        [string] $ExpectTarget = $null,
+        [string] $Quarantine = $null
     )
 
     return [pscustomobject]@{
-        state   = $State
-        path    = $Path
-        reason  = $Reason
-        action  = $Action
-        records = @($Records)
-        gone    = @($Gone)
-        full    = $Full
-        source  = $Source
-        text    = $Text
+        state        = $State
+        path         = $Path
+        reason       = $Reason
+        action       = $Action
+        records      = @($Records)
+        gone         = @($Gone)
+        full         = $Full
+        source       = $Source
+        text         = $Text
+        expectSha    = $ExpectSha
+        expectSource = $ExpectSource
+        expectTarget = $ExpectTarget
+        quarantine   = $Quarantine
     }
 }
 
@@ -1684,35 +1707,113 @@ function New-SkipItem {
     return New-RemovalItem -State SKIP -Path $Path -Reason $Reason
 }
 
+function New-GoneItem {
+    param([string] $Path, [object[]] $Records, [string] $Reason = 'already gone: nothing to delete')
+
+    return New-RemovalItem -State GONE -Path $Path -Reason $Reason -Records $Records
+}
+
 function Get-FileRemovalItem {
     param($Record)
 
     $entry = Resolve-WorkspaceEntry $Record.path
     if (-not $entry.ok) { return New-SkipItem $Record.path $entry.reason }
     $item = Get-EntryItem $entry.full
-    if ($null -eq $item) { return New-SkipItem $Record.path 'missing' }
+    if ($null -eq $item) { return New-GoneItem $Record.path @($Record) }
     if (Test-ReparsePoint $entry.full) { return New-SkipItem $Record.path 'modified by hand: a link stands where the file was recorded' }
     if ($item.PSIsContainer) { return New-SkipItem $Record.path 'modified by hand: a folder stands where the file was recorded' }
-    if (-not (Test-RecordedFile -Full $entry.full -Sha256 $Record.sha256)) { return New-SkipItem $Record.path 'modified by hand: its SHA-256 differs from the record' }
-    return New-RemovalItem -State DELETE -Path $Record.path -Reason 'SHA-256 matches the record' -Action 'remove' -Records @($Record) -Gone @($Record.path) -Full $entry.full
+    if (-not (Test-RecordedFile -Full $entry.full -Sha256 $Record.sha256)) { return New-SkipItem $Record.path 'modified by hand: its SHA-256 differs from the record, or the record has none' }
+    return New-RemovalItem -State DELETE -Path $Record.path -Reason 'SHA-256 matches the record' -Action 'remove-file' -Records @($Record) -Gone @($Record.path) -Full $entry.full -ExpectSha $Record.sha256
 }
 
-# A folder is deleted only when its tree hash is the recorded one. The owned folder is wholly the installer's,
-# so a file added to it, or a change to one, makes the hash differ and the folder is kept.
+# The folders an owned folder holds under the names the owned rule leaves out (node_modules and .git at any depth).
+# They are deleted with the folder, so the plan counts each one, and refuses one with a junction that leads outside.
+function Get-ExcludedSubtreeReport {
+    param([string] $Root)
+
+    $report = [pscustomobject]@{ subtrees = [System.Collections.Generic.List[object]]::new(); outside = $null }
+    Find-ExcludedSubtrees -Dir $Root -Relative '' -Report $report
+    return $report
+}
+
+function Find-ExcludedSubtrees {
+    param([string] $Dir, [string] $Relative, $Report)
+
+    foreach ($child in [IO.Directory]::GetDirectories($Dir)) {
+        $name = [IO.Path]::GetFileName($child)
+        $relativeChild = if ($Relative -eq '') { $name } else { "$Relative/$name" }
+        if (Test-TreeFolderExcluded -Relative $relativeChild -Rule 'owned') {
+            Measure-ExcludedSubtree -Dir $child -Relative $relativeChild -Report $Report
+        } elseif (-not (Test-ReparsePoint $child)) {
+            Find-ExcludedSubtrees -Dir $child -Relative $relativeChild -Report $Report
+        }
+    }
+}
+
+# Counts the files and bytes under one excluded folder without following a junction, and notes any junction that
+# leads outside the workspace.
+function Measure-ExcludedSubtree {
+    param([string] $Dir, [string] $Relative, $Report)
+
+    if (Test-ReparsePoint $Dir) {
+        if (-not (Test-InsideWorkspace (Get-LinkTargetText $Dir))) { $Report.outside = $Relative }
+        $Report.subtrees.Add([pscustomobject]@{ path = $Relative; files = 0; bytes = [long] 0 })
+        return
+    }
+    $files = 0
+    [long] $bytes = 0
+    $pending = [System.Collections.Generic.Stack[string]]::new()
+    $pending.Push($Dir)
+    while ($pending.Count -gt 0) {
+        $current = $pending.Pop()
+        foreach ($sub in [IO.Directory]::GetDirectories($current)) {
+            if (Test-ReparsePoint $sub) {
+                if (-not (Test-InsideWorkspace (Get-LinkTargetText $sub))) { $Report.outside = $Relative }
+            } else {
+                $pending.Push($sub)
+            }
+        }
+        foreach ($file in [IO.Directory]::GetFiles($current)) {
+            if (Test-ReparsePoint $file) {
+                if (-not (Test-InsideWorkspace (Get-LinkTargetText $file))) { $Report.outside = $Relative }
+                continue
+            }
+            $files++
+            $bytes += ([IO.FileInfo]::new($file)).Length
+        }
+    }
+    $Report.subtrees.Add([pscustomobject]@{ path = $Relative; files = $files; bytes = $bytes })
+}
+
+# A folder is deleted only when its tree hash is the recorded one. The owned folder is wholly the installer's, so a
+# file added to it, or a change to one, makes the hash differ and the folder is kept. The folder is renamed to its
+# quarantine name first; a rerun resumes a quarantine that a failed delete left behind.
 function Get-DirRemovalItem {
     param($Record)
 
     $entry = Resolve-WorkspaceEntry $Record.path
     if (-not $entry.ok) { return New-SkipItem $Record.path $entry.reason }
+    $quarantine = "$($entry.full)$quarantineSuffix"
     $item = Get-EntryItem $entry.full
-    if ($null -eq $item) { return New-SkipItem $Record.path 'missing' }
+    if ($null -eq $item) {
+        if (Test-Path -LiteralPath $quarantine) {
+            return New-RemovalItem -State DELETE -Path $Record.path -Reason "resumes the removal of the folder quarantined as $(Split-Path -Leaf $quarantine)" -Action 'resume-quarantine' -Records @($Record) -Gone @($Record.path) -Full $entry.full -Quarantine $quarantine
+        }
+        return New-GoneItem $Record.path @($Record)
+    }
     if (Test-ReparsePoint $entry.full) { return New-SkipItem $Record.path 'modified by hand: a link stands where the folder was recorded' }
     if (-not $item.PSIsContainer) { return New-SkipItem $Record.path 'modified by hand: a file stands where the folder was recorded' }
-    if ((Get-TreeSha256 $entry.full) -ne $Record.sha256) { return New-SkipItem $Record.path 'modified by hand: a file in it was added, changed, or removed since the install' }
-    return New-RemovalItem -State DELETE -Path $Record.path -Reason 'tree hash matches the record' -Action 'remove' -Records @($Record) -Gone @($Record.path) -Full $entry.full
+    if ((Get-TreeSha256 $entry.full) -ne $Record.sha256) { return New-SkipItem $Record.path 'modified by hand: a file in it was added, changed, or removed since the install, or the record has no hash' }
+    if (Test-Path -LiteralPath $quarantine) { return New-SkipItem $Record.path "in the way: a folder named $(Split-Path -Leaf $quarantine) already exists" }
+    $excluded = Get-ExcludedSubtreeReport $entry.full
+    if ($null -ne $excluded.outside) { return New-SkipItem $Record.path "refused: a junction under $($Record.path)/$($excluded.outside) leads outside the workspace" }
+    $reason = 'tree hash matches the record'
+    $notes = @($excluded.subtrees | ForEach-Object { "$($Record.path)/$($_.path) ($($_.files) files, $($_.bytes) bytes)" })
+    if ($notes.Count -gt 0) { $reason += '; also deletes the excluded folders ' + ($notes -join ', ') }
+    return New-RemovalItem -State DELETE -Path $Record.path -Reason $reason -Action 'remove-dir' -Records @($Record) -Gone @($Record.path) -Full $entry.full -ExpectSha $Record.sha256 -Quarantine $quarantine
 }
 
-# A link is deleted as a link, and only while it points at the recorded target. Its target is never touched.
+# A link is deleted as a link, and only while it points at the recorded target. Its target is never read or changed.
 function Get-LinkRemovalItem {
     param($Record)
 
@@ -1721,154 +1822,205 @@ function Get-LinkRemovalItem {
     $target = Resolve-WorkspaceEntry $Record.target
     if (-not $target.ok) { return New-SkipItem $Record.path 'its recorded target is outside the workspace' }
     $item = Get-EntryItem $entry.full
-    if ($null -eq $item) { return New-SkipItem $Record.path 'missing' }
+    if ($null -eq $item) { return New-GoneItem $Record.path @($Record) }
     if (-not (Test-ReparsePoint $entry.full)) { return New-SkipItem $Record.path 'modified by hand: a folder or file stands where the link was recorded' }
     if (-not (Test-ClaudeJunction -Child $entry.full -Target $target.full)) { return New-SkipItem $Record.path 'modified by hand: the link no longer points at its recorded target' }
-    return New-RemovalItem -State DELETE -Path $Record.path -Reason 'removed as a link; its target is kept' -Action 'remove' -Records @($Record) -Gone @($Record.path) -Full $entry.full
+    return New-RemovalItem -State DELETE -Path $Record.path -Reason 'removed as a link; its target is kept' -Action 'remove-link' -Records @($Record) -Gone @($Record.path) -Full $entry.full -ExpectTarget $Record.target
 }
 
-# Why a backup cannot go back in place of the file it replaced, or $null when it can. The backup must still hold
-# the bytes its record names, and the file must still hold the bytes the last apply wrote.
-function Get-RestoreBlock {
-    param([string] $Replaced, $Backup, [string] $LastSha)
+# The state of a backup: missing, intact (its bytes are the recorded ones), or modified.
+function Get-BackupState {
+    param($Backup)
 
-    $backupEntry = Resolve-WorkspaceEntry $Backup.path
+    $entry = Resolve-WorkspaceEntry $Backup.path
+    if (-not $entry.ok) { return 'modified' }
+    if ($null -eq (Get-EntryItem $entry.full)) { return 'missing' }
+    if (Test-RecordedFile -Full $entry.full -Sha256 $Backup.sha256) { return 'intact' }
+    return 'modified'
+}
+
+function Get-BackupRole {
+    param($Record)
+
+    return (Get-Field $Record 'role')
+}
+
+# The original backup of a file that the installer replaced: the one copy a removal restores.
+function Get-OriginalBackup {
+    param([object[]] $Backups)
+
+    return (@($Backups | Where-Object { (Get-BackupRole $_) -eq 'original' }) | Select-Object -First 1)
+}
+
+function New-KeepBackupItem {
+    param($Backup, [string] $Reason)
+
+    return New-RemovalItem -State KEEP -Path $Backup.path -Reason $Reason -Records @($Backup)
+}
+
+# Puts the original backup back in place of the file it replaced. The copy is written beside the file and replaced
+# over it, so the file is never left half written. A stray copy from an interrupted run is removed.
+function New-RestoreItem {
+    param([string] $Replaced, $Original, [string] $ExpectSha, [object[]] $Records)
+
     $replacedEntry = Resolve-WorkspaceEntry $Replaced
-    if (-not $backupEntry.ok) { return $backupEntry.reason }
-    if (-not $replacedEntry.ok) { return $replacedEntry.reason }
-    if (-not (Test-RecordedFile -Full $backupEntry.full -Sha256 $Backup.sha256)) { return "$($Backup.path) is missing or was changed by hand" }
-    if (-not (Test-RecordedFile -Full $replacedEntry.full -Sha256 $LastSha)) { return "$Replaced is missing or was changed by hand since the installer wrote it" }
-    return $null
+    $originalEntry = Resolve-WorkspaceEntry $Original.path
+    return New-RemovalItem -State RESTORE -Path $Replaced -Reason "put back from $($Original.path)" -Action 'restore' `
+        -Records (@($Original) + @($Records)) -Gone @($Original.path) -Full $replacedEntry.full -Source $originalEntry.full `
+        -ExpectSha $ExpectSha -ExpectSource $Original.sha256
 }
 
-# The backup of a replaced file, put back in its place, or kept with a reason. A file that already holds the backup's
-# bytes was put back by a run that stopped before it removed the backup, so only the backup is removed.
-function Get-BackupItems {
-    param([string] $Replaced, $Backup, [string] $LastSha, [object[]] $Records)
-
-    $replacedEntry = Resolve-WorkspaceEntry $Replaced
-    $backupEntry = Resolve-WorkspaceEntry $Backup.path
-    $completed = @($Backup) + @($Records)
-    if ($replacedEntry.ok -and $backupEntry.ok -and (Test-RecordedFile -Full $replacedEntry.full -Sha256 $Backup.sha256)) {
-        return @(New-RemovalItem -State RESTORE -Path $Backup.path -Reason "$Replaced already holds it" -Action 'drop-backup' -Records $completed -Gone @($Backup.path) -Source $backupEntry.full)
-    }
-    $block = Get-RestoreBlock -Replaced $Replaced -Backup $Backup -LastSha $LastSha
-    if ($null -ne $block) { return @(New-SkipItem $Backup.path "kept, because $block") }
-    return @(New-RemovalItem -State RESTORE -Path $Replaced -Reason "put back from $($Backup.path)" -Action 'restore' -Records $completed -Gone @($Backup.path) -Full $replacedEntry.full -Source $backupEntry.full)
-}
-
-# The opencode.jsonc group: the file the installer wrote, and the backup of the file it replaced, when there is one.
-# A backup and its file go together: when the restore is blocked, both stay.
-function Get-OpenCodeGroupItems {
-    param($File, $Backup, [bool] $Created)
+# The opencode.jsonc group: the config the installer wrote, and its backups. The original is restored only while the
+# config still holds the text the last apply wrote. Otherwise the config's own records are removed, and the copies are kept.
+function Get-ConfigGroupItems {
+    param($File, [object[]] $Backups, [bool] $Created)
 
     $name = 'opencode.jsonc'
-    if ($null -ne $Backup) {
-        $fileSha = if ($null -eq $File) { $null } else { $File.sha256 }
-        # An empty array assigned from an if-expression becomes $null, so the list is built in place.
-        $records = @()
-        if ($null -ne $File) { $records = @($File) }
-        $items = @(Get-BackupItems -Replaced $name -Backup $Backup -LastSha $fileSha -Records $records)
-        if ($items[0].state -eq 'SKIP') { $items += New-SkipItem $name 'kept with its backup' }
-        return $items
+    $items = [System.Collections.Generic.List[object]]::new()
+    $original = Get-OriginalBackup $Backups
+    foreach ($copy in @($Backups | Where-Object { $null -eq $original -or $_.path -cne $original.path })) {
+        $items.Add((New-KeepBackupItem $copy 'kept: a copy of an earlier version, not restored'))
     }
-    if ($null -eq $File) { return @() }
-    if ($Created) { return @(Get-FileRemovalItem $File) }
-    if (Test-RecordedFile -Full (Resolve-WorkspaceEntry $name).full -Sha256 $File.sha256) {
-        return @(New-RemovalItem -State KEEP -Path $name -Reason 'it existed before the install and holds the text the installer wrote, so it is kept' -Records @($File))
-    }
-    return @(Get-FileRemovalItem $File)
-}
-
-# The Pi settings with each record's entries taken out of its key. Every other key and entry stays. A key the
-# installer created is removed once its list is empty. A key with no recorded entry in the file is left as it is.
-function Get-SettingsAfterRemoval {
-    param($Document, [object[]] $Records, [bool] $CreatedFile)
-
-    $settings = [ordered]@{}
-    foreach ($property in $Document.PSObject.Properties) { $settings[$property.Name] = $property.Value }
-    $counts = [ordered]@{}
-    $removed = 0
-    foreach ($record in $Records) {
-        $taken = 0
-        if ($settings.Contains($record.key)) {
-            $remaining = [System.Collections.Generic.List[object]]::new()
-            foreach ($value in @($settings[$record.key])) { if ($null -ne $value) { $remaining.Add($value) } }
-            foreach ($recorded in @($record.entries)) {
-                $key = Get-PiEntryKey $recorded
-                for ($index = 0; $index -lt $remaining.Count; $index++) {
-                    if ((Get-PiEntryKey $remaining[$index]) -ceq $key) { $remaining.RemoveAt($index); $taken++; break }
-                }
-            }
-            if ($taken -gt 0) {
-                $createdKey = $CreatedFile -or ((Get-Field $record 'createdKey') -eq $true)
-                if ($remaining.Count -eq 0 -and $createdKey) { $settings.Remove($record.key) }
-                else { $settings[$record.key] = [object[]] $remaining.ToArray() }
-            }
+    $originalHandled = $false
+    if ($null -ne $original) {
+        $state = Get-BackupState $original
+        $replacedEntry = Resolve-WorkspaceEntry $name
+        if ($state -eq 'missing') {
+            $items.Add((New-GoneItem $original.path @($original) 'already gone: the original backup is missing'))
+        } elseif ($state -eq 'modified') {
+            $items.Add((New-KeepBackupItem $original 'kept: the original backup changed by hand, so it is not restored'))
+            $originalHandled = $true
+        } elseif ($null -eq $File) {
+            $items.Add((New-KeepBackupItem $original 'kept: the file it replaced is not in the record'))
+            $originalHandled = $true
+        } elseif ($replacedEntry.ok -and (Test-RecordedFile -Full $replacedEntry.full -Sha256 $original.sha256)) {
+            $items.Add((New-RemovalItem -State RESTORE -Path $name -Reason "already holds $($original.path): its backup is removed" -Action 'drop-backup' -Records (@($original) + @($File)) -Gone @($original.path) -Source (Resolve-WorkspaceEntry $original.path).full -ExpectSource $original.sha256))
+            return $items.ToArray()
+        } elseif ($replacedEntry.ok -and (Get-EntryItem $replacedEntry.full) -and (Test-RecordedFile -Full $replacedEntry.full -Sha256 $File.sha256)) {
+            $items.Add((New-RestoreItem -Replaced $name -Original $original -ExpectSha $File.sha256 -Records @($File)))
+            return $items.ToArray()
+        } elseif ($null -eq (Get-EntryItem $replacedEntry.full)) {
+            $items.Add((New-KeepBackupItem $original 'kept: the config is missing, so the original is kept'))
+            $items.Add((New-GoneItem $name @($File) 'already gone: opencode.jsonc is missing'))
+            return $items.ToArray()
+        } else {
+            $items.Add((New-SkipItem $name 'modified by hand: kept with its original backup, which is not restored'))
+            $items.Add((New-KeepBackupItem $original 'kept: the config was modified by hand'))
+            return $items.ToArray()
         }
-        $counts[$record.key] = $taken
-        $removed += $taken
     }
-    return [pscustomobject]@{ settings = $settings; counts = $counts; removed = $removed }
+    if ($null -eq $File) { return $items.ToArray() }
+    $fileRemoval = Get-FileRemovalItem $File
+    if ($fileRemoval.state -eq 'DELETE' -and -not $Created -and $null -eq $original -and $Backups.Count -eq 0) {
+        $items.Add((New-RemovalItem -State KEEP -Path $name -Reason 'it existed before the install and holds the text the installer wrote, so it is kept' -Records @($File)))
+        return $items.ToArray()
+    }
+    $items.Add($fileRemoval)
+    return $items.ToArray()
 }
 
-# Whether only the keys the installer writes remain, and each of them is an empty list.
-function Test-InstallerShape {
-    param($Settings)
+# The Pi settings. The original backup is restored only while the file still holds the text the last apply wrote.
+# Otherwise only the entries the record names are taken out, every other key and entry stays, and the backup is kept.
+function Get-SettingsGroupItems {
+    param([object[]] $Records, [object[]] $Backups, [string] $LastSha, [bool] $Created)
 
-    foreach ($key in @($Settings.Keys)) {
-        if ($key -notin @('packages', 'skills')) { return $false }
-        if (@($Settings[$key]).Count -gt 0) { return $false }
+    $name = '.pi/agent/settings.json'
+    $items = [System.Collections.Generic.List[object]]::new()
+    $original = Get-OriginalBackup $Backups
+    foreach ($copy in @($Backups | Where-Object { $null -eq $original -or $_.path -cne $original.path })) {
+        $items.Add((New-KeepBackupItem $copy 'kept: a copy of an earlier version, not restored'))
     }
-    return $true
+    $originalHandled = $false
+    if ($null -ne $original) {
+        $state = Get-BackupState $original
+        $replacedEntry = Resolve-WorkspaceEntry $name
+        if ($state -eq 'missing') {
+            $items.Add((New-GoneItem $original.path @($original) 'already gone: the original backup is missing'))
+        } elseif ($state -eq 'modified') {
+            $items.Add((New-KeepBackupItem $original 'kept: the original backup changed by hand, so it is not restored'))
+            $originalHandled = $true
+        } elseif ($replacedEntry.ok -and (Get-EntryItem $replacedEntry.full) -and (Test-RecordedFile -Full $replacedEntry.full -Sha256 $LastSha)) {
+            $items.Add((New-RestoreItem -Replaced $name -Original $original -ExpectSha $LastSha -Records $Records))
+            return $items.ToArray()
+        }
+    }
+    foreach ($item in @(Get-SettingsEditItems -Records $Records -Created ($Created -and $null -eq $original))) { $items.Add($item) }
+    if (-not $originalHandled -and $null -ne $original) {
+        $items.Add((New-KeepBackupItem $original 'kept: the settings file was edited, so only the installer entries were removed'))
+    }
+    return $items.ToArray()
 }
 
+# The Pi settings file, with the recorded entries taken out of their keys by a strict JSON parse. Every other key and
+# entry stays. A file that is not strict JSON is skipped, and so is one that changed since it was read.
 function Get-SettingsEditItems {
     param([object[]] $Records, [bool] $Created)
 
     $name = '.pi/agent/settings.json'
     $entry = Resolve-WorkspaceEntry $name
-    $blocked = $null
-    if (-not $entry.ok) { $blocked = $entry.reason }
-    elseif ($null -eq (Get-EntryItem $entry.full)) { $blocked = 'missing' }
-    elseif (Test-ReparsePoint $entry.full) { $blocked = 'modified by hand: a link stands where the file was recorded' }
-    elseif ((Get-EntryItem $entry.full).PSIsContainer) { $blocked = 'modified by hand: a folder stands where the file was recorded' }
-    if ($null -ne $blocked) {
-        return @($Records | ForEach-Object { New-SkipItem $name "[$($_.key)] $blocked" })
+    if (-not $entry.ok) { return @($Records | ForEach-Object { New-SkipItem $name "[$($_.key)] $($entry.reason)" }) }
+    $item = Get-EntryItem $entry.full
+    if ($null -eq $item) { return @($Records | ForEach-Object { New-GoneItem $name @($_) "[$($_.key)] already gone: the settings file is missing" }) }
+    if ((Test-ReparsePoint $entry.full) -or $item.PSIsContainer) {
+        return @($Records | ForEach-Object { New-SkipItem $name "[$($_.key)] modified by hand: a link or folder stands where the file was recorded" })
     }
-    $document = $null
-    try { $document = Get-Content -LiteralPath $entry.full -Raw | ConvertFrom-Json } catch { $document = $null }
-    if ($document -isnot [pscustomobject]) {
-        return @($Records | ForEach-Object { New-SkipItem $name "[$($_.key)] modified by hand: it is not a JSON object" })
+    $text = [IO.File]::ReadAllText($entry.full)
+    try {
+        $root = Read-StrictJsonObject $text
+    } catch {
+        return @($Records | ForEach-Object { New-SkipItem $name "[$($_.key)] not strict JSON: it has comments, trailing commas, or is not an object, so it is left as it is" })
     }
-
-    $result = Get-SettingsAfterRemoval -Document $document -Records $Records -CreatedFile $Created
+    $expectSha = Get-FileSha256OrNull $entry.full
+    $result = Get-SettingsAfterRemoval -Root $root -Records $Records -CreatedFile $Created
     $records = @($Records)
-    if ($Created -and (Test-InstallerShape $result.settings)) {
-        return @(New-RemovalItem -State DELETE -Path $name -Reason 'the installer created it, and only its empty lists remain' -Action 'remove' -Records $records -Gone @($name) -Full $entry.full)
+    if ($Created -and (Test-InstallerShape $result.root)) {
+        return @(New-RemovalItem -State DELETE -Path $name -Reason 'the installer created it, and only its empty lists remain' -Action 'remove-json-file' -Records $records -Gone @($name) -Full $entry.full -ExpectSha $expectSha)
     }
     if ($result.removed -eq 0) {
-        return @(New-RemovalItem -State KEEP -Path $name -Reason 'holds no entry the installer recorded' -Records $records)
+        return @(New-GoneItem $name $records 'already gone: none of the recorded entries is in the file')
     }
     $countText = (@($result.counts.GetEnumerator()) | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ', '
-    $text = ($result.settings | ConvertTo-Json -Depth 20) + "`n"
+    $text = $result.root.ToJsonString((New-JsonWriteOptions)) + "`n"
     $state = if ($Created) { 'KEEP' } else { 'DELETE' }
     $reason = "removes the recorded entries ($countText); every other key and entry stays"
-    return @(New-RemovalItem -State $state -Path $name -Reason $reason -Action 'write-json' -Records $records -Full $entry.full -Text $text)
+    return @(New-RemovalItem -State $state -Path $name -Reason $reason -Action 'write-json' -Records $records -Full $entry.full -Text $text -ExpectSha $expectSha)
 }
 
-# The Pi settings group: the backup of the settings file when there is one, and otherwise the entries the
-# installer added to each list.
-function Get-SettingsGroupItems {
-    param([object[]] $Records, $Backup, [string] $LastSha, [bool] $Created)
+# Takes the recorded entries out of their keys, in place. A key the installer created is removed once its list is
+# empty. Returns the count taken from each key and the total.
+function Get-SettingsAfterRemoval {
+    param($Root, [object[]] $Records, [bool] $CreatedFile)
 
-    $name = '.pi/agent/settings.json'
-    if ($null -eq $Backup) { return @(Get-SettingsEditItems -Records $Records -Created $Created) }
-    $items = @(Get-BackupItems -Replaced $name -Backup $Backup -LastSha $LastSha -Records @($Records))
-    if ($items[0].state -eq 'SKIP') {
-        foreach ($record in @($Records)) { $items += New-SkipItem $name "[$($record.key)] kept with its backup" }
+    $counts = [ordered]@{}
+    $removed = 0
+    foreach ($record in $Records) {
+        $taken = 0
+        $list = $Root[$record.key]
+        if ($list -is [System.Text.Json.Nodes.JsonArray]) {
+            foreach ($recorded in @($record.entries)) {
+                $entryKey = Get-JsonEntryKeyFromPs $recorded
+                for ($index = 0; $index -lt $list.Count; $index++) {
+                    if ((Get-JsonEntryKey $list[$index]) -ceq $entryKey) { $list.RemoveAt($index); $taken++; break }
+                }
+            }
+            $createdKey = $CreatedFile -or ((Get-Field $record 'createdKey') -eq $true)
+            if ($taken -gt 0 -and $list.Count -eq 0 -and $createdKey) { $Root.Remove($record.key) | Out-Null }
+        }
+        $counts[$record.key] = $taken
+        $removed += $taken
     }
-    return $items
+    return [pscustomobject]@{ root = $Root; counts = $counts; removed = $removed }
+}
+
+# Whether only the keys the installer writes remain, and each of them is an empty list.
+function Test-InstallerShape {
+    param($Root)
+
+    foreach ($pair in $Root) {
+        if ($pair.Key -notin @('packages', 'skills')) { return $false }
+        if (-not ($pair.Value -is [System.Text.Json.Nodes.JsonArray]) -or $pair.Value.Count -gt 0) { return $false }
+    }
+    return $true
 }
 
 # The folders the installer created, deepest first. A folder goes when every entry in it is gone by now, and a
@@ -1905,28 +2057,35 @@ function Get-CreatedDirItems {
     return $items.ToArray()
 }
 
+# Whether a path is one of the file groups or a backup of one.
+function Test-GroupMember {
+    param([string] $Path)
+
+    foreach ($group in $groupFileNames) {
+        if ($Path -ceq $group -or $Path -cmatch ('^' + [regex]::Escape($group) + '\.bak(\.\d+)?$')) { return $true }
+    }
+    return $false
+}
+
 # The plan for the candidate records: one item for each record, for each file group, and for each folder the
-# installer created. A group is decided as one unit, so a backup is restored with its file or kept with it.
+# installer created. A file group is decided as one unit, with its backups.
 function Get-RemovalPlanItems {
     param([object[]] $Candidates, [string[]] $CreatedDirs, [string[]] $CreatedFiles, [string] $SettingsSha, [bool] $Report)
 
     $items = [System.Collections.Generic.List[object]]::new()
-    $groupPaths = @()
-    foreach ($group in $replacedFileNames) {
-        $groupPaths += $group
-        $groupPaths += "$group.bak"
-        $members = @($Candidates | Where-Object { $_.path -ceq $group -or $_.path -ceq "$group.bak" })
+    foreach ($group in $groupFileNames) {
+        $members = @($Candidates | Where-Object { $_.path -ceq $group -or $_.path -cmatch ('^' + [regex]::Escape($group) + '\.bak(\.\d+)?$') })
         if ($members.Count -eq 0) { continue }
         $file = @($members | Where-Object { $_.path -ceq $group -and $_.kind -eq 'file' }) | Select-Object -First 1
-        $backup = @($members | Where-Object { $_.path -ceq "$group.bak" }) | Select-Object -First 1
+        $backups = @($members | Where-Object { $_.path -cmatch ('^' + [regex]::Escape($group) + '\.bak(\.\d+)?$') })
         $created = $CreatedFiles -ccontains $group
         $groupItems = @()
         try {
             if ($group -eq 'opencode.jsonc') {
-                $groupItems = @(Get-OpenCodeGroupItems -File $file -Backup $backup -Created $created)
+                $groupItems = @(Get-ConfigGroupItems -File $file -Backups $backups -Created $created)
             } else {
                 $records = @($members | Where-Object { $_.kind -eq 'json-entries' })
-                $groupItems = @(Get-SettingsGroupItems -Records $records -Backup $backup -LastSha $SettingsSha -Created $created)
+                $groupItems = @(Get-SettingsGroupItems -Records $records -Backups $backups -LastSha $SettingsSha -Created $created)
             }
         } catch {
             $groupItems = @(New-SkipItem $group "could not be checked: $($_.Exception.Message)")
@@ -1934,7 +2093,7 @@ function Get-RemovalPlanItems {
         foreach ($item in $groupItems) { $items.Add($item) }
     }
     foreach ($record in $Candidates) {
-        if ($groupPaths -ccontains $record.path) { continue }
+        if (Test-GroupMember $record.path) { continue }
         try {
             switch ($record.kind) {
                 'file' { $items.Add((Get-FileRemovalItem $record)) }
@@ -2037,40 +2196,140 @@ function Save-RemovalProgress {
     Write-LockAtomically -Text ($Stack | ConvertTo-Json -Depth 8)
 }
 
+# A test seam, and nothing else. MAXSTACK_TEST_HOOK holds one fault: swap:<path> turns that file into a folder after
+# the plan, and crash:<path> stops the run after that path's action and before the lock is written. Unset, it does nothing.
+function Invoke-RemovalTestHook {
+    param([string] $Stage, [string] $Path)
+
+    $hook = $env:MAXSTACK_TEST_HOOK
+    if ([string]::IsNullOrEmpty($hook)) { return }
+    $parts = $hook -split ':', 2
+    if ($parts.Count -ne 2 -or $parts[1] -cne $Path) { return }
+    if ($Stage -eq 'before' -and $parts[0] -eq 'swap') {
+        $full = (Resolve-WorkspaceEntry $Path).full
+        if (Test-Path -LiteralPath $full -PathType Leaf) {
+            [IO.File]::Delete($full)
+            [IO.Directory]::CreateDirectory($full) | Out-Null
+        }
+    }
+    if ($Stage -eq 'after' -and $parts[0] -eq 'crash') {
+        throw "injected fault after the action on $Path, before the lock was written"
+    }
+}
+
+# The SHA-256 of a file, or of a folder's tree, that a planned action was based on must still be the one the plan saw.
+# A file swapped for a folder, or changed since the plan, is refused here, not deleted.
+function Confirm-RemovalItem {
+    param($Item)
+
+    if ($Item.action -in @('none', 'resume-quarantine', 'delete-empty')) { return }
+    $entry = Resolve-WorkspaceEntry $Item.path
+    if (-not $entry.ok) { throw $entry.reason }
+    $changed = 'changed since the plan: rerun the command to plan it again'
+    switch ($Item.action) {
+        'remove-file' { if (-not (Test-RecordedFile -Full $entry.full -Sha256 $Item.expectSha)) { throw $changed } }
+        'remove-json-file' { if ((Get-FileSha256OrNull $entry.full) -ne $Item.expectSha) { throw $changed } }
+        'write-json' { if ((Get-FileSha256OrNull $entry.full) -ne $Item.expectSha) { throw $changed } }
+        'remove-link' {
+            $target = Resolve-WorkspaceEntry $Item.expectTarget
+            if (-not $target.ok -or -not (Test-ClaudeJunction -Child $entry.full -Target $target.full)) { throw $changed }
+        }
+        'remove-dir' {
+            $current = Get-EntryItem $entry.full
+            if ($null -eq $current -or -not $current.PSIsContainer -or (Test-ReparsePoint $entry.full)) { throw $changed }
+            if ((Get-TreeSha256 $entry.full) -ne $Item.expectSha) { throw $changed }
+        }
+        'restore' {
+            if (-not (Test-RecordedFile -Full $entry.full -Sha256 $Item.expectSha)) { throw $changed }
+            if (-not (Test-RecordedFile -Full $Item.source -Sha256 $Item.expectSource)) { throw 'the backup changed since the plan' }
+        }
+        'drop-backup' { if (-not (Test-RecordedFile -Full $Item.source -Sha256 $Item.expectSource)) { throw 'the backup changed since the plan' } }
+    }
+}
+
+# Renames the folder to its quarantine name, then deletes the quarantine. A file that is open makes the rename fail with
+# the folder unchanged. A failed delete leaves the quarantine, which a rerun deletes.
+function Remove-QuarantinedDir {
+    param($Item)
+
+    [IO.Directory]::Move($Item.full, $Item.quarantine)
+    Remove-OwnedTree $Item.quarantine
+}
+
+# Puts the original back in place of the file it replaced. A failure removes the copy it was writing.
+function Restore-Original {
+    param($Item)
+
+    $temp = "$($Item.full).uninstall-restore"
+    $replaced = "$($Item.full).uninstall-replaced"
+    try {
+        if (Test-Path -LiteralPath $replaced) { [IO.File]::Delete($replaced) }
+        [IO.File]::Copy($Item.source, $temp, $true)
+        [IO.File]::Replace($temp, $Item.full, $replaced)
+    } finally {
+        foreach ($stray in @($temp, $replaced)) {
+            if (Test-Path -LiteralPath $stray -PathType Leaf) { [IO.File]::Delete($stray) }
+        }
+    }
+    [IO.File]::Delete($Item.source)
+}
+
 function Invoke-RemovalAction {
     param($Item)
 
     switch ($Item.action) {
-        'remove' { Remove-OwnedTree $Item.full }
-        # The backup is copied beside the file and replaced over it, so the file is never left half written. The copy
-        # it replaces is removed, and the backup is removed last, so an interrupted restore is finished by the next run.
-        'restore' {
-            $temp = "$($Item.full).uninstall-restore"
-            $replaced = "$($Item.full).uninstall-replaced"
-            [IO.File]::Copy($Item.source, $temp, $true)
-            [IO.File]::Replace($temp, $Item.full, $replaced)
-            [IO.File]::Delete($replaced)
-            [IO.File]::Delete($Item.source)
-        }
+        'remove-file' { Remove-OwnedTree $Item.full }
+        'remove-json-file' { Remove-OwnedTree $Item.full }
+        'remove-link' { Remove-OwnedTree $Item.full }
+        'remove-dir' { Remove-QuarantinedDir $Item }
+        'resume-quarantine' { Remove-OwnedTree $Item.quarantine }
+        'restore' { Restore-Original $Item }
         'drop-backup' { [IO.File]::Delete($Item.source) }
-        'write-json' { [IO.File]::WriteAllText($Item.full, $Item.text, (New-Object System.Text.UTF8Encoding($false))) }
+        'write-json' {
+            Assert-UnchangedSince $Item.full $Item.expectSha
+            Write-FileAtomically $Item.full $Item.text
+        }
         'delete-empty' { [IO.Directory]::Delete($Item.full, $false) }
     }
 }
 
-# Prints each item's state, path, and reason, and with -Execute runs the items that are not skips. An item that fails
-# becomes a skip. After each item that finishes records, the lock is written with the records still owed.
+# The reason an action failed. A folder that could not be renamed or deleted is in use: it is either unchanged, or
+# quarantined for a rerun to finish.
+function Get-ActionFailureReason {
+    param($Item, $ErrorRecord)
+
+    $message = $ErrorRecord.Exception.Message
+    if ($Item.action -in @('remove-dir', 'resume-quarantine')) {
+        if ($Item.quarantine -and (Test-Path -LiteralPath $Item.quarantine)) {
+            return "in use: part of it could not be deleted; it is quarantined as $(Split-Path -Leaf $Item.quarantine), and a rerun resumes it ($message)"
+        }
+        return "in use: could not be renamed, so the folder is unchanged ($message)"
+    }
+    return "could not be removed: $message"
+}
+
+# Prints each item's state, path, and reason, and with -Execute runs the items that act. An item that fails, or whose
+# record changed since the plan, becomes a skip. Each item that finishes records is followed by a lock write, so an
+# interrupted run leaves the lock listing only what is still owed.
 function Invoke-RemovalItems {
     param($Stack, [object[]] $Keep, [object[]] $Candidates, [object[]] $Items, [bool] $Execute)
 
     $finished = [hashtable]::new([StringComparer]::Ordinal)
     foreach ($item in $Items) {
-        if ($Execute -and $item.state -ne 'SKIP') {
-            try { Invoke-RemovalAction $item }
-            catch { $item.state = 'SKIP'; $item.reason = "could not be removed: $($_.Exception.Message)" }
+        $acts = $item.action -ne 'none' -and $item.state -ne 'SKIP' -and $item.state -ne 'GONE'
+        if ($Execute -and $acts) {
+            try {
+                Invoke-RemovalTestHook -Stage before -Path $item.path
+                Confirm-RemovalItem $item
+                Invoke-RemovalAction $item
+            } catch {
+                $item.state = 'SKIP'
+                $item.reason = Get-ActionFailureReason $item $_
+            }
         }
         Write-Host ('{0,-8} {1}  {2}' -f $item.state, $item.path, $item.reason)
         if ($Execute -and $item.state -ne 'SKIP') {
+            if ($acts) { Invoke-RemovalTestHook -Stage after -Path $item.path }
             foreach ($record in $item.records) { $finished[(Get-OwnedKey $record)] = $true }
             if ($item.records.Count -gt 0) { Save-RemovalProgress -Stack $Stack -Keep $Keep -Pending (Get-PendingRecords -Candidates $Candidates -Finished $finished) }
         }
@@ -2088,7 +2347,7 @@ function Get-PendingRecords {
 function Write-RemovalSummary {
     param([object[]] $Items)
 
-    $counts = foreach ($state in @('DELETE', 'RESTORE', 'KEEP', 'SKIP')) { "$(@($Items | Where-Object { $_.state -eq $state }).Count) $($state.ToLower())" }
+    $counts = foreach ($state in @('DELETE', 'RESTORE', 'GONE', 'KEEP', 'SKIP')) { "$(@($Items | Where-Object { $_.state -eq $state }).Count) $($state.ToLower())" }
     Write-Host ('Summary: ' + ($counts -join ', '))
 }
 
@@ -2098,7 +2357,7 @@ function Get-SkipCount {
     return @($Items | Where-Object { $_.state -eq 'SKIP' }).Count
 }
 
-# -Remove without -Apply: the plan for the removal. The drift of the remaining selection is printed before it. Writes nothing.
+# -Remove without -Apply: the plan for the removal. Writes nothing.
 function Write-RemovalDryRun {
     param([object[]] $Records, [object[]] $Plan, [string[]] $SelectedRuntimes, [string[]] $SelectedLayers)
 
@@ -2121,8 +2380,11 @@ function Invoke-RemovalFlow {
     Invoke-RemovalItems -Stack $Stack -Keep $PlanRecords -Candidates $candidates -Items $items -Execute $true
     Write-RemovalSummary -Items $items
     $skipped = Get-SkipCount $items
-    if ($skipped -gt 0) { Write-Host "$skipped skipped: stack.lock.json keeps their records. Fix each one, then rerun -Remove -Apply." }
-    else { Write-Host "Removed. Selection: runtimes $($selectedRuntimes -join ', '); layers $($selectedLayers -join ', ')." }
+    if ($skipped -gt 0) {
+        Write-Host "$skipped items skipped; lock kept; rerun -Remove -Apply to retry."
+    } else {
+        Write-Host "Removed. Selection: runtimes $($selectedRuntimes -join ', '); layers $($selectedLayers -join ', ')."
+    }
     if ($Strict -and $skipped -gt 0) { exit 1 }
 }
 
@@ -2142,7 +2404,7 @@ function Invoke-UninstallFlow {
         }
         Write-Host 'Uninstalled: every recorded path was removed, and the lock files with it.'
     } else {
-        Write-Host "$skipped skipped: stack.lock.json keeps their records. Fix each one, then rerun -Uninstall -Apply."
+        Write-Host "$skipped items skipped; lock kept; rerun -Uninstall -Apply to retry."
     }
     if ($Strict -and $skipped -gt 0) { exit 1 }
 }
@@ -2205,12 +2467,15 @@ $priorSettingsSha = Get-Field $priorPi 'settingsSha256'
 # The runtimes a removal keeps. An uninstall keeps none, and a removal sets this when it narrows the selection.
 $selectedRuntimes = @()
 
-# -Remove and -Uninstall delete only what the record names, so they need a usable record. A workspace that has
-# no lock and none of the installer's outputs has nothing to remove. Otherwise they refuse.
+# -Remove and -Uninstall delete only what the record names, so they need a record. -Uninstall needs only the owned list,
+# because restoring and deleting name each path directly. -Remove needs version 2, which names each record's runtime
+# and layers, so it can pick the records of what it removes.
 if ($removing -or $uninstalling) {
-    $usable = ($null -ne $priorStack) -and ((Get-Field $priorStack 'ownedSchema') -eq $ownedSchemaVersion) -and ($null -ne $priorOwned)
+    $hasOwned = ($null -ne $priorStack) -and ($null -ne $priorOwned)
+    $schemaOk = ($null -ne $priorStack) -and ((Get-Field $priorStack 'ownedSchema') -eq $ownedSchemaVersion)
+    $usable = $hasOwned -and ($uninstalling -or $schemaOk)
     if (-not $usable -and $null -ne $priorStack) {
-        $why = if ($null -eq $priorOwned) { 'it has no owned list' } else { "its ownedSchema is $(Get-Field $priorStack 'ownedSchema'), and version $ownedSchemaVersion names each record's runtime and layers" }
+        $why = if ($null -eq $priorOwned) { 'it has no owned list' } else { "its ownedSchema is $(Get-Field $priorStack 'ownedSchema'), and -Remove needs version $ownedSchemaVersion, which names each record's runtime and layers" }
         throw "stack.lock.json has no usable ownership record: $why. Run Install-Workspace.ps1 -Apply once to write it, then rerun."
     }
     if (-not $usable) {
