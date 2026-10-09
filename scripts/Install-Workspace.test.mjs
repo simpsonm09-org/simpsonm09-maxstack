@@ -26,7 +26,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -1654,4 +1654,235 @@ withWorkspace('a layer that stops naming a folder leaves no copy of it in the ow
   assert.match(run.stdout, /Removed .*docs: the layer does not install it/, run.stdout);
   assert.ok(!existsSync(join(ctx.workspace, ...ORG_FOLDER.split('/'), 'docs')));
   assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, {});
+
+// The runtime and layer selection. The selection is recorded in stack.lock.json, and each test reads
+// the lock and the tree the apply wrote.
+const ALL_RUNTIMES = ['claude', 'copilot', 'opencode', 'pi'];
+const ALL_LAYERS = ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin'];
+
+// Every file under the workspace, keyed by its path with forward slashes, with its bytes. The lock is
+// left out, because each apply rewrites it, and the git cache is left out, because a sync re-reads it
+// rather than writing an output of a runtime.
+function workspaceFiles(workspace) {
+  const files = new Map();
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      const rel = relative(workspace, full).replaceAll('\\', '/');
+      if (rel === 'stack.lock.json' || rel === '.claude/cache') continue;
+      // A junction is listed by its target, because reading it would read the folder it points to.
+      if (entry.isSymbolicLink()) files.set(rel, Buffer.from(`link:${readlinkSync(full)}`));
+      else if (entry.isDirectory()) walk(full);
+      else files.set(rel, readFileSync(full));
+    }
+  };
+  walk(workspace);
+  return files;
+}
+
+function selectionOf(ctx) {
+  return readJson(lockPath(ctx)).selection;
+}
+
+withWorkspace('a fresh -Runtimes claude,copilot writes only those runtimes, and records the selection', (ctx) => {
+  mustApply(ctx, ['-Runtimes', 'claude,copilot']);
+  const at = (path) => join(ctx.workspace, ...path.split('/'));
+  for (const absent of ['.opencode', 'opencode.jsonc', '.pi', '.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh']) {
+    assert.ok(!existsSync(at(absent)), `${absent} was written, but opencode and pi are not selected`);
+  }
+  for (const present of ['.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh', '.claude/plugins/pstack/.claude-plugin/plugin.json']) {
+    assert.ok(existsSync(at(present)), `${present} is missing`);
+  }
+  // With no OpenCode copy to link to, each local layer is a copy of the items it names.
+  for (const plugin of ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']) {
+    assert.ok(!isLink(at(`.claude/plugins/${plugin}`)), `${plugin} links to a folder that was not written`);
+    assert.ok(existsSync(at(`.claude/plugins/${plugin}/.claude-plugin/plugin.json`)), `${plugin} has no manifest`);
+  }
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['claude', 'copilot'], layers: ALL_LAYERS });
+  const lock = readJson(lockPath(ctx));
+  assert.equal(lock.pi.enabled, false);
+  assert.equal(lock.pi.reason, 'not selected');
+}, {});
+
+withWorkspace('a later -Runtimes pi adds pi and leaves the earlier outputs byte-identical', (ctx) => {
+  mustApply(ctx, ['-Runtimes', 'claude,copilot']);
+  const before = workspaceFiles(ctx.workspace);
+  mustApply(ctx, ['-Runtimes', 'pi']);
+  const after = workspaceFiles(ctx.workspace);
+  for (const [path, bytes] of before) {
+    assert.ok(after.get(path)?.equals(bytes), `${path} changed when pi was added`);
+  }
+  assert.ok(after.has('.maxstack/bin/pi.cmd') && after.has('.pi/agent/settings.json'), 'pi was not written');
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['claude', 'copilot', 'pi'], layers: ALL_LAYERS });
+}, {});
+
+withWorkspace('-Runtimes opencode -Layers pstack writes one layer, and a later -Layers adds the next', (ctx) => {
+  mustApply(ctx, ['-Runtimes', 'opencode', '-Layers', 'pstack']);
+  const at = (path) => join(ctx.workspace, ...path.split('/'));
+  assert.ok(existsSync(at('.opencode/plugins/pstack/opencode/index.ts')), 'the pstack entry is missing');
+  assert.ok(!existsSync(at('.opencode/plugins/simpsonm09-org-ai-plugin')), 'the org layer is not selected');
+  assert.ok(!existsSync(at('.opencode/plugins/simpsonm09-personal-ai-plugin')), 'the personal layer is not selected');
+  assert.ok(!existsSync(at('.claude/plugins')), 'claude is not selected');
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['opencode'], layers: ['pstack'] });
+
+  mustApply(ctx, ['-Layers', 'simpsonm09-org-ai-plugin']);
+  assert.ok(existsSync(at('.opencode/plugins/simpsonm09-org-ai-plugin/index.ts')), 'the org layer did not install');
+  assert.ok(!existsSync(at('.opencode/plugins/simpsonm09-personal-ai-plugin')), 'the personal layer was added');
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['opencode'], layers: ['pstack', 'simpsonm09-org-ai-plugin'] });
+}, {});
+
+withWorkspace('-Runtimes all -Layers all writes what a plain apply writes, and records every name', (ctx) => {
+  mustApply(ctx, ['-Runtimes', 'all', '-Layers', 'all']);
+  assert.deepEqual(selectionOf(ctx), { runtimes: ALL_RUNTIMES, layers: ALL_LAYERS });
+  const plain = buildWorkspace();
+  try {
+    mustApply(plain);
+    assert.deepEqual([...workspaceFiles(ctx.workspace).keys()].sort(), [...workspaceFiles(plain.workspace).keys()].sort());
+  } finally {
+    rmSync(plain.base, { recursive: true, force: true });
+  }
+}, {});
+
+withWorkspace('naming a runtime that is already selected narrows nothing, and says so', (ctx) => {
+  mustApply(ctx, ['-Runtimes', 'claude,copilot']);
+  const run = mustApply(ctx, ['-Runtimes', 'claude']);
+  assert.match(plainOutput(run), /Already selected runtimes: claude\. Flags never narrow the selection; the rest stay selected\./, run.stdout);
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['claude', 'copilot'], layers: ALL_LAYERS });
+  assert.ok(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd')), 'copilot was removed by a flag that named fewer runtimes');
+}, {});
+
+withWorkspace('an unknown runtime or layer name fails, lists the valid names, and writes nothing', (ctx) => {
+  const runtime = runInstaller(shell, ctx, ['-Runtimes', 'codex']);
+  assert.notEqual(runtime.status, 0, 'the installer accepted an unknown runtime');
+  assert.match(plainOutput(runtime), /-Runtimes names an unknown name 'codex'\. Valid names: claude, opencode, copilot, pi, or all\./);
+  const layer = runInstaller(shell, ctx, ['-Layers', 'nope']);
+  assert.notEqual(layer.status, 0, 'the installer accepted an unknown layer');
+  assert.match(plainOutput(layer), /-Layers names an unknown name 'nope'\. Valid names: pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin, or all\./);
+  assert.ok(!existsSync(lockPath(ctx)), 'a rejected run wrote the lock');
+  assert.ok(!existsSync(join(ctx.workspace, '.claude')), 'a rejected run wrote the Claude folder');
+}, {});
+
+withWorkspace('copilot or pi without claude fails, both when it is named and when it is already recorded', (ctx) => {
+  const named = runInstaller(shell, ctx, ['-Runtimes', 'pi']);
+  assert.notEqual(named.status, 0, 'pi was selected without claude');
+  assert.match(plainOutput(named), /Runtime 'pi' needs claude: its wrapper or settings name the Claude plugin folders/);
+  assert.match(plainOutput(runInstaller(shell, ctx, ['-Runtimes', 'copilot'])), /Runtime 'copilot' needs claude/);
+
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  lock.selection.runtimes = ['pi'];
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const recorded = runInstaller(shell, ctx);
+  assert.notEqual(recorded.status, 0, 'a recorded pi without claude was accepted');
+  assert.match(plainOutput(recorded), /Runtime 'pi' needs claude/);
+}, {});
+
+withWorkspace('a lock with no selection reads as all, and the next apply writes the selection', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  delete lock.selection;
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+
+  const status = runStatus(ctx);
+  assert.match(status.stdout, /^Selection: runtimes claude, copilot, opencode, pi; layers pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin \(the lock predates the selection, so all\)\r?$/m, status.stdout);
+  if (python) {
+    const home = join(ctx.base, 'home');
+    mkdirSync(home);
+    const verify = spawnSync(python, [verifyWorkspaceScript, '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8' });
+    assert.equal(verify.status, 0, `${verify.stdout}\n${verify.stderr}`);
+  }
+  mustApply(ctx);
+  assert.deepEqual(selectionOf(ctx), { runtimes: ALL_RUNTIMES, layers: ALL_LAYERS });
+}, {});
+
+withWorkspace('status prints the selection first, names an unselected file, and judges only the selected runtimes', (ctx) => {
+  mustApply(ctx, ['-Runtimes', 'claude,copilot']);
+  writeFile(ctx.workspace, '.maxstack/bin/pi.cmd', '@echo off\r\n');
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stdout);
+  const [first] = run.stdout.split(/\r?\n/);
+  assert.equal(first, 'Selection: runtimes claude, copilot; layers pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin', 'the selection is not the first line');
+  assert.match(run.stdout, /^not selected +\.maxstack\/bin\/pi\.cmd\r?$/m, run.stdout);
+  assert.doesNotMatch(run.stdout, /opencode/, 'status judged an OpenCode path');
+  assert.match(run.stdout, /Summary: \d+ matching, 0 drifted, 0 modified, 0 missing, 0 untracked, 1 not selected/);
+  assert.equal(runStatus(ctx, ['-Strict']).status, 0, 'a file of an unselected runtime failed -Strict');
+  const refused = runStatus(ctx, ['-Runtimes', 'claude']);
+  assert.notEqual(refused.status, 0, '-Status accepted a selection flag');
+  assert.match(plainOutput(refused), /-Status reports the recorded selection and takes no -Runtimes or -Layers/);
+}, {});
+
+withWorkspace('the owned list names only selected outputs, and both verifiers accept a partial install', (ctx) => {
+  if (!python) return;
+  mustApply(ctx, ['-Runtimes', 'claude,copilot']);
+  const owned = readJson(lockPath(ctx)).owned.map((record) => record.path);
+  assert.ok(owned.includes('.claude/plugins/simpsonm09-org-ai-plugin'), 'the copy of a local layer is not owned');
+  for (const path of owned) {
+    assert.doesNotMatch(path, /^(opencode\.jsonc|\.opencode\/|\.pi\/)|pi\.(cmd|sh)$/, `${path} belongs to an unselected runtime`);
+  }
+  const home = join(ctx.base, 'home');
+  mkdirSync(home);
+  const verify = spawnSync(python, [verifyWorkspaceScript, '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8' });
+  assert.equal(verify.status, 0, `${verify.stdout}\n${verify.stderr}`);
+  const manifests = spawnSync(python, [verifyManifestsScript, '--lock', lockPath(ctx)], { encoding: 'utf8' });
+  assert.equal(manifests.status, 0, `${manifests.stdout}\n${manifests.stderr}`);
+}, {});
+
+withWorkspace('the verifiers fail on an unknown, a malformed, or a pi-without-claude selection', (ctx) => {
+  if (!python) return;
+  mustApply(ctx, ['-Runtimes', 'claude,copilot']);
+  const home = join(ctx.base, 'home');
+  mkdirSync(home);
+  const verifyWorkspace = () => spawnSync(python, [verifyWorkspaceScript, '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8' });
+  const verifyLock = () => spawnSync(python, [verifyManifestsScript, '--lock', lockPath(ctx)], { encoding: 'utf8' });
+  const cases = [
+    [(lock) => { lock.selection.runtimes = ['claude', 'codex']; }, /names unknown \['codex'\]/],
+    [(lock) => { lock.selection.runtimes = ['copilot']; }, /selects copilot without claude/],
+    [(lock) => { lock.selection = 'claude'; }, /must hold exactly a runtimes list and a layers list/],
+  ];
+  for (const [mutate, message] of cases) {
+    const lock = readJson(lockPath(ctx));
+    mutate(lock);
+    writeFileSync(lockPath(ctx), JSON.stringify(lock));
+    for (const run of [verifyWorkspace(), verifyLock()]) {
+      assert.notEqual(run.status, 0, `a verifier accepted: ${message}`);
+      assert.match(plainOutput(run), message);
+    }
+  }
+}, {});
+
+withWorkspace('a selected layer that declares none of the selected runtimes is reported and installs nothing', (ctx) => {
+  const layers = writeLayers(ctx, (manifest) => {
+    layerNamed(manifest, 'simpsonm09-personal-ai-plugin').runtimes = { opencode: {} };
+  });
+  const run = mustApply(ctx, ['-Runtimes', 'claude'], { layersFile: layers });
+  assert.match(plainOutput(run), /Layer 'simpsonm09-personal-ai-plugin' declares none of the selected runtimes, so it installs nothing\./);
+  assert.ok(!existsSync(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal-ai-plugin')), 'the personal layer installed');
+  const personal = readJson(lockPath(ctx)).layers.find((layer) => layer.name === 'simpsonm09-personal-ai-plugin');
+  assert.equal(personal.claude.enabled, false);
+  assert.equal(personal.opencode.enabled, false);
+}, {});
+
+withWorkspace('a runtime that is not selected is never looked up, so its CLI is not warned about', (ctx) => {
+  const run = mustApply(ctx, ['-Runtimes', 'claude', '-CopilotCommand', MISSING_COPILOT]);
+  assert.doesNotMatch(plainOutput(run), /Copilot CLI not found|Pi CLI not found/);
+  const lock = readJson(lockPath(ctx));
+  assert.equal(lock.copilot.reason, 'not selected');
+  assert.equal(lock.pi.reason, 'not selected');
+}, {});
+
+withWorkspace('comma-separated -Runtimes and -Layers values bind under pwsh -File, one token each', (ctx) => {
+  mustApply(ctx, ['-Runtimes', 'claude,opencode', '-Layers', 'pstack,simpsonm09-org-ai-plugin']);
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['claude', 'opencode'], layers: ['pstack', 'simpsonm09-org-ai-plugin'] });
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'index.ts')), 'the named org layer is missing');
+}, {});
+
+withWorkspace('a later -Runtimes opencode replaces the claude copies with links to the OpenCode copies', (ctx) => {
+  mustApply(ctx, ['-Runtimes', 'claude']);
+  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
+  assert.ok(!isLink(child), 'the claude copy is a link before opencode is selected');
+  mustApply(ctx, ['-Runtimes', 'opencode']);
+  assert.ok(isLink(child), 'the copy was not replaced by a link');
+  assert.ok(existsSync(join(child, '.claude-plugin', 'plugin.json')), 'the link does not reach the manifest');
+  assert.equal(readJson(lockPath(ctx)).layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin').claude.kind, 'junction');
 }, {});
