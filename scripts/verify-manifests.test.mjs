@@ -86,6 +86,17 @@ test('a copilot runtime without claude is refused', { skip }, () => {
   assert.match(failureOf(run), /declares copilot, which loads the Claude plugin folder, so it also needs claude/);
 });
 
+test('a pi runtime without claude is refused', { skip }, () => {
+  const run = runVerifier({
+    layers: (manifest) => {
+      manifest.layers[1].runtimes = { opencode: {}, pi: {} };
+      return manifest;
+    },
+  });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /declares pi, which lists the Claude plugin folder's skills, so it also needs claude/);
+});
+
 test('a local layer that declares claude without opencode is refused', { skip }, () => {
   const run = runVerifier({
     layers: (manifest) => {

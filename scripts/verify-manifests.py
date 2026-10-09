@@ -22,7 +22,7 @@ HEX40 = re.compile(r"^[0-9a-f]{40}$")
 GIT_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+\.git$")
 FOLDER_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 LAYER_KINDS = ("plugin", "config")
-RUNTIMES = ("claude", "opencode", "copilot")
+RUNTIMES = ("claude", "opencode", "copilot", "pi")
 PIN_LOCK = "pstack.lock.json"
 RETIRED_LOCK = "pstack-opencode.lock.json"
 MODEL_KEYS = ("model", "small_model")
@@ -108,6 +108,10 @@ def check_runtime_block(where: str, runtimes: dict, failures: list[str]) -> None
     if "copilot" in runtimes and "claude" not in runtimes:
         failures.append(
             f"{where} declares copilot, which loads the Claude plugin folder, so it also needs claude"
+        )
+    if "pi" in runtimes and "claude" not in runtimes:
+        failures.append(
+            f"{where} declares pi, which lists the Claude plugin folder's skills, so it also needs claude"
         )
 
 
