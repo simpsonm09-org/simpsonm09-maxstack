@@ -304,10 +304,10 @@ def check_pi_wrappers(
         text = cmd.read_text(encoding="utf-8")
         if PI_ASK_LINE not in text:
             failures.append(f"{cmd} does not set the ask switch: {PI_ASK_LINE}")
-        agent = re.search(r'^set "PI_CODING_AGENT_DIR=(.+)"$', text, re.M)
+        agent = re.search(r'^set "PI_CODING_AGENT_DIR=(.+)"$', text, re.MULTILINE)
         if agent is None or not same_path(agent.group(1), agent_dir):
             failures.append(f"{cmd} does not set PI_CODING_AGENT_DIR to {agent_dir}")
-        executable = re.search(r'^set "PI_BIN=(.+)"$', text, re.M)
+        executable = re.search(r'^set "PI_BIN=(.+)"$', text, re.MULTILINE)
         if executable is None or not pathlib.Path(executable.group(1)).is_file():
             failures.append(f"{cmd} does not name a Pi CLI that exists")
 
@@ -316,7 +316,7 @@ def check_pi_wrappers(
         text = sh.read_text(encoding="utf-8")
         if PI_SH_ASK_LINE not in text:
             failures.append(f"{sh} does not set the ask switch: {PI_SH_ASK_LINE}")
-        if not re.search(r'^export PI_CODING_AGENT_DIR="[^"]+"$', text, re.M):
+        if not re.search(r'^export PI_CODING_AGENT_DIR="[^"]+"$', text, re.MULTILINE):
             failures.append(f"{sh} does not set PI_CODING_AGENT_DIR")
 
 
@@ -378,13 +378,17 @@ def check_pi_layers(
         if not record.get("enabled"):
             continue
         if record.get("package"):
-            entry = pathlib.Path(os.path.relpath(workspace / record["package"], agent_dir)).as_posix()
+            entry = pathlib.Path(
+                os.path.relpath(workspace / record["package"], agent_dir)
+            ).as_posix()
             if entry not in recorded_packages:
                 failures.append(
                     f"layer '{layer['name']}' is a Pi package at {record['package']}, but stack.lock.json does not record it"
                 )
         if record.get("skills"):
-            entry = pathlib.Path(os.path.relpath(workspace / record["skills"], agent_dir)).as_posix()
+            entry = pathlib.Path(
+                os.path.relpath(workspace / record["skills"], agent_dir)
+            ).as_posix()
             if entry not in recorded_skills:
                 failures.append(
                     f"layer '{layer['name']}' has Pi skills at {record['skills']}, but stack.lock.json does not record them"
