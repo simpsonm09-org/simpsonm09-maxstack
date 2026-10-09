@@ -360,9 +360,20 @@ function Get-ClaudeChildState {
     return 'matches'
 }
 
-# The first application named $Name that a wrapper can run: an .exe, .cmd, or .bat outside
-# .maxstack\bin, so a generated wrapper can never wrap itself. A .ps1 shim is skipped, since
-# the .cmd wrapper cannot call it.
+# Whether a wrapper can run a path. On Windows that is an .exe, .cmd, or .bat. Elsewhere a
+# file has no extension to show it, so anything but a PowerShell or cmd script is a candidate.
+# Get-Command finds only executable files off Windows, so a plain file with no mode bit is
+# already left out. The platform is a parameter so both rules can be tested on any host.
+function Test-WrapperTarget {
+    param([string] $Path, [bool] $Windows)
+
+    $extension = [IO.Path]::GetExtension($Path)
+    if ($Windows) { return $extension -in @('.exe', '.cmd', '.bat') }
+    return $extension -notin @('.ps1', '.cmd', '.bat')
+}
+
+# The first application named $Name that a wrapper can run, outside .maxstack\bin, so a
+# generated wrapper can never wrap itself.
 function Find-WrappedExecutable {
     param([string] $Name)
 
@@ -370,7 +381,7 @@ function Find-WrappedExecutable {
     $candidates = @(Get-Command -Name $Name -All -CommandType Application -ErrorAction SilentlyContinue)
     foreach ($candidate in $candidates) {
         if (-not $candidate.Source) { continue }
-        if ([IO.Path]::GetExtension($candidate.Source) -notin @('.exe', '.cmd', '.bat')) { continue }
+        if (-not (Test-WrapperTarget -Path $candidate.Source -Windows $IsWindows)) { continue }
         if ((Get-NormalPath $candidate.Source).StartsWith($binPrefix)) { continue }
         return $candidate.Source
     }

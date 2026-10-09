@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import sys
 
 REQUIRED_SKILLS = (
@@ -219,6 +220,32 @@ def check_opencode(lock: dict, workspace: pathlib.Path, failures: list[str]) -> 
         print(f"skills: {len(ids)}")
 
 
+def configured(lock: dict, runtime: str) -> bool:
+    """Whether any layer's runtime block turns the runtime on."""
+    return any((layer.get(runtime) or {}).get("enabled") for layer in lock["layers"])
+
+
+def check_missing_wrapper(
+    lock: dict, runtime: str, command: str, bin_dir: pathlib.Path, failures: list[str]
+) -> None:
+    """A disabled wrapper is wrong when layers configure the runtime and its CLI is on PATH.
+
+    The installer left the wrapper out because the CLI was missing at apply time, so the
+    fix is to apply again. PATH is searched as the installer searches it, outside .maxstack\bin.
+    """
+    if not configured(lock, runtime):
+        return
+    found = shutil.which(command)
+    if found is None:
+        return
+    bin_prefix = os.path.normcase(os.path.abspath(bin_dir)) + os.sep
+    if os.path.normcase(os.path.abspath(found)).startswith(bin_prefix):
+        return
+    failures.append(
+        f"the {command} CLI is on PATH, and layers configure {runtime}, but stack.lock.json records no {runtime} wrapper; rerun Install-Workspace.ps1 -Apply"
+    )
+
+
 def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> None:
     """Check the Copilot wrappers against their recorded hashes, switch, folders, and executable."""
     bin_dir = workspace / ".maxstack" / "bin"
@@ -229,6 +256,7 @@ def check_copilot(lock: dict, workspace: pathlib.Path, failures: list[str]) -> N
                 failures.append(
                     f"Copilot wrapper {bin_dir / name} is present, but stack.lock.json records copilot disabled"
                 )
+        check_missing_wrapper(lock, "copilot", "copilot", bin_dir, failures)
         return
 
     for name, key in (("copilot.cmd", "cmdSha256"), ("copilot.sh", "shSha256")):
@@ -400,6 +428,8 @@ def check_pi(lock: dict, workspace: pathlib.Path, failures: list[str]) -> None:
     lock_pi = lock.get("pi") or {}
     bin_dir = workspace / ".maxstack" / "bin"
     agent_dir = workspace / lock_pi.get("agentDir", ".pi/agent")
+    if not lock_pi.get("enabled"):
+        check_missing_wrapper(lock, "pi", "pi", bin_dir, failures)
     check_pi_wrappers(lock_pi, bin_dir, agent_dir, failures)
     check_pi_settings(lock_pi, agent_dir, failures)
     check_pi_layers(lock, workspace, agent_dir, failures)

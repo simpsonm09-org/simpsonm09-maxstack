@@ -143,6 +143,20 @@ function writeFakePi(base) {
   return path;
 }
 
+// A stand-in CLI on PATH for the host: a .cmd on Windows, and an executable file with no
+// extension elsewhere, which is what Homebrew or npm put on a POSIX PATH.
+function writeFakeCli(dir, name) {
+  if (process.platform === 'win32') {
+    const path = join(dir, `${name}.cmd`);
+    writeFileSync(path, '@echo off\r\necho stand-in\r\n');
+    return path;
+  }
+  const path = join(dir, name);
+  writeFileSync(path, '#!/bin/sh\necho stand-in\n');
+  chmodSync(path, 0o755);
+  return path;
+}
+
 function buildWorkspace({ withManifests = true } = {}) {
   const base = mkdtempSync(join(tmpdir(), 'maxstack-lock-'));
   const workspace = join(base, 'simpsonm09');
@@ -831,6 +845,76 @@ withWorkspace('pi is skipped with a message when no executable is found, and its
   assert.match(lock.pi.reason, /no 'maxstack-test-no-such-pi' application/);
   assert.ok(lock.layers.every((record) => record.opencode.enabled), 'the OpenCode runtimes still install');
 }, {});
+
+withWorkspace('the verifier fails when a configured CLI is on PATH but its wrapper was never generated', (ctx) => {
+  if (!python) return;
+  mustApply(ctx, ['-PiCommand', MISSING_PI]);
+  const home = join(ctx.base, 'home');
+  mkdirSync(home);
+  const cliDir = join(ctx.base, 'cli-on-path');
+  mkdirSync(cliDir);
+  const fakePi = writeFakeCli(cliDir, 'pi');
+  const env = { ...process.env };
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+  env[pathKey] = `${cliDir}${process.platform === 'win32' ? ';' : ':'}${env[pathKey] ?? ''}`;
+  assert.ok(fakePi.startsWith(cliDir));
+
+  const run = spawnSync(python, [join(repoRoot, 'scripts', 'verify-workspace-install.py'), '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8', env });
+  assert.notEqual(run.status, 0, 'the verifier passed with the Pi CLI on PATH and no Pi wrapper');
+  assert.match(plainOutput(run), /the pi CLI is on PATH.*rerun Install-Workspace\.ps1 -Apply/);
+}, {});
+
+// The wrapper target filter, called with each platform as a parameter, so the macOS cases run
+// on Windows too. The harness takes the function's text from the installer's own parse tree.
+const WRAPPER_TARGET_CASES = [
+  ['/opt/homebrew/bin/pi', false, true],
+  ['/usr/local/bin/copilot', false, true],
+  ['/opt/homebrew/bin/pi.ps1', false, false],
+  ['/opt/homebrew/bin/pi.cmd', false, false],
+  ['C:\\tools\\pi.exe', true, true],
+  ['C:\\tools\\pi.cmd', true, true],
+  ['C:\\tools\\pi.bat', true, true],
+  ['C:\\tools\\pi.ps1', true, false],
+  ['/opt/homebrew/bin/pi', true, false],
+];
+
+function wrapperTargetHarness(cases) {
+  const rows = cases
+    .map(([path, windows]) => `  [pscustomobject]@{ path = '${path.replaceAll("'", "''")}'; windows = ${windows ? '$true' : '$false'} }`)
+    .join(',\n');
+  return `param([string] $Installer)
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Installer, [ref] $tokens, [ref] $errors)
+$definition = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-WrapperTarget' }, $true) | Select-Object -First 1
+if (-not $definition) { throw 'Test-WrapperTarget is not defined in the installer' }
+Invoke-Expression $definition.Extent.Text
+$cases = @(
+${rows}
+)
+$results = foreach ($case in $cases) {
+  [pscustomobject]@{ path = $case.path; windows = $case.windows; accepted = [bool] (Test-WrapperTarget -Path $case.path -Windows $case.windows) }
+}
+ConvertTo-Json -InputObject @($results) -Depth 3 -Compress
+`;
+}
+
+test('a wrapper takes an extensionless CLI off Windows, and refuses PowerShell and cmd shims on each platform', { skip }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'maxstack-target-'));
+  try {
+    const harness = join(dir, 'harness.ps1');
+    writeFileSync(harness, wrapperTargetHarness(WRAPPER_TARGET_CASES));
+    const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-File', harness, installer], { encoding: 'utf8' });
+    assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+    const results = JSON.parse(run.stdout);
+    for (const [path, windows, accepted] of WRAPPER_TARGET_CASES) {
+      const row = results.find((result) => result.path === path && result.windows === windows);
+      assert.equal(row?.accepted, accepted, `${path} on ${windows ? 'Windows' : 'macOS or Linux'}`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function findPython() {
   for (const name of ['python', 'python3']) {
