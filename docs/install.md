@@ -162,7 +162,7 @@ Limits of the record:
 - A backup the next apply would write is not reported until it exists.
 - Apply does not remove the agent profiles of a layer that stopped installing them, nor the cache of a removed pinned layer. Those files drop out of the record at the next apply.
 - A lock from before the record has no `owned` list, so status reports no record until one apply. That apply takes the entries its `pi` section lists as the installer's, and the claude `treeSha256` values keep the legacy rule, so they do not report `differs` after the upgrade.
-- A lock at `ownedSchema: 1` names no runtime or layer for its records, so `-Remove` and `-Uninstall` refuse it until one `-Apply` writes version 2.
+- A lock at `ownedSchema: 1` names no runtime or layer for its records, so `-Remove` refuses it until one `-Apply` writes version 2. `-Uninstall` still works from it when it has an `owned` list, because it names each path directly.
 
 ## Removing and uninstalling
 
@@ -178,35 +178,47 @@ pwsh -File scripts/Install-Workspace.ps1 -Uninstall -Apply
 The rules:
 
 - `-Remove` needs `-Runtimes` or `-Layers`, and `-Uninstall` takes neither. The two switches exclude each other, and neither takes `-Status`. `-Strict` exits 1 when a removal skips anything, in a dry run or an apply.
-- Both need a usable record: a lock with `ownedSchema: 2` and an `owned` list. A workspace with no lock, or a lock that lacks either, is refused with a message to run `-Apply` once. A workspace with no lock and none of the installer's folders has nothing to remove, and says so.
+- `-Remove` needs a lock with `ownedSchema: 2` and an `owned` list, because it picks each record by its runtime and layers. `-Uninstall` needs only an `owned` list, so it also works from an `ownedSchema: 1` lock. A lock with no `owned` list is refused with `it has no owned list`, and a lock at another schema version with `its ownedSchema is N`. Each refusal says to run `Install-Workspace.ps1 -Apply once` and writes nothing. A workspace with no lock but some of the installer's outputs is refused the same way. A workspace with no lock and none of them has nothing to remove, and says so.
 - `-Remove` takes each name out of the recorded selection. A name that is not selected removes nothing, and the run says so. It then applies the remaining selection, so a claude junction whose OpenCode copy was removed becomes a copy, and it deletes the records the remaining selection no longer produces.
 - `-Remove` refuses a removal that leaves `copilot` or `pi` selected without `claude`, and one that leaves no runtime or no layer. Name each runtime that needs it in the same command, for example `-Remove -Runtimes claude,copilot,pi`, or use `-Uninstall`.
-- `-Uninstall` deletes the lock files (`stack.lock.json`, `.bak`, and `.new`) only when nothing was skipped. Otherwise the lock keeps the skipped records, and a rerun after the fix finishes.
+- `-Uninstall` deletes the lock files (`stack.lock.json`, `.bak`, and `.new`) only when nothing was skipped. Otherwise it prints `N items skipped; lock kept; rerun -Uninstall -Apply to retry.` and keeps the lock, with only the records still owed. It exits 0 in that case, and 1 with `-Strict`. `-Remove -Apply` prints the matching line, `N items skipped; lock kept; rerun -Remove -Apply to retry.`
+- Each run ends with a `Summary:` line that counts each state.
 - A second run changes nothing and says `Nothing to remove`.
 
 Each path is printed with one state:
 
 | State | Meaning |
 | --- | --- |
-| `DELETE` | The record matches the disk, so the installer removes the path. |
-| `RESTORE` | The installer replaced a file. Its backup goes back in place, and the backup is removed. |
-| `KEEP` | The record is finished, and what is left is not the installer's to delete, such as a folder that holds a user file or a settings file with keys the installer did not write. |
-| `SKIP` | The disk differs from the record, or the record names a path the removal may not act on. Nothing is deleted, and the record stays in the lock. |
+| `DELETE` | The record matches the disk, so the installer removes the path. A folder is first renamed to `<name>.maxstack-removing` beside it, then the renamed folder is deleted. |
+| `RESTORE` | The installer replaced a file. Its original backup goes back in place, and the backup is removed. A backup whose file already holds its bytes is removed without a copy. |
+| `GONE` | The path is already absent, so the record is complete and nothing is deleted. The record leaves the lock. `-Strict` does not count it. |
+| `KEEP` | The record is finished, and what is left is not the installer's to delete, such as a folder that holds a user file, a settings file with keys the installer did not write, or a backup copy that is kept. |
+| `SKIP` | The disk differs from the record, or the path is not safe to act on, or a folder is in use. Nothing is deleted, and the record stays in the lock. |
 
 The deletion rules. Each one must hold for a path to be deleted:
 
-1. A file is deleted only if its SHA-256 equals the record. A folder is deleted only if its tree hash equals the record. An owned folder is wholly the installer's, so a file a user added to it, or a changed file, makes it a `SKIP`.
-2. A link is deleted as a link, and only while it points at the recorded target. The target is never read or changed, and a junction inside a deleted folder is removed the same way.
-3. The Pi settings file loses only the entries the record names, each from the key it was written to. Every other key and entry stays. A key the installer created is removed once its list is empty. When the installer created the file, and only its empty `packages` and `skills` lists remain, the file is deleted.
-4. A replaced file, the config or the Pi settings, is put back from its backup only while the file still holds the text the last apply wrote, and the backup still holds the bytes its record names. Otherwise both stay, as `SKIP`s, and the user's file is not touched.
-5. A folder is deleted only when the installer created it and it is empty, deepest first. A folder the installer did not create is never deleted.
-6. A recorded path must resolve inside the workspace, and no folder on its way may be a junction. A path that fails this is a `SKIP` with the reason `outside the workspace`, and nothing outside the workspace is read or changed.
+1. A file is deleted only if its SHA-256 equals the record. A folder is deleted only if its tree hash equals the record, and a record with no hash is a `SKIP`. The tree hash covers each file's relative path and SHA-256, and each link by its target. It leaves out `node_modules` and `.git` at any depth (see [Excluded folders](#excluded-folders)). So a file added to an owned folder, or a changed file outside those two folders, makes the folder a `SKIP` as `modified by hand`.
+2. A link is deleted as a link, and only while it points at the recorded target. The target is never read or changed. A junction inside a deleted folder is removed as a link the same way.
+3. The Pi settings file loses only the entries the record names, each from the key it was written to, after a strict JSON parse. Every other key and entry stays. A key the installer created is removed once its list is empty. When the installer created the file, and only its empty `packages` and `skills` lists remain, the file is deleted. A file that is not strict JSON (comments, trailing commas, or not an object) is a `SKIP` and is left as it is.
+4. A replaced file is put back from its original backup (`X.bak`) only while the file still holds the text the last apply wrote, and the backup still holds the bytes its record names. The copy is written beside the file and replaced over it, so a failed restore leaves no copy behind. Otherwise the user's file is not restored: the Pi settings loses only the installer's entries, and the config is a `SKIP` that keeps its backup.
+5. A folder the installer created is deleted only when it is empty, deepest first. A folder that existed before the install is kept with its user files, and a folder the installer did not record is never deleted.
+6. A recorded path must resolve inside the workspace, and no folder on its way may be a junction. A path that fails this is a `SKIP`, with one of three reasons: `outside the workspace: the record does not name a workspace path`, `outside the workspace: the path resolves outside it`, or `outside the workspace: a folder on its path is a junction`. Nothing outside the workspace is read or changed.
 7. A removal never touches a file the record does not name. The retired `pstack-opencode` folder, the pinned caches the record does not name, and the user's own files are left alone.
-8. Each record leaves the lock as soon as it is finished, so an interrupted run leaves the lock listing only what is still owed. A retry finishes the rest.
+8. The lock is rewritten after each item that finishes, so an interrupted run leaves it listing only what is still owed. A run that stops after a delete but before its lock write leaves that record in the lock, and the rerun finds the path absent and reports it as `GONE`. A retry finishes the rest.
 
-A `SKIP` is a path the installer cannot account for as its own: a file edited by hand, a folder that changed, a path that is missing, or a record that points outside the workspace. The skip names the path and the reason. Fix the cause, and rerun the same command. A file that was deleted by hand stays `missing` until its entry is removed from `owned` in `stack.lock.json`.
+Backups, in more detail. `X.bak` is the original: the first file an apply replaced. `X.bak.N` holds a hand edit made after that, and it is always kept, never restored. A backup from a lock written before roles were recorded has no role, so it is kept too and never restored. A user-changed original is kept, and a missing one is `GONE`. If the config is missing when the removal runs, its original backup is kept and the config's record is `GONE`.
 
-Two limits apply. A `missing` path that was removed by a crash, between the delete and the lock write, is reported the same way and is fixed the same way. The `node_modules` and `.git` folders inside an owned folder are removed with it, because they are the installer's copy of the folder. After a partial uninstall the lock still describes the selection, so `verify-workspace-install.py` reports the removed paths as missing until the rerun finishes.
+Before each action, the path is resolved again, its junctions are checked again, and its hash is checked against the plan. A change since the plan is a `SKIP` with the reason `changed since the plan: rerun the command to plan it again`. A Pi settings write re-hashes the file just before it writes, and then writes through a temporary file.
+
+A folder is renamed to its quarantine name, `<name>.maxstack-removing`, before it is deleted. A file held open by another process makes the rename fail, and the folder stays unchanged as a `SKIP` with `in use: could not be renamed`. If a file is held open during the delete, the quarantine stays, the item is a `SKIP` with `in use: part of it could not be deleted; it is quarantined as ...`, and a rerun deletes the quarantine. A folder named `<name>.maxstack-removing` that already exists beside a live folder is a `SKIP` (`in the way`).
+
+A `SKIP` is a path the installer cannot account for as its own: a file edited by hand, a folder that changed, a folder in use, or a record that points outside the workspace. The skip names the path and the reason. Fix the cause, and rerun the same command. A file that was deleted by hand is reported as `GONE` by a removal, which drops its record. `-Status` reports it as `missing` until then.
+
+### Excluded folders
+
+`node_modules` and `.git` inside an owned folder are not part of its tree hash. A change under either one does not make the folder a `SKIP`, and a removal deletes each of them with the folder, because they are the installer's copy. Files a user put only in those two folders are deleted too. The plan prints each excluded folder it will delete with its file count and total size, for example `also deletes the excluded folders .claude/cache/pstack/.git (35 files, 36139 bytes)`. A junction under an excluded folder is removed as a link, and its target is kept. A junction under an excluded folder that leads outside the workspace makes the whole owned folder a `SKIP`, with the reason `refused: a junction under ... leads outside the workspace`.
+
+After a partial uninstall the lock still describes the selection, so `verify-workspace-install.py` reports the removed paths as missing until the rerun finishes.
 
 ## A legacy global install
 
