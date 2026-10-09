@@ -15,6 +15,45 @@ T3 Code hosts the agent sessions. It runs four providers against the same worksp
 
 Ubuntu WSL can also run the OpenCode CLI. It reads the same workspace files under `D:\dev\simpsonm09`, which WSL sees at `/mnt/d/dev/simpsonm09`.
 
+## Runtime and layer selection
+
+The workspace installs only the runtimes and layers it selects. `-Runtimes` names runtimes: `claude`, `opencode`, `copilot`, `pi`, or `all`. `-Layers` names layers by their names in `layers.json`, or `all`. Both take comma-separated values, which `pwsh -File` passes as one token:
+
+```powershell
+pwsh -File scripts/Install-Workspace.ps1 -Runtimes claude,copilot -Apply
+pwsh -File scripts/Install-Workspace.ps1 -Runtimes pi -Apply
+pwsh -File scripts/Install-Workspace.ps1 -Layers pstack -Apply
+```
+
+The selection is recorded in `stack.lock.json`, with each list sorted:
+
+```json
+"selection": {
+  "runtimes": ["claude", "copilot"],
+  "layers": ["pstack", "simpsonm09-org-ai-plugin", "simpsonm09-personal-ai-plugin"]
+}
+```
+
+The rules:
+
+- A flag adds its names to the recorded selection, and never removes one. Naming a runtime or layer that is already selected prints `Already selected ...` and changes nothing. Removing one is the future `remove` command.
+- An unnamed dimension keeps its recorded value. A new workspace with no flags selects every runtime and every layer, so a plain `-Apply` installs what it did before. A new workspace with `-Runtimes` selects exactly the runtimes named, and every layer unless `-Layers` names some.
+- A lock with no `selection` predates the field. It reads as all, and the next apply writes the field.
+- `copilot` and `pi` need `claude`. Their wrapper or settings name the Claude plugin folders, so selecting either without `claude`, by name or in the recorded selection, is an error.
+- An unknown name is an error that lists the valid names, and nothing is written.
+- A layer installs only the selected runtimes it declares in `layers.json`. A selected layer that declares none of them is reported and installs nothing.
+
+What each runtime writes:
+
+- `claude`: `.claude\plugins`. A local layer is a junction to its OpenCode copy when `opencode` is selected too. Without `opencode` there is no copy to link to, so the layer's items are copied into the Claude folder instead.
+- `opencode`: `opencode.jsonc`, `.opencode\plugins`, and the agent profiles.
+- `copilot`: `.maxstack\bin\copilot.cmd` and `copilot.sh`.
+- `pi`: `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`.
+
+The pinned pstack cache under `.claude\cache` is the source every runtime copies from, so each layer that installs anything writes it, whichever runtime it serves. The lock records each runtime a layer does not install as `enabled: false`. For `copilot` and `pi` the reason is `not selected`.
+
+An unselected runtime's files are left alone. An apply does not write, remove, or report them as drift. `-Status` names any that exist as `not selected`, and `-Strict` does not count them. `-Status` takes no selection flags, because it reports the recorded selection, which it prints first.
+
 ## Install and reload
 
 PStack is not checked out in the workspace. The installer fetches the `plugins/pstack` folder of the fork at the commit in `pstack.lock.json`, into `.claude\cache\pstack`, and checks that commit out. A cache already at the commit is reused without a network call. The org and personal layers are read from their checkouts under `projects\repos`.
@@ -38,19 +77,19 @@ python scripts/verify-workspace-install.py
 
 ## Claude Code
 
-The same install also builds `.claude/plugins` at the workspace root: one child folder per Claude plugin. The org and personal folders are junctions to the installed OpenCode copies, and pstack is a copy of its pinned folder in the fork. Claude Code reads the folder when a session starts, so a new session is enough. A T3 Claude provider instance passes `--plugin-dir <workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
+The same install also builds `.claude/plugins` at the workspace root: one child folder per Claude plugin. The org and personal folders are junctions to the installed OpenCode copies, and pstack is a copy of its pinned folder in the fork. Without the `opencode` runtime there is no OpenCode copy, so a local folder is a copy of its items instead. Claude Code reads the folder when a session starts, so a new session is enough. A T3 Claude provider instance passes `--plugin-dir <workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
 
 ## Copilot CLI
 
 `Install-Workspace.ps1` writes two wrappers into `.maxstack\bin`: `copilot.cmd` for Windows and `copilot.sh` for POSIX shells. Each runs the Copilot CLI with one `--plugin-dir` for each layer that lists the `copilot` runtime, in layer order, then passes its arguments through. The plugin folders are the `.claude\plugins` folders above; no second copy is made.
 
-The installer finds the Copilot executable with `Get-Command copilot`. It never uses a match inside `.maxstack\bin`. The `.cmd` names that executable by its absolute path, so a later move of Copilot needs an apply. If Copilot is not installed, the installer skips both wrappers with a message and still installs everything else. Install Copilot, then run the installer with `-Apply` again.
+The installer finds the Copilot executable with `Get-Command copilot`. It never uses a match inside `.maxstack\bin`. The `.cmd` names that executable by its absolute path, so a later move of Copilot needs an apply. If Copilot is not installed, the installer skips both wrappers with a message and still installs everything else. Install Copilot, then run the installer with `-Apply` again. The wrappers run the Claude plugin folders, so `copilot` needs `claude` selected.
 
 To test the wrapper without an install, pass a different executable: `-CopilotCommand <path>`.
 
 ## Pi
 
-`Install-Workspace.ps1` writes `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`. The wrappers set `PI_CODING_AGENT_DIR` to `.pi\agent`. `pi.cmd` runs the `pi` the installer found on `PATH`, so rerun the installer after moving Pi. `pi.sh` runs whichever `pi` is on `PATH` at run time. `MAXSTACK_PI_BIN` names another Pi for both. The wrappers bake absolute paths: the agent folder into both, and the Pi CLI into `pi.cmd`. After the workspace or Pi moves, rerun `Install-Workspace.ps1` to regenerate them. The settings hold a `packages` list and a `skills` list. The installer owns only those two keys and the entries it wrote last time: a `defaultProvider` or `defaultModel` the user sets stays, and the installer writes no model or provider. A layer is a Pi package only when its `package.json` has a `pi` key. See [T3 setup](t3-setup.md#pi-maxstack).
+`Install-Workspace.ps1` writes `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`. The wrappers set `PI_CODING_AGENT_DIR` to `.pi\agent`. `pi.cmd` runs the `pi` the installer found on `PATH`, so rerun the installer after moving Pi. `pi.sh` runs whichever `pi` is on `PATH` at run time. `MAXSTACK_PI_BIN` names another Pi for both. The wrappers bake absolute paths: the agent folder into both, and the Pi CLI into `pi.cmd`. After the workspace or Pi moves, rerun `Install-Workspace.ps1` to regenerate them. The settings hold a `packages` list and a `skills` list. The installer owns only those two keys and the entries it wrote last time: a `defaultProvider` or `defaultModel` the user sets stays, and the installer writes no model or provider. A layer is a Pi package only when its `package.json` has a `pi` key. Pi lists the Claude plugin folders, so `pi` needs `claude` selected. See [T3 setup](t3-setup.md#pi-maxstack).
 
 ## Audit and apply
 
@@ -69,7 +108,7 @@ A layer that stops naming a runtime leaves its folder behind. `-Apply` removes a
 `-Apply` writes an ownership record into `stack.lock.json`: the `owned` list, with `ownedSchema: 1`. It names each path the apply wrote, sorted by path, kind, and key:
 
 - `opencode.jsonc`, `.maxstack\bin\copilot.*`, `.maxstack\bin\pi.*`, and each agent profile in `.opencode\agents`: a `file` with its SHA-256.
-- `.claude\plugins\<layer>`: a `link` with its `target` for a local layer, or a `dir` for a pinned copy.
+- `.claude\plugins\<layer>`: a `link` with its `target` for a local layer with `opencode` selected, or a `dir` for a pinned copy or a local copy of its items.
 - `.claude\cache\<layer>`: a `dir` for each pinned layer.
 - `.opencode\plugins\<layer>`: a `dir`.
 - `.pi\agent\settings.json`: one `json-entries` record for `packages` and one for `skills`. Each holds only the entries the installer added, and none when it added none. An entry the user already listed is the user's, so it is not recorded, and a second copy the user wrote beside an installer entry stays the user's.
@@ -100,8 +139,11 @@ pwsh -File scripts/Install-Workspace.ps1 -Status -Strict
 | `modified` | It differs from the recorded hash, target, or entry, usually because of a hand edit. |
 | `missing` | The record names it and the disk does not hold it. A Pi entry shows alone when it is missing from its list. |
 | `untracked` | A file in `.maxstack\bin` that no record names. |
+| `not selected` | A file of a runtime the selection leaves out. Apply leaves it alone, and `-Strict` does not count it. |
 
-`-Strict` exits 1 when any path is not `matching`. A workspace whose lock has no `owned` list prints `no ownership record; run -Apply once to create it`, and exits 0, or 1 with `-Strict`.
+`-Status` prints the selection first, then judges only the selected runtimes. The summary counts `not selected` paths after the other states.
+
+`-Strict` exits 1 when any path is not `matching` or `not selected`. A workspace whose lock has no `owned` list prints `no ownership record; run -Apply once to create it`, and exits 0, or 1 with `-Strict`.
 
 Limits of the record:
 
