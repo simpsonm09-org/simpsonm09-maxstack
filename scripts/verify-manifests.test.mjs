@@ -191,17 +191,17 @@ test('the layer names and the single plugin layer are checked', { skip }, () => 
 
 // An ownership record in the order the installer writes it: by path, then kind, then key.
 const OWNED = [
-  { path: '.claude/cache/pstack', kind: 'dir', sha256: 'A'.repeat(64) },
-  { path: '.claude/plugins/pstack', kind: 'dir', sha256: 'B'.repeat(64) },
-  { path: '.claude/plugins/simpsonm09-org-ai-plugin', kind: 'link', target: '.opencode/plugins/simpsonm09-org-ai-plugin' },
-  { path: '.maxstack/bin/pi.cmd', kind: 'file', sha256: 'C'.repeat(64) },
-  { path: '.pi/agent/settings.json', kind: 'json-entries', key: 'packages', entries: ['../../.claude/cache/pstack'] },
-  { path: '.pi/agent/settings.json', kind: 'json-entries', key: 'skills', entries: ['../../.claude/plugins/pstack/skills'] },
-  { path: 'opencode.jsonc', kind: 'file', sha256: 'D'.repeat(64) },
+  { path: '.claude/cache/pstack', kind: 'dir', sha256: 'A'.repeat(64), runtime: null, layers: ['pstack'] },
+  { path: '.claude/plugins/pstack', kind: 'dir', sha256: 'B'.repeat(64), runtime: 'claude', layers: ['pstack'] },
+  { path: '.claude/plugins/simpsonm09-org-ai-plugin', kind: 'link', target: '.opencode/plugins/simpsonm09-org-ai-plugin', runtime: 'claude', layers: ['simpsonm09-org-ai-plugin'] },
+  { path: '.maxstack/bin/pi.cmd', kind: 'file', sha256: 'C'.repeat(64), runtime: 'pi', layers: [] },
+  { path: '.pi/agent/settings.json', kind: 'json-entries', key: 'packages', entries: ['../../.claude/cache/pstack'], runtime: 'pi', layers: ['pstack'] },
+  { path: '.pi/agent/settings.json', kind: 'json-entries', key: 'skills', entries: ['../../.claude/plugins/pstack/skills'], runtime: 'pi', layers: ['pstack'] },
+  { path: 'opencode.jsonc', kind: 'file', sha256: 'D'.repeat(64), runtime: 'opencode', layers: [] },
 ];
 
 function lockWith(owned, extra = {}) {
-  return { ownedSchema: 1, layers: [], owned, ...extra };
+  return { ownedSchema: 2, layers: [], owned, ...extra };
 }
 
 test('a well-formed ownership record passes --lock', { skip }, () => {
@@ -213,9 +213,9 @@ test('a well-formed ownership record passes --lock', { skip }, () => {
 test('an ownership record with no schema version, or no owned list, is refused', { skip }, () => {
   const noSchema = runVerifier({ lock: { owned: OWNED, layers: [] } });
   assert.equal(noSchema.status, 1, failureOf(noSchema));
-  assert.match(failureOf(noSchema), /ownedSchema must be 1/);
+  assert.match(failureOf(noSchema), /ownedSchema must be 2; run Install-Workspace\.ps1 -Apply once/);
 
-  const noOwned = runVerifier({ lock: { ownedSchema: 1, layers: [] } });
+  const noOwned = runVerifier({ lock: { ownedSchema: 2, layers: [] } });
   assert.equal(noOwned.status, 1, failureOf(noOwned));
   assert.match(failureOf(noOwned), /has no owned list/);
 });
@@ -269,8 +269,8 @@ test('owned records out of order, or named twice, are refused', { skip }, () => 
 
 test('the owned list is sorted by UTF-8 bytes, so a fullwidth name comes before an emoji name', { skip }, () => {
   // Code point order and UTF-8 order agree; UTF-16 would put the emoji (a surrogate pair) first.
-  const fullwidth = { path: 'Ａ-fullwidth/x', kind: 'dir', sha256: 'A'.repeat(64) };
-  const emoji = { path: '\u{1F642}-emoji/x', kind: 'dir', sha256: 'B'.repeat(64) };
+  const fullwidth = { path: 'Ａ-fullwidth/x', kind: 'dir', sha256: 'A'.repeat(64), runtime: null, layers: [] };
+  const emoji = { path: '\u{1F642}-emoji/x', kind: 'dir', sha256: 'B'.repeat(64), runtime: null, layers: [] };
   const sorted = runVerifier({ lock: lockWith([fullwidth, emoji]) });
   assert.equal(sorted.status, 0, failureOf(sorted));
   const reversed = runVerifier({ lock: lockWith([emoji, fullwidth]) });
@@ -300,7 +300,25 @@ test('createdDirs and createdFiles are lists of workspace paths, sorted once eac
 });
 
 test('a backup record is an ordinary file record, and it is accepted', { skip }, () => {
-  const backup = [...OWNED, { path: 'opencode.jsonc.bak', kind: 'file', sha256: 'E'.repeat(64) }];
+  const backup = [...OWNED, { path: 'opencode.jsonc.bak', kind: 'file', sha256: 'E'.repeat(64), runtime: 'opencode', layers: [] }];
   const run = runVerifier({ lock: lockWith(backup) });
   assert.equal(run.status, 0, failureOf(run));
+});
+
+test('a record whose runtime does not match its path, or whose layers are unsorted, is refused', { skip }, () => {
+  const wrongRuntime = OWNED.map((record) => (record.path === 'opencode.jsonc' ? { ...record, runtime: 'pi' } : record));
+  const mismatch = runVerifier({ lock: lockWith(wrongRuntime) });
+  assert.equal(mismatch.status, 1, failureOf(mismatch));
+  assert.match(failureOf(mismatch), /runtime is pi, but its path belongs to opencode/);
+
+  const unsorted = OWNED.map((record) => (record.path === '.claude/plugins/pstack' ? { ...record, layers: ['pstack', 'org'] } : record));
+  const order = runVerifier({ lock: lockWith(unsorted) });
+  assert.equal(order.status, 1, failureOf(order));
+  assert.match(failureOf(order), /layers must be sorted by UTF-8 bytes, once each/);
+});
+
+test('an ownership record at ownedSchema 1 is refused, and the message says to run -Apply once', { skip }, () => {
+  const run = runVerifier({ lock: { ...lockWith(OWNED), ownedSchema: 1 } });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /ownedSchema must be 2; run Install-Workspace\.ps1 -Apply once/);
 });

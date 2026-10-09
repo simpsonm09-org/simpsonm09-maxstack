@@ -11,7 +11,7 @@ import json
 import re
 from pathlib import Path
 
-OWNED_SCHEMA = 1
+OWNED_SCHEMA = 2
 OWNED_KINDS = ("file", "dir", "link", "json-entries")
 OWNED_PI_KEYS = ("packages", "skills")
 SHA256_UPPER = re.compile(r"^[0-9A-F]{64}$")
@@ -69,11 +69,34 @@ def check_owned_record(record: object, where: str, failures: list[str]) -> str |
             expected = expected | {"createdKey"}
             if record["createdKey"] is not True:
                 failures.append(f"{where} createdKey, when present, must be true")
+    expected = expected | {"runtime", "layers"}
+    check_attribution(record, where, failures)
     if set(record) != expected:
         failures.append(
             f"{where} must hold exactly {sorted(expected)}, found {sorted(record)}"
         )
     return f"{record['path']}\t{kind}\t{record.get('key') or ''}"
+
+
+def check_attribution(record: dict, where: str, failures: list[str]) -> None:
+    """The runtime a record belongs to, null for the claude cache, and the layers it was installed for.
+    The runtime must be the one the record's path names, so a record cannot claim another runtime's file."""
+    runtime = record.get("runtime")
+    if runtime is not None and runtime not in SELECTION_RUNTIMES:
+        failures.append(
+            f"{where} runtime must be null or one of {list(SELECTION_RUNTIMES)}"
+        )
+    elif runtime != owned_runtime(record["path"]):
+        failures.append(
+            f"{where} runtime is {runtime}, but its path belongs to {owned_runtime(record['path'])}"
+        )
+    layers = record.get("layers")
+    if not isinstance(layers, list) or not all(
+        is_nonempty_str(layer) for layer in layers
+    ):
+        failures.append(f"{where} layers must be a list of layer names")
+    elif len(set(layers)) != len(layers) or layers != sorted(layers, key=utf8_order):
+        failures.append(f"{where} layers must be sorted by UTF-8 bytes, once each")
 
 
 def check_created(lock: dict, field: str, failures: list[str]) -> None:
@@ -211,7 +234,9 @@ def check_owned(lock: dict, failures: list[str]) -> None:
     if lock.get("ownedSchema") != OWNED_SCHEMA or isinstance(
         lock.get("ownedSchema"), bool
     ):
-        failures.append(f"stack.lock.json: ownedSchema must be {OWNED_SCHEMA}")
+        failures.append(
+            f"stack.lock.json: ownedSchema must be {OWNED_SCHEMA}; run Install-Workspace.ps1 -Apply once to write it"
+        )
     owned = lock.get("owned")
     if not isinstance(owned, list):
         failures.append(

@@ -1144,8 +1144,14 @@ function problemRows(run) {
 withWorkspace('apply records an owned entry for every path it wrote, and the record validates', (ctx) => {
   mustApply(ctx);
   const lock = readJson(lockPath(ctx));
-  assert.equal(lock.ownedSchema, 1, 'the record has no schema version');
+  assert.equal(lock.ownedSchema, 2, 'the record has no schema version');
   const owned = lock.owned;
+  for (const record of owned) {
+    assert.ok('runtime' in record && 'layers' in record, `${record.path} names no runtime and layers`);
+  }
+  assert.deepEqual(owned.find((record) => record.path === '.opencode/plugins/simpsonm09-org-ai-plugin').layers, ['simpsonm09-org-ai-plugin']);
+  assert.equal(owned.find((record) => record.path === '.maxstack/bin/pi.cmd').runtime, 'pi');
+  assert.equal(owned.find((record) => record.path === '.claude/cache/pstack').runtime, null, 'the claude cache belongs to no runtime');
   const find = (path, kind, key) => owned.find((record) => record.path === path && record.kind === kind && (key === undefined || record.key === key));
 
   assert.match(find('opencode.jsonc', 'file').sha256, /^[0-9A-F]{64}$/);
@@ -1544,7 +1550,7 @@ withWorkspace('a lock from before the ownership record reads quietly, and the cl
   assert.match(runStatus(ctx).stdout, /no ownership record; run -Apply once to create it/);
 
   mustApply(ctx);
-  assert.equal(readJson(lockPath(ctx)).ownedSchema, 1);
+  assert.equal(readJson(lockPath(ctx)).ownedSchema, 2);
   assert.deepEqual(problemRows(runStatus(ctx)), []);
 }, {});
 
@@ -1615,7 +1621,7 @@ withWorkspace('the record names the directories and files the installer created,
   for (const dir of ['.claude', '.claude/plugins', '.claude/cache', '.claude/cache/pstack', '.claude/plugins/pstack', '.opencode/plugins', '.opencode/agents', '.maxstack/bin']) {
     assert.ok(lock.createdDirs.includes(dir), `${dir} was created by the install but is not listed`);
   }
-  assert.deepEqual(lock.createdFiles, [], 'a settings file that was there first is listed as created');
+  assert.deepEqual(lock.createdFiles, ['opencode.jsonc'], 'a settings file that was there first is listed as created, and the config the install created is');
   assert.equal(ownedRecord(lock, '.pi/agent/settings.json', 'json-entries', 'packages').createdKey, true, 'a key the user file lacked is not marked as created');
   assert.equal(readJson(settingsPath(ctx)).defaultProvider, 'user-provider');
 }, {});
@@ -1623,7 +1629,7 @@ withWorkspace('the record names the directories and files the installer created,
 withWorkspace('a settings file the apply created is listed in createdFiles, with no created key', (ctx) => {
   mustApply(ctx);
   const lock = readJson(lockPath(ctx));
-  assert.deepEqual(lock.createdFiles, ['.pi/agent/settings.json']);
+  assert.deepEqual(lock.createdFiles, ['.pi/agent/settings.json', 'opencode.jsonc']);
   assert.equal(ownedRecord(lock, '.pi/agent/settings.json', 'json-entries', 'packages').createdKey, undefined);
 }, {});
 
@@ -2122,3 +2128,4 @@ withWorkspace('a copied local layer reports a hand edit as differs, a user file 
   }
   assert.deepEqual(problemRows(runStatus(ctx)), [], 'the restored copy still reports a problem');
 }, {});
+

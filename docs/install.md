@@ -113,23 +113,25 @@ A layer that stops naming a runtime leaves its folder behind. `-Apply` removes a
 
 ## Ownership and status
 
-`-Apply` writes an ownership record into `stack.lock.json`: the `owned` list, with `ownedSchema: 1`. It names each path the apply wrote, sorted by path, kind, and key:
+`-Apply` writes an ownership record into `stack.lock.json`: the `owned` list, with `ownedSchema: 2`. It names each path the apply wrote, sorted by path, kind, and key. Each record also names the `runtime` it belongs to, or `null` for the claude cache, and the `layers` it was installed for, sorted, so a later removal can pick the records it deletes:
 
 - `opencode.jsonc`, `.maxstack\bin\copilot.*`, `.maxstack\bin\pi.*`, and each agent profile in `.opencode\agents`: a `file` with its SHA-256.
 - `.claude\plugins\<layer>`: a `link` with its `target` for a local layer with `opencode` selected, or a `dir` for a pinned copy or a local copy of its items.
 - `.claude\cache\<layer>`: a `dir` for each pinned layer.
 - `.opencode\plugins\<layer>`: a `dir`.
 - `.pi\agent\settings.json`: one `json-entries` record for `packages` and one for `skills`. Each holds only the entries the installer added, and none when it added none. An entry the user already listed is the user's, so it is not recorded, and a second copy the user wrote beside an installer entry stays the user's.
-- `opencode.jsonc.bak` and `.pi\agent\settings.json.bak`: a `file` record each, once an apply has written the backup.
+- `opencode.jsonc.bak` and `.pi\agent\settings.json.bak`: a `file` record each, once an apply has written the backup. An apply takes a backup when the file exists, differs from the new text, and holds something other than the installer's last write. So the file the install first replaced is kept, and a hand edit of an installer file is kept too. A later apply that replaces only the installer's own text keeps the backup as it is.
 
-A `json-entries` record for a key the installer created in a settings file that already existed carries `createdKey: true`. The top-level `createdDirs` lists each directory an apply created, and `createdFiles` each file it created (a settings file that already existed is not listed). Both are sorted, and both lists name only what was not there before the first apply.
+A `json-entries` record for a key the installer created in a settings file that already existed carries `createdKey: true`. The top-level `createdDirs` lists each directory an apply created, and `createdFiles` each file it created: `opencode.jsonc` and `.pi\agent\settings.json` when the apply created them, and not when they already existed. Both are sorted, and both lists name only what was not there before the first apply. The `pi` section records `settingsSha256`, the SHA-256 the last apply wrote to the Pi settings, so a backup can be put back only while the file still holds it.
 
 A `dir` record is the hash of what the installer wrote. An owned folder is wholly the installer's: each apply removes whatever the layer does not install, printing each removal, and replaces each item with a fresh copy. The hash covers each file's relative path and SHA-256, and each link by its target, and it leaves out `node_modules` and `.git` at any depth. The record holds no absolute path and does not list the lock itself. Re-applying with nothing to change leaves the lock the same except `generatedAt`.
 
 ```json
+"ownedSchema": 2,
 "owned": [
-  { "path": ".maxstack/bin/copilot.cmd", "kind": "file", "sha256": "…" },
-  { "path": ".pi/agent/settings.json", "kind": "json-entries", "key": "packages", "entries": ["../../.claude/cache/pstack"] }
+  { "path": ".maxstack/bin/copilot.cmd", "kind": "file", "sha256": "…", "runtime": "copilot", "layers": [] },
+  { "path": ".claude/cache/pstack", "kind": "dir", "sha256": "…", "runtime": null, "layers": ["pstack"] },
+  { "path": ".pi/agent/settings.json", "kind": "json-entries", "key": "packages", "entries": ["../../.claude/cache/pstack"], "runtime": "pi", "layers": ["pstack"] }
 ]
 ```
 
@@ -160,6 +162,7 @@ Limits of the record:
 - A backup the next apply would write is not reported until it exists.
 - Apply does not remove the agent profiles of a layer that stopped installing them, nor the cache of a removed pinned layer. Those files drop out of the record at the next apply.
 - A lock from before the record has no `owned` list, so status reports no record until one apply. That apply takes the entries its `pi` section lists as the installer's, and the claude `treeSha256` values keep the legacy rule, so they do not report `differs` after the upgrade.
+- A lock at `ownedSchema: 1` names no runtime or layer for its records, so one `-Apply` writes version 2 before a later removal can use them.
 
 ## A legacy global install
 

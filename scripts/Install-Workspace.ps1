@@ -51,8 +51,11 @@ $runtimeNames = @('claude', 'opencode', 'copilot', 'pi')
 # The OpenCode port this repository used to pin. Its folder is removed on every apply,
 # so a workspace that still has it ends with the same tree as one that never did.
 $retiredOpenCodeFolders = @('pstack-opencode')
-# The version of the owned list in stack.lock.json. A reader checks it before it reads owned.
-$ownedSchemaVersion = 1
+# The version of the owned list in stack.lock.json. A reader checks it before it reads owned. Version 2 names
+# each record's runtime and layers.
+$ownedSchemaVersion = 2
+# The files an apply replaces with its own text. Each may get a backup, and an apply records whether it created one.
+$replacedFileNames = @('opencode.jsonc', '.pi/agent/settings.json')
 
 # The text an installed profile holds once its model line is removed, or $null when the profile
 # has no frontmatter, which leaves the copy as it is.
@@ -993,7 +996,8 @@ function Get-PiSettings {
 
 # One record of the ownership list. A file or folder holds its SHA-256, a folder a tree hash; a link
 # holds its target; a json-entries record holds its key and entries, and createdKey when the installer
-# created that key in a settings file that already existed.
+# created that key in a settings file that already existed. Every record names the runtime it belongs
+# to, or none for the claude cache, and the layers it was installed for, so remove can pick it.
 function New-OwnedRecord {
     param(
         [string] $Path,
@@ -1002,18 +1006,23 @@ function New-OwnedRecord {
         [string] $Target = $null,
         [string] $Key = $null,
         [object[]] $Entries = $null,
-        [bool] $CreatedKey = $false
+        [bool] $CreatedKey = $false,
+        # Untyped, so that no runtime stays $null in the record rather than an empty string.
+        $Runtime = $null,
+        [string[]] $Layers = @()
     )
 
     switch ($Kind) {
-        'link' { return [pscustomobject]@{ path = $Path; kind = $Kind; target = $Target } }
+        'link' { $record = [pscustomobject]@{ path = $Path; kind = $Kind; target = $Target } }
         'json-entries' {
             $record = [pscustomobject]@{ path = $Path; kind = $Kind; key = $Key; entries = $Entries }
             if ($CreatedKey) { $record | Add-Member -NotePropertyName createdKey -NotePropertyValue $true }
-            return $record
         }
-        default { return [pscustomobject]@{ path = $Path; kind = $Kind; sha256 = $Sha256 } }
+        default { $record = [pscustomobject]@{ path = $Path; kind = $Kind; sha256 = $Sha256 } }
     }
+    $record | Add-Member -NotePropertyName runtime -NotePropertyValue $Runtime
+    $record | Add-Member -NotePropertyName layers -NotePropertyValue @(Sort-Utf8 @($Layers | Where-Object { $_ }))
+    return $record
 }
 
 # The identity of a record: its path, its kind, and for a Pi list its key.
@@ -1076,18 +1085,16 @@ function Get-OwnedPlan {
         $configUnchanged = ($null -ne $configText) -and ($configText.Trim() -eq $Document.Trim())
         $configSha = Get-TextSha256 $Document
         if ($configUnchanged) { $configSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash }
-        $records.Add((New-OwnedRecord -Path 'opencode.jsonc' -Kind 'file' -Sha256 $configSha))
+        $records.Add((New-OwnedRecord -Path 'opencode.jsonc' -Kind 'file' -Sha256 $configSha -Runtime 'opencode'))
 
-        # A backup holds the config that the last change replaced, so an apply that changes the config
-        # writes a new one. An earlier backup stays as it is.
         $backupSha = $null
-        if ($configExists -and -not $configUnchanged) {
+        if (Test-BackupNeeded -Path $configTarget -LastSha $priorOpenCodeSha -NewText $Document) {
             $backupSha = (Get-FileHash -LiteralPath $configTarget -Algorithm SHA256).Hash
         } elseif (Test-Path -LiteralPath "$configTarget.bak" -PathType Leaf) {
             $backupSha = (Get-FileHash -LiteralPath "$configTarget.bak" -Algorithm SHA256).Hash
         }
         if ($null -ne $backupSha) {
-            $backup = New-OwnedRecord -Path 'opencode.jsonc.bak' -Kind 'file' -Sha256 $backupSha
+            $backup = New-OwnedRecord -Path 'opencode.jsonc.bak' -Kind 'file' -Sha256 $backupSha -Runtime 'opencode'
             $backup | Add-Member -NotePropertyName backup -NotePropertyValue $true
             $records.Add($backup)
         }
@@ -1096,20 +1103,20 @@ function Get-OwnedPlan {
     foreach ($record in $ClaudeRecords) {
         $path = ".claude/plugins/$($record.plugin)"
         if ($record.kind -eq 'junction') {
-            $records.Add((New-OwnedRecord -Path $path -Kind 'link' -Target $record.target))
+            $records.Add((New-OwnedRecord -Path $path -Kind 'link' -Target $record.target -Runtime 'claude' -Layers @($record.layer)))
             continue
         }
         $root = Get-LayerRoot $layerByName[$record.layer]
         $sha = $null
         if ($null -ne $root -and $record.kind -eq 'copy') { $sha = Get-ItemsTreeSha256 -Root $root -Items $record.items }
         elseif ($null -ne $root) { $sha = Get-TreeSha256 $root }
-        $records.Add((New-OwnedRecord -Path $path -Kind 'dir' -Sha256 $sha))
+        $records.Add((New-OwnedRecord -Path $path -Kind 'dir' -Sha256 $sha -Runtime 'claude' -Layers @($record.layer)))
     }
 
     foreach ($layer in @($Layers | Where-Object { $null -ne $_.url })) {
         $sha = $null
         if (Test-CacheAtPin $layer) { $sha = Get-TreeSha256 (Join-Path $claudeCacheTarget $layer.name) }
-        $records.Add((New-OwnedRecord -Path ".claude/cache/$($layer.name)" -Kind 'dir' -Sha256 $sha))
+        $records.Add((New-OwnedRecord -Path ".claude/cache/$($layer.name)" -Kind 'dir' -Sha256 $sha -Layers @($layer.name)))
     }
 
     # A profile that two layers install is recorded once, with the later layer's copy, as the apply writes it.
@@ -1130,53 +1137,60 @@ function Get-OwnedPlan {
                     $agentSha = (Get-FileHash -LiteralPath $agent.FullName -Algorithm SHA256).Hash
                     if ($null -ne $text) { $agentSha = Get-TextSha256 $text }
                     $path = ".opencode/agents/$($agent.Name)"
-                    $agents[$path] = New-OwnedRecord -Path $path -Kind 'file' -Sha256 $agentSha
+                    $agents[$path] = New-OwnedRecord -Path $path -Kind 'file' -Sha256 $agentSha -Runtime 'opencode' -Layers @($layer.name)
                 }
             }
         }
-        $records.Add((New-OwnedRecord -Path ".opencode/plugins/$($layer.name)" -Kind 'dir' -Sha256 $sha))
+        $records.Add((New-OwnedRecord -Path ".opencode/plugins/$($layer.name)" -Kind 'dir' -Sha256 $sha -Runtime 'opencode' -Layers @($layer.name)))
     }
     foreach ($agent in $agents.Values) { $records.Add($agent) }
 
     if ($CopilotCmdText) {
-        $records.Add((New-OwnedRecord -Path '.maxstack/bin/copilot.cmd' -Kind 'file' -Sha256 (Get-TextSha256 $CopilotCmdText)))
-        $records.Add((New-OwnedRecord -Path '.maxstack/bin/copilot.sh' -Kind 'file' -Sha256 (Get-TextSha256 $CopilotShText)))
+        $records.Add((New-OwnedRecord -Path '.maxstack/bin/copilot.cmd' -Kind 'file' -Sha256 (Get-TextSha256 $CopilotCmdText) -Runtime 'copilot'))
+        $records.Add((New-OwnedRecord -Path '.maxstack/bin/copilot.sh' -Kind 'file' -Sha256 (Get-TextSha256 $CopilotShText) -Runtime 'copilot'))
     }
     if ($PiCmdText) {
-        $records.Add((New-OwnedRecord -Path '.maxstack/bin/pi.cmd' -Kind 'file' -Sha256 (Get-TextSha256 $PiCmdText)))
-        $records.Add((New-OwnedRecord -Path '.maxstack/bin/pi.sh' -Kind 'file' -Sha256 (Get-TextSha256 $PiShText)))
+        $records.Add((New-OwnedRecord -Path '.maxstack/bin/pi.cmd' -Kind 'file' -Sha256 (Get-TextSha256 $PiCmdText) -Runtime 'pi'))
+        $records.Add((New-OwnedRecord -Path '.maxstack/bin/pi.sh' -Kind 'file' -Sha256 (Get-TextSha256 $PiShText) -Runtime 'pi'))
     }
 
     if ($null -ne $PiSettings) {
         $settingsPath = Join-Path $Workspace '.pi\agent\settings.json'
-        $settingsExists = Test-Path -LiteralPath $settingsPath -PathType Leaf
-        $settingsUnchanged = $PiPending
-        if ($settingsExists -and -not $PiPending) {
-            $existingSettings = Get-Content -LiteralPath $settingsPath -Raw
-            $settingsUnchanged = ($null -ne $existingSettings) -and ($existingSettings.Trim() -eq $PiSettings.text.Trim())
-        }
         $settingsBackupSha = $null
-        if ($settingsExists -and -not $settingsUnchanged) {
+        if (-not $PiPending -and (Test-BackupNeeded -Path $settingsPath -LastSha $priorSettingsSha -NewText $PiSettings.text)) {
             $settingsBackupSha = (Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash
         } elseif (Test-Path -LiteralPath "$settingsPath.bak" -PathType Leaf) {
             $settingsBackupSha = (Get-FileHash -LiteralPath "$settingsPath.bak" -Algorithm SHA256).Hash
         }
         if ($null -ne $settingsBackupSha) {
-            $backup = New-OwnedRecord -Path '.pi/agent/settings.json.bak' -Kind 'file' -Sha256 $settingsBackupSha
+            $backup = New-OwnedRecord -Path '.pi/agent/settings.json.bak' -Kind 'file' -Sha256 $settingsBackupSha -Runtime 'pi'
             $backup | Add-Member -NotePropertyName backup -NotePropertyValue $true
             $records.Add($backup)
         }
 
+        # The layers a Pi settings list may hold an entry of: every selected layer that declares pi.
+        $piLayerNames = @($Layers | Where-Object { $_.runtimes.ContainsKey('pi') } | ForEach-Object { $_.name })
         foreach ($key in @('packages', 'skills')) {
             $known = @($PiSettings.added[$key])
             $unknown = @(@($PiUnknown[$key]) | Where-Object { $known -cnotcontains $_ })
             if ($known.Count -eq 0 -and $unknown.Count -eq 0) { continue }
-            $record = New-OwnedRecord -Path '.pi/agent/settings.json' -Kind 'json-entries' -Key $key -Entries $known
+            $record = New-OwnedRecord -Path '.pi/agent/settings.json' -Kind 'json-entries' -Key $key -Entries $known -Runtime 'pi' -Layers $piLayerNames
             $record | Add-Member -NotePropertyName unknown -NotePropertyValue $unknown
             $records.Add($record)
         }
     }
     return $records.ToArray()
+}
+
+# Whether an apply must back up a file before it replaces it. The file is backed up when it exists, differs
+# from the new text, and holds something other than the installer's last write, so a hand edit is kept and an
+# installer-written file is not. $LastSha is that last write's hash, or $null when no apply recorded one.
+function Test-BackupNeeded {
+    param([string] $Path, [string] $LastSha, [string] $NewText)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    if (([IO.File]::ReadAllText($Path)).Trim() -eq $NewText.Trim()) { return $false }
+    return ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $LastSha)
 }
 
 # The ownership list an apply writes, from the plan once the disk matches it. A json-entries record
@@ -1188,22 +1202,23 @@ function Get-OwnedRecords {
         $full = Join-Path $Workspace ($record.path -replace '/', '\')
         # A planned backup is recorded once the apply has written it, and not before.
         if ((Get-Field $record 'backup') -and -not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+        $attribution = @{ Runtime = $record.runtime; Layers = @($record.layers) }
         switch ($record.kind) {
             'file' {
                 $disk = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
                 Assert-Written -Path $record.path -Disk $disk -Planned $record.sha256
-                New-OwnedRecord -Path $record.path -Kind 'file' -Sha256 $disk
+                New-OwnedRecord -Path $record.path -Kind 'file' -Sha256 $disk @attribution
             }
             'dir' {
                 $disk = Get-TreeSha256 $full
                 Assert-Written -Path $record.path -Disk $disk -Planned $record.sha256
-                New-OwnedRecord -Path $record.path -Kind 'dir' -Sha256 $disk
+                New-OwnedRecord -Path $record.path -Kind 'dir' -Sha256 $disk @attribution
             }
-            'link' { New-OwnedRecord -Path $record.path -Kind 'link' -Target $record.target }
+            'link' { New-OwnedRecord -Path $record.path -Kind 'link' -Target $record.target @attribution }
             'json-entries' {
                 $entries = @($record.entries | Where-Object { $null -ne $_ })
                 if ($entries.Count -gt 0) {
-                    New-OwnedRecord -Path $record.path -Kind 'json-entries' -Key $record.key -Entries $entries -CreatedKey ([bool] $CreatedKeys[$record.key])
+                    New-OwnedRecord -Path $record.path -Kind 'json-entries' -Key $record.key -Entries $entries -CreatedKey ([bool] $CreatedKeys[$record.key]) @attribution
                 }
             }
         }
@@ -1448,6 +1463,14 @@ if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
     if ($null -ne $priorStack.PSObject.Properties['createdDirs']) { $priorCreatedDirs = @($priorStack.createdDirs) }
     if ($null -ne $priorStack.PSObject.Properties['createdFiles']) { $priorCreatedFiles = @($priorStack.createdFiles) }
 }
+# The hash each replaced file held when the last apply wrote it. A backup is taken only when the file no longer
+# holds it, and a later restore puts a backup back only while the file still holds it.
+$priorOpenCodeSha = $null
+if ($null -ne $priorOwned) {
+    $priorConfigRecord = @($priorOwned | Where-Object { $_.path -eq 'opencode.jsonc' -and $_.kind -eq 'file' })
+    if ($priorConfigRecord.Count -gt 0) { $priorOpenCodeSha = $priorConfigRecord[0].sha256 }
+}
+$priorSettingsSha = Get-Field $priorPi 'settingsSha256'
 
 # The selection. Flags add names to the recorded selection; an unnamed dimension keeps what is recorded.
 # A lock with no selection reads as all, and a new workspace starts with exactly what is named.
@@ -1512,8 +1535,8 @@ if ($Apply) {
     if ($settingsFileBefore) {
         $settingsBefore = Get-Content -LiteralPath $piSettingsTarget -Raw | ConvertFrom-Json
         if ($null -ne $settingsBefore) { $settingsKeysBefore = @($settingsBefore.PSObject.Properties | ForEach-Object { $_.Name }) }
-        $existedBeforeFiles = @('.pi/agent/settings.json')
     }
+    $existedBeforeFiles = @($replacedFileNames | Where-Object { Test-Path -LiteralPath (Join-Path $Workspace ($_ -replace '/', '\')) -PathType Leaf })
 }
 
 # Git sources are synced before anything is written, so a bad pin stops the run with
@@ -1746,7 +1769,7 @@ if ($openCodeSelected) {
     if ((Test-Path -LiteralPath $configTarget) -and ((Get-Content -LiteralPath $configTarget -Raw).Trim() -eq $document.Trim())) {
         Write-Host "Config already matches: $configTarget"
     } else {
-        if (Test-Path -LiteralPath $configTarget) {
+        if (Test-BackupNeeded -Path $configTarget -LastSha $priorOpenCodeSha -NewText $document) {
             Copy-Item -LiteralPath $configTarget -Destination "$configTarget.bak" -Force
             Write-Host "Backed up the previous config to $configTarget.bak"
         }
@@ -1898,7 +1921,7 @@ if ($piSettings) {
     if ((Test-Path -LiteralPath $piSettingsTarget -PathType Leaf) -and ((Get-Content -LiteralPath $piSettingsTarget -Raw).Trim() -eq $piSettingsText.Trim())) {
         Write-Host "Pi settings already match: $piSettingsTarget"
     } else {
-        if (Test-Path -LiteralPath $piSettingsTarget -PathType Leaf) {
+        if (Test-BackupNeeded -Path $piSettingsTarget -LastSha $priorSettingsSha -NewText $piSettingsText) {
             Copy-Item -LiteralPath $piSettingsTarget -Destination "$piSettingsTarget.bak" -Force
             Write-Host "Backed up the previous Pi settings to $piSettingsTarget.bak"
         }
@@ -2020,25 +2043,36 @@ $copilotLock = if ($copilotCmdText) {
     [pscustomobject]@{ enabled = $false; reason = $reason }
 }
 
+# The hash of the Pi settings file as the last apply left it. A later restore puts a backup back only while the
+# file still holds it. A run that does not write the settings keeps the hash the last write recorded.
+$settingsSha = $priorSettingsSha
+if (Test-Path -LiteralPath $piSettingsTarget -PathType Leaf) {
+    if ($piSettings) { $settingsSha = (Get-FileHash -LiteralPath $piSettingsTarget -Algorithm SHA256).Hash }
+} else {
+    $settingsSha = $null
+}
+
 $piLock = if ($piCmdText) {
     [pscustomobject]@{
-        enabled    = $true
-        executable = [IO.Path]::GetFileName($piExecutable)
-        wrappers   = @('.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh')
-        cmdSha256  = Get-TextSha256 $piCmdText
-        shSha256   = Get-TextSha256 $piShText
-        agentDir   = '.pi/agent'
-        packages   = @($piPackageEntries)
-        skills     = @($piSkillEntries)
+        enabled        = $true
+        executable     = [IO.Path]::GetFileName($piExecutable)
+        wrappers       = @('.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh')
+        cmdSha256      = Get-TextSha256 $piCmdText
+        shSha256       = Get-TextSha256 $piShText
+        agentDir       = '.pi/agent'
+        packages       = @($piPackageEntries)
+        skills         = @($piSkillEntries)
+        settingsSha256 = $settingsSha
     }
 } else {
     $reason = if (-not $piSelected) { 'not selected' } elseif ($piLayers.Count -eq 0) { 'no layer declares pi' } else { "no '$PiCommand' application outside .maxstack\bin" }
     [pscustomobject]@{
-        enabled  = $false
-        reason   = $reason
-        agentDir = '.pi/agent'
-        packages = @($piPackageEntries)
-        skills   = @($piSkillEntries)
+        enabled        = $false
+        reason         = $reason
+        agentDir       = '.pi/agent'
+        packages       = @($piPackageEntries)
+        skills         = @($piSkillEntries)
+        settingsSha256 = $settingsSha
     }
 }
 
@@ -2057,7 +2091,7 @@ foreach ($key in @('packages', 'skills')) {
     $createdKeys[$key] = [bool]($presentNow -and ($createdHere -or ($priorCreatedKeys -ccontains $key)))
 }
 $createdDirs = @(Get-CreatedPaths -Candidates $installerDirs -Prior $priorCreatedDirs -ExistedBefore $existedBefore -Kind 'dir')
-$createdFiles = @(Get-CreatedPaths -Candidates @('.pi/agent/settings.json') -Prior $priorCreatedFiles -ExistedBefore $existedBeforeFiles -Kind 'file')
+$createdFiles = @(Get-CreatedPaths -Candidates $replacedFileNames -Prior $priorCreatedFiles -ExistedBefore $existedBeforeFiles -Kind 'file')
 
 # The ownership record: every path this apply wrote, after the writes, so -Status and a later
 # remove or uninstall know what is theirs. It holds no path outside the workspace and not the lock.
