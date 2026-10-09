@@ -26,7 +26,7 @@ $claudeCacheTarget = Join-Path $Workspace '.claude\cache'
 $copilotBinTarget = Join-Path $Workspace '.maxstack\bin'
 $copilotCmdTarget = Join-Path $copilotBinTarget 'copilot.cmd'
 $copilotShTarget = Join-Path $copilotBinTarget 'copilot.sh'
-# The Pi wrappers share .maxstack\bin. Pi reads its settings from the agent folder beside them.
+# The Pi wrappers share .maxstack\bin. They name the agent folder, where Pi reads its settings.
 $piCmdTarget = Join-Path $copilotBinTarget 'pi.cmd'
 $piShTarget = Join-Path $copilotBinTarget 'pi.sh'
 $piAgentDir = Join-Path $Workspace '.pi\agent'
@@ -614,8 +614,9 @@ if ($copilotExecutable) {
     Write-Warning "Copilot CLI not found: no '$CopilotCommand' application outside .maxstack\bin. Skipping $copilotCmdTarget and $copilotShTarget. Install Copilot, then rerun with -Apply."
 }
 
-# Pi lists each pinned or local layer's package when its package.json has a pi key, and each
-# layer's skills folder. Both are relative to the agent folder, which sits under the workspace.
+# Pi lists each layer's package when its package.json has a pi key, and each layer's skills
+# folder. The settings and the lock's pi list hold those entries relative to the agent folder;
+# each layer's lock record holds its folder relative to the workspace.
 $piLayers = @($layers | Where-Object { $_.runtimes.ContainsKey('pi') })
 $piRecords = @($piLayers | ForEach-Object { Get-PiLayerRecord $_ })
 $piByLayer = @{}
