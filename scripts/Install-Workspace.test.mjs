@@ -849,6 +849,20 @@ withWorkspace('a local layer is a Pi package only when its package.json names a 
   });
 }, {});
 
+withWorkspace('a pi key needs package.json in the installed copy, and the run stops without it', (ctx) => {
+  const org = join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin');
+  writeLayerStub(org, { claudePlugin: 'simpsonm09-org-ai-plugin', pi: { extensions: ['./pi/index.ts'] } });
+  // The source keeps the package.json that names the pi key, but the files list leaves it out,
+  // so the installed copy has the pi folder and no package.json for Pi to read.
+  const layerPath = join(org, 'layer.json');
+  const layer = readJson(layerPath);
+  writeFile(org, 'layer.json', JSON.stringify({ ...layer, files: layer.files.filter((file) => file !== 'package.json') }));
+
+  const run = runInstaller(shell, ctx);
+  assert.notEqual(run.status, 0, 'the installer accepted a pi key whose installed copy has no package.json');
+  assert.match(plainOutput(run), /has a pi key in its package\.json, but its installed copy at .* has no package\.json/);
+}, {});
+
 withWorkspace('a pi key that names a file the installed copy lacks is refused', (ctx) => {
   writeLayerStub(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), {
     claudePlugin: 'simpsonm09-org-ai-plugin',

@@ -523,6 +523,9 @@ function Assert-PiKeyInstalled {
     param($Record)
 
     $installed = Join-Path $Workspace ($Record.package -replace '/', '\')
+    if (-not (Test-Path -LiteralPath (Join-Path $installed 'package.json') -PathType Leaf)) {
+        throw "Layer '$($Record.layer)' has a pi key in its package.json, but its installed copy at $installed has no package.json. Add package.json to the layer's files list."
+    }
     foreach ($kind in @('extensions', 'skills', 'prompts', 'themes')) {
         foreach ($entry in @(Get-Field $Record.pi $kind)) {
             if (-not (Test-NonEmptyString $entry)) { continue }
