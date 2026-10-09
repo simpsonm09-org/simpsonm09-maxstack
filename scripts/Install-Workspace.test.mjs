@@ -706,6 +706,22 @@ withWorkspace('pi.cmd sets the agent folder and the ask switch, runs the Pi CLI 
   assert.ok(overridden.stdout.includes(`OTHER=${join(ctx.workspace, '.pi', 'agent')}`), 'MAXSTACK_PI_BIN did not name the CLI that ran');
 }, {});
 
+// cmd's call doubles carets and eats a percent sign before the target sees them, so only a
+// .cmd or .bat target may go through call. node.exe stands in for an .exe target here.
+withWorkspace('pi.cmd passes arguments to an .exe target unchanged', (ctx) => {
+  mustApply(ctx);
+  const script = join(ctx.base, 'echo-args.js');
+  writeFileSync(script, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
+  const wrapper = join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd');
+  const run = spawnSync('cmd.exe', ['/d', '/s', '/c', `""${wrapper}" "${script}" "a^b" "100%""`], {
+    encoding: 'utf8',
+    windowsVerbatimArguments: true,
+    env: { ...process.env, MAXSTACK_PI_BIN: process.execPath },
+  });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.deepEqual(JSON.parse(run.stdout), ['a^b', '100%'], 'the wrapper changed the arguments');
+}, {});
+
 withWorkspace('pi.sh runs pi from PATH with the agent folder and the ask switch, and honours MAXSTACK_PI_BIN', (ctx) => {
   const bash = findBash();
   if (!bash) return;

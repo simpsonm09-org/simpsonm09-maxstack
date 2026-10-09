@@ -462,6 +462,12 @@ function New-PiCmdText {
         'set "AGENT_ACCESS_PI_ASK=allow"',
         ('set "PI_BIN={0}"' -f $Executable),
         'if defined MAXSTACK_PI_BIN set "PI_BIN=%MAXSTACK_PI_BIN%"',
+        'for %%F in ("%PI_BIN%") do set "PI_EXT=%%~xF"',
+        'if /i "%PI_EXT%"==".cmd" goto call_pi',
+        'if /i "%PI_EXT%"==".bat" goto call_pi',
+        '"%PI_BIN%" %*',
+        'exit /b %ERRORLEVEL%',
+        ':call_pi',
         'call "%PI_BIN%" %*'
     )
     return (($lines -join "`r`n") + "`r`n")
