@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from verify_ownership import check_lock_file
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 GIT_URL = re.compile(r"^https://github\.com/[^/]+/[^/]+\.git$")
@@ -359,6 +361,7 @@ def main() -> int:
         action="store_true",
         help="also check the pinned branch with git ls-remote",
     )
+    parser.add_argument("--lock", type=Path, help="check a lock's ownership record")
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -378,6 +381,8 @@ def main() -> int:
     check_surface(failures)
     if args.online and pins:
         check_online(pins, failures)
+    if args.lock is not None:
+        check_lock_file(args.lock, failures)
 
     if failures:
         for failure in failures:

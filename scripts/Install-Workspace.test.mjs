@@ -1104,3 +1104,216 @@ withWorkspace('the workspace verifier checks the Pi wrappers and the Pi settings
   const restored = verify();
   assert.equal(restored.status, 0, `${restored.stdout}\n${restored.stderr}`);
 }, {});
+
+// The ownership record and -Status. A status run reads the record and the disk, and writes
+// nothing, so each test checks the files it could have changed.
+const lockPath = (ctx) => join(ctx.workspace, 'stack.lock.json');
+const settingsPath = (ctx) => join(ctx.workspace, '.pi', 'agent', 'settings.json');
+const verifyWorkspaceScript = join(repoRoot, 'scripts', 'verify-workspace-install.py');
+const verifyManifestsScript = join(repoRoot, 'scripts', 'verify-manifests.py');
+
+function runStatus(ctx, extra = []) {
+  return runInstaller(shell, ctx, ['-Status', ...extra], { apply: false });
+}
+
+// The status report: one "<state> <label>" line per path, then a summary line.
+function statusRows(run) {
+  return run.stdout
+    .split(/\r?\n/)
+    .map((line) => /^(matching|drifted|modified|missing|untracked)\s+(.+)$/.exec(line))
+    .filter(Boolean)
+    .map(([, state, label]) => ({ state, label: label.trim() }));
+}
+
+function problemRows(run) {
+  return statusRows(run).filter((row) => row.state !== 'matching');
+}
+
+withWorkspace('apply records an owned entry for every path it wrote, and the record validates', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  assert.equal(lock.ownedSchema, 1, 'the record has no schema version');
+  const owned = lock.owned;
+  const find = (path, kind, key) => owned.find((record) => record.path === path && record.kind === kind && (key === undefined || record.key === key));
+
+  assert.match(find('opencode.jsonc', 'file').sha256, /^[0-9A-F]{64}$/);
+  for (const plugin of ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']) {
+    assert.equal(find(`.claude/plugins/${plugin}`, 'link').target, `.opencode/plugins/${plugin}`, `the link of ${plugin}`);
+  }
+  assert.match(find('.claude/plugins/pstack', 'dir').sha256, /^[0-9A-F]{64}$/);
+  assert.match(find('.claude/cache/pstack', 'dir').sha256, /^[0-9A-F]{64}$/);
+  for (const plugin of ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']) {
+    assert.match(find(`.opencode/plugins/${plugin}`, 'dir').sha256, /^[0-9A-F]{64}$/, `the OpenCode folder of ${plugin}`);
+  }
+  for (const agent of ['pstack-agent.md', 'pstack-reviewer.md', 'pstack-comment-sicko.md']) {
+    assert.match(find(`.opencode/agents/${agent}`, 'file').sha256, /^[0-9A-F]{64}$/, `the profile ${agent}`);
+  }
+  for (const wrapper of ['copilot.cmd', 'copilot.sh', 'pi.cmd', 'pi.sh']) {
+    assert.match(find(`.maxstack/bin/${wrapper}`, 'file').sha256, /^[0-9A-F]{64}$/, `the wrapper ${wrapper}`);
+  }
+  assert.deepEqual(find('.pi/agent/settings.json', 'json-entries', 'packages').entries, ['../../.claude/cache/pstack']);
+  assert.equal(find('.pi/agent/settings.json', 'json-entries', 'skills').entries.length, 3, 'one skills entry per layer folder');
+
+  assert.ok(!owned.some((record) => record.path === 'stack.lock.json'), 'the lock records itself');
+  assert.equal(owned.length, 17, 'one record per path the install wrote; the two Pi lists hold one record each');
+  for (const name of readdirSync(join(ctx.workspace, '.maxstack', 'bin'))) {
+    assert.ok(find(`.maxstack/bin/${name}`, 'file'), `${name} is written but not recorded`);
+  }
+  for (const name of readdirSync(join(ctx.workspace, '.opencode', 'agents'))) {
+    assert.ok(find(`.opencode/agents/${name}`, 'file'), `${name} is written but not recorded`);
+  }
+
+  const check = spawnSync(python, [verifyManifestsScript, '--lock', lockPath(ctx)], { encoding: 'utf8' });
+  assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
+}, {});
+
+withWorkspace('a second apply with nothing to change leaves the lock byte-identical except generatedAt', (ctx) => {
+  mustApply(ctx);
+  const first = readFileSync(lockPath(ctx), 'utf8');
+  mustApply(ctx);
+  const second = readFileSync(lockPath(ctx), 'utf8');
+  const withoutTime = (text) => text.replace(/"generatedAt":\s*"[^"]*"/, '"generatedAt": ""');
+  assert.ok(readJson(lockPath(ctx)).owned.length > 0, 'the record is empty');
+  assert.equal(withoutTime(second), withoutTime(first));
+}, {});
+
+withWorkspace('status reports every owned path as matching after an apply, and writes nothing', (ctx) => {
+  mustApply(ctx);
+  const lockBefore = readFileSync(lockPath(ctx), 'utf8');
+  const settingsBefore = readFileSync(settingsPath(ctx), 'utf8');
+
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.equal(statusRows(run).length, 19, run.stdout);
+  assert.deepEqual([...new Set(statusRows(run).map((row) => row.state))], ['matching'], run.stdout);
+  assert.match(run.stdout, /Summary: 19 matching, 0 drifted, 0 modified, 0 missing, 0 untracked/);
+  assert.equal(runStatus(ctx, ['-Strict']).status, 0, '-Strict failed on a matching workspace');
+
+  assert.equal(readFileSync(lockPath(ctx), 'utf8'), lockBefore, 'status rewrote the lock');
+  assert.equal(readFileSync(settingsPath(ctx), 'utf8'), settingsBefore, 'status rewrote the Pi settings');
+}, {});
+
+withWorkspace('status reports a hand-edited file as modified, and -Strict fails on it', (ctx) => {
+  mustApply(ctx);
+  appendFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd'), 'rem hand edit\r\n');
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(problemRows(run), [{ state: 'modified', label: '.maxstack/bin/copilot.cmd' }], run.stdout);
+  assert.equal(runStatus(ctx, ['-Strict']).status, 1, '-Strict accepted a modified file');
+}, {});
+
+withWorkspace('status reports a deleted file as missing', (ctx) => {
+  mustApply(ctx);
+  rmSync(join(ctx.workspace, '.opencode', 'agents', 'pstack-reviewer.md'));
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(problemRows(run), [{ state: 'missing', label: '.opencode/agents/pstack-reviewer.md' }], run.stdout);
+}, {});
+
+withWorkspace('status reports a removed Pi entry alone, and never reports a key the installer does not own', (ctx) => {
+  mustApply(ctx);
+  const settings = readJson(settingsPath(ctx));
+  writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({
+    ...settings,
+    defaultModel: 'user-model',
+    packages: settings.packages.filter((entry) => entry !== '../../.claude/cache/pstack'),
+  }, null, 2));
+  const before = readFileSync(settingsPath(ctx), 'utf8');
+
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  const problems = problemRows(run);
+  assert.equal(problems.length, 1, run.stdout);
+  assert.equal(problems[0].state, 'missing');
+  assert.match(problems[0].label, /^\.pi\/agent\/settings\.json \[packages\] "\.\.\/\.\.\/\.claude\/cache\/pstack"$/, run.stdout);
+  assert.doesNotMatch(run.stdout, /defaultModel|user-model/, 'status reported a key the installer does not own');
+  assert.equal(readFileSync(settingsPath(ctx), 'utf8'), before, 'status rewrote the Pi settings');
+}, {});
+
+withWorkspace('a layer source that changed since the apply is drifted, not modified', (ctx) => {
+  mustApply(ctx);
+  writeFile(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin/skills/new-skill/SKILL.md', '---\nname: new-skill\ndescription: fixture\n---\nbody\n');
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(problemRows(run), [{ state: 'drifted', label: '.opencode/plugins/simpsonm09-org-ai-plugin' }], run.stdout);
+
+  mustApply(ctx);
+  assert.deepEqual(problemRows(runStatus(ctx)), [], 'an apply did not bring the record back to matching');
+}, {});
+
+withWorkspace('a file in .maxstack/bin that the record does not name is untracked', (ctx) => {
+  mustApply(ctx);
+  writeFile(ctx.workspace, '.maxstack/bin/notes.txt', 'not the installer\n');
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(problemRows(run), [{ state: 'untracked', label: '.maxstack/bin/notes.txt' }], run.stdout);
+  assert.equal(runStatus(ctx, ['-Strict']).status, 1, '-Strict accepted an untracked file');
+}, {});
+
+withWorkspace('a package-lock.json that npm writes beside an installed package.json is not part of the record', (ctx) => {
+  mustApply(ctx);
+  writeFile(ctx.workspace, '.opencode/plugins/simpsonm09-org-ai-plugin/package-lock.json', '{}\n');
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(statusRows(run).length > 0, 'the report named no path');
+  assert.deepEqual(problemRows(run), [], 'npm\'s lock file counted as a change to the folder');
+}, {});
+
+withWorkspace('a lock without an owned list gets the clear message, and -Strict fails on it', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  delete lock.owned;
+  delete lock.ownedSchema;
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /no ownership record; run -Apply once to create it/, run.stdout);
+  assert.equal(runStatus(ctx, ['-Strict']).status, 1, '-Strict accepted a workspace with no record');
+
+  mustApply(ctx);
+  assert.ok(readJson(lockPath(ctx)).owned.length > 0, 'apply did not create the record');
+}, {});
+
+withWorkspace('a workspace with no lock has no ownership record, and status writes no lock', (ctx) => {
+  const run = runStatus(ctx);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /no ownership record; run -Apply once to create it/, run.stdout);
+  assert.ok(!existsSync(lockPath(ctx)), 'status wrote a lock');
+}, {});
+
+withWorkspace('-Status and -Apply together are refused', (ctx) => {
+  const run = runInstaller(shell, ctx, ['-Status']);
+  assert.notEqual(run.status, 0, 'the installer accepted -Status with -Apply');
+  assert.match(plainOutput(run), /Choose one/);
+}, {});
+
+withWorkspace('the workspace verifier checks each owned path against the disk and refuses a malformed record', (ctx) => {
+  if (!python) return;
+  mustApply(ctx);
+  const home = join(ctx.base, 'home');
+  mkdirSync(home);
+  const verify = () => spawnSync(python, [verifyWorkspaceScript, '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8' });
+  assert.equal(verify().status, 0, 'the verifier refused a fresh apply');
+
+  const lock = readJson(lockPath(ctx));
+  lock.owned.find((record) => record.path === '.opencode/agents/pstack-reviewer.md').sha256 = 'F'.repeat(64);
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const drifted = verify();
+  assert.notEqual(drifted.status, 0, 'the verifier accepted a file that differs from its owned hash');
+  assert.match(plainOutput(drifted), /owned file .*pstack-reviewer\.md differs/);
+
+  mustApply(ctx);
+  const malformed = readJson(lockPath(ctx));
+  malformed.owned[0].path = 'opencode\\jsonc';
+  writeFileSync(lockPath(ctx), JSON.stringify(malformed));
+  const badPath = verify();
+  assert.notEqual(badPath.status, 0, 'the verifier accepted a backslash path');
+  assert.match(plainOutput(badPath), /path must be a workspace-relative path with forward slashes/);
+
+  mustApply(ctx);
+  const unowned = readJson(lockPath(ctx));
+  delete unowned.owned;
+  writeFileSync(lockPath(ctx), JSON.stringify(unowned));
+  assert.match(plainOutput(verify()), /has no owned list; rerun Install-Workspace\.ps1 -Apply/);
+}, {});

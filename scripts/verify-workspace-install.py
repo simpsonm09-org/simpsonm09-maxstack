@@ -15,6 +15,8 @@ import re
 import shutil
 import sys
 
+from verify_ownership import check_owned
+
 REQUIRED_SKILLS = (
     "poteto-mode",
     "setup-pstack",
@@ -32,6 +34,8 @@ PI_WRAPPERS = ("pi.cmd", "pi.sh")
 PI_ASK_LINE = 'set "AGENT_ACCESS_PI_ASK=allow"'
 PI_SH_ASK_LINE = "export AGENT_ACCESS_PI_ASK=allow"
 RUNTIMES = ("claude", "opencode", "copilot", "pi")
+# Trees are hashed without these folders at any depth, as Get-TreeSha256 does.
+TREE_SKIPPED_DIRS = ("node_modules", ".git")
 
 
 def default_workspace() -> str:
@@ -60,12 +64,14 @@ def sha256_hex(data: bytes) -> str:
 
 def tree_sha256(root: pathlib.Path) -> str:
     """Mirror Get-TreeSha256 in Install-Workspace.ps1: one line per file, relative path and
-    SHA-256, sorted, leaving out a top-level node_modules; then the SHA-256 of that text."""
+    SHA-256, sorted, leaving out node_modules, .git, and package-lock.json at any depth; then
+    the SHA-256 of that text."""
     lines = []
     for dirpath, dirnames, filenames in os.walk(root):
-        if pathlib.Path(dirpath) == root:
-            dirnames[:] = [name for name in dirnames if name != "node_modules"]
+        dirnames[:] = [name for name in dirnames if name not in TREE_SKIPPED_DIRS]
         for name in filenames:
+            if name == "package-lock.json":
+                continue
             full = pathlib.Path(dirpath) / name
             lines.append(
                 f"{full.relative_to(root).as_posix()}\t{sha256_hex(full.read_bytes())}"
@@ -450,6 +456,46 @@ def check_pi(lock: dict, workspace: pathlib.Path, failures: list[str]) -> None:
     check_pi_layers(lock, workspace, agent_dir, failures)
 
 
+def check_owned_on_disk(
+    lock: dict, workspace: pathlib.Path, failures: list[str]
+) -> None:
+    """Each owned record matches the disk: the file's hash, the folder's tree hash, the link's
+    target, or the Pi entries the settings list. The shape is checked by check_owned first."""
+    for record in lock.get("owned", []):
+        path = workspace / record["path"]
+        kind = record["kind"]
+        if kind == "file":
+            if not path.is_file():
+                failures.append(f"missing owned file: {path}")
+            elif sha256_hex(path.read_bytes()) != record["sha256"]:
+                failures.append(
+                    f"owned file {path} differs from the hash recorded in stack.lock.json"
+                )
+        elif kind == "dir":
+            if not path.is_dir():
+                failures.append(f"missing owned folder: {path}")
+            elif tree_sha256(path) != record["sha256"]:
+                failures.append(
+                    f"owned folder {path} differs from the tree hash recorded in stack.lock.json"
+                )
+        elif kind == "link":
+            target = workspace / record["target"]
+            if not is_link(path) or os.path.normcase(
+                os.path.realpath(path)
+            ) != os.path.normcase(os.path.realpath(target)):
+                failures.append(f"owned link {path} does not point at {target}")
+        else:
+            settings = read_json_object(path, failures)
+            if settings is None:
+                continue
+            listed = settings.get(record["key"], [])
+            for entry in record["entries"]:
+                if entry not in listed:
+                    failures.append(
+                        f"{path} does not list the owned {record['key']} entry {json.dumps(entry)}"
+                    )
+
+
 def check_global(home: pathlib.Path, failures: list[str]) -> None:
     global_skills = home / ".agents" / "skills"
     # Other tools own this folder too (the Cursor CLI installs its skills here), so
@@ -493,6 +539,10 @@ def main() -> int:
         check_opencode(lock, workspace, failures)
         check_copilot(lock, workspace, failures)
         check_pi(lock, workspace, failures)
+        owned_failures = len(failures)
+        check_owned(lock, failures)
+        if len(failures) == owned_failures:
+            check_owned_on_disk(lock, workspace, failures)
 
     check_global(home, failures)
 
