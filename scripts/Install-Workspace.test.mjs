@@ -97,7 +97,9 @@ function makeFixture(base) {
   const dir = join(base, 'pstack-src');
   const plugin = 'plugins/pstack';
   writeFile(dir, `${plugin}/.claude-plugin/plugin.json`, JSON.stringify({ name: 'pstack', version: '0.9.79' }));
-  writeFile(dir, `${plugin}/skills/poteto-mode/SKILL.md`, '---\nname: poteto-mode\ndescription: fixture\n---\nfixture body\n');
+  for (const skillId of ['poteto-mode', 'setup-pstack', 'principle-laziness-protocol']) {
+    writeFile(dir, `${plugin}/skills/${skillId}/SKILL.md`, `---\nname: ${skillId}\ndescription: fixture\n---\nfixture body\n`);
+  }
   writeFile(dir, `${plugin}/opencode/index.ts`, 'export default {};\n');
   writeFile(dir, `${plugin}/opencode/package.json`, JSON.stringify({ name: 'pstack-opencode', private: true }));
   writeFile(dir, `${plugin}/opencode/node_modules/@opencode/plugin/index.js`, 'module.exports = {};\n');
@@ -636,4 +638,31 @@ withWorkspace('audit reports a stale recorded plugin folder and removes nothing'
   assert.ok(existsSync(join(stale, 'index.ts')), 'audit removed the stale folder');
   assert.equal(readFileSync(lockPath, 'utf8'), lockBefore, 'audit rewrote the lock');
   assert.equal(readFileSync(configPath, 'utf8'), configBefore, 'audit rewrote the config');
+}, {});
+
+function findPython() {
+  for (const name of ['python', 'python3']) {
+    if (spawnSync(name, ['--version']).status === 0) return name;
+  }
+  return null;
+}
+
+const python = findPython();
+
+withWorkspace('the workspace verifier passes after an apply and flags a hand-edited Copilot wrapper', (ctx) => {
+  if (!python) return;
+  mustApply(ctx);
+  const home = join(ctx.base, 'home');
+  mkdirSync(home);
+  const verify = () => spawnSync(python, [join(repoRoot, 'scripts', 'verify-workspace-install.py'), '--workspace', ctx.workspace, '--home', home], { encoding: 'utf8' });
+
+  const passed = verify();
+  assert.equal(passed.status, 0, `${passed.stdout}\n${passed.stderr}`);
+  assert.match(passed.stdout, /PASS: workspace bundle present/);
+
+  const cmd = join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd');
+  appendFileSync(cmd, 'rem hand edit\r\n');
+  const edited = verify();
+  assert.notEqual(edited.status, 0, 'the verifier accepted an edited wrapper');
+  assert.match(plainOutput(edited), /copilot\.cmd differs from the text recorded in stack\.lock\.json/);
 }, {});
