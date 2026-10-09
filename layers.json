@@ -1,39 +1,44 @@
 {
   "layers": [
     {
-      "name": "pstack-opencode-plugin",
+      "name": "pstack",
       "kind": "plugin",
-      "path": "projects/repos/pstack-opencode-plugin",
-      "pluginTarget": "pstack-opencode",
-      "source": "https://github.com/simpsonm09-org/pstack-opencode-plugin.git",
-      "claude": {
-        "plugin": "pstack",
-        "git": {
-          "url": "https://github.com/michael-denyer/pstack-claude.git",
-          "path": "plugins/pstack",
-          "tag": "v0.9.73",
-          "commit": "8d3aa5719ab836e89482c894bbedd710224f4424"
-        }
+      "source": {
+        "url": "https://github.com/simpsonm09/pstack-claude.git",
+        "path": "plugins/pstack",
+        "commit": "fd80388968399918065e023152c02c1903efb9b4",
+        "ref": "feat/opencode-runtime"
+      },
+      "runtimes": {
+        "claude": {},
+        "opencode": {
+          "entry": "opencode/index.ts",
+          "agents": "opencode/agents",
+          "files": ["opencode", "skills"]
+        },
+        "copilot": {}
       }
     },
     {
       "name": "simpsonm09-org-ai-plugin",
       "kind": "config",
       "path": "projects/repos/simpsonm09-org-ai-plugin",
-      "pluginTarget": "simpsonm09-org-ai-plugin",
       "source": "https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin.git",
-      "claude": {
-        "plugin": "simpsonm09-org-ai-plugin"
+      "runtimes": {
+        "opencode": {},
+        "claude": {},
+        "copilot": {}
       }
     },
     {
       "name": "simpsonm09-personal-ai-plugin",
       "kind": "config",
       "path": "projects/repos/simpsonm09-personal-ai-plugin",
-      "pluginTarget": "simpsonm09-personal-ai-plugin",
       "source": "https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin.git",
-      "claude": {
-        "plugin": "simpsonm09-personal-ai-plugin"
+      "runtimes": {
+        "opencode": {},
+        "claude": {},
+        "copilot": {}
       }
     }
   ]
