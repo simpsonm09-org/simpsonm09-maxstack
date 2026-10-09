@@ -527,13 +527,39 @@ function Assert-PiKeyInstalled {
     }
 }
 
-# The installer's entries in one Pi list: the current entries without the ones it wrote last
-# time, then the wanted ones. Entries the user added stay where they are.
+# The canonical text of one Pi entry, so a string or an object compares by what it says.
+function Get-PiEntryKey {
+    param($Entry)
+
+    return (ConvertTo-Json -InputObject $Entry -Compress -Depth 20)
+}
+
+# One Pi list: every current entry except the ones the installer wrote last time, in order,
+# then each wanted entry the list does not already hold. Entries the user wrote are kept as
+# they are, even when two are alike, because Pi reads each of them.
 function Merge-PiEntries {
     param($Current, [string[]] $Wanted, $Owned)
 
-    $kept = @(@($Current) | Where-Object { $null -ne $_ -and $_ -notin @($Owned) })
-    return @(@($kept) + @($Wanted) | Select-Object -Unique)
+    $ownedKeys = @{}
+    foreach ($entry in @($Owned)) {
+        if ($null -ne $entry) { $ownedKeys[(Get-PiEntryKey $entry)] = $true }
+    }
+    $merged = [System.Collections.Generic.List[object]]::new()
+    $present = @{}
+    foreach ($entry in @($Current)) {
+        if ($null -eq $entry) { continue }
+        $key = Get-PiEntryKey $entry
+        if ($ownedKeys.ContainsKey($key)) { continue }
+        $merged.Add($entry)
+        $present[$key] = $true
+    }
+    foreach ($entry in $Wanted) {
+        $key = Get-PiEntryKey $entry
+        if ($present.ContainsKey($key)) { continue }
+        $merged.Add($entry)
+        $present[$key] = $true
+    }
+    return $merged.ToArray()
 }
 
 # The text of the workspace Pi settings. packages and skills are the only keys the installer

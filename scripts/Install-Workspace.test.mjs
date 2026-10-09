@@ -787,6 +787,27 @@ withWorkspace('the Pi settings list each package and skills folder, and keep the
   assert.ok(dropped.skills.includes('../../user/own-skills'), 'the user skills were removed');
 }, {});
 
+// Pi accepts package entries as objects, which the user may write with filters. Distinct
+// objects are distinct entries: none is collapsed, and their order holds.
+withWorkspace('the user object entries in the Pi packages survive a merge, in order, and repeat on a second apply', (ctx) => {
+  const alpha = { source: '../../user/alpha', filters: ['a'] };
+  const beta = { source: '../../user/beta' };
+  const settingsPath = join(ctx.workspace, '.pi', 'agent', 'settings.json');
+  writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({ packages: [alpha, '../../user/own', beta] }));
+
+  mustApply(ctx);
+  assert.deepEqual(readJson(settingsPath).packages, [alpha, '../../user/own', beta, '../../.claude/cache/pstack']);
+  mustApply(ctx);
+  assert.deepEqual(readJson(settingsPath).packages, [alpha, '../../user/own', beta, '../../.claude/cache/pstack'], 'a second apply changed the user entries');
+}, {});
+
+withWorkspace('an entry the user already lists is not written twice', (ctx) => {
+  const settingsPath = join(ctx.workspace, '.pi', 'agent', 'settings.json');
+  writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({ packages: ['../../.claude/cache/pstack'] }));
+  mustApply(ctx);
+  assert.deepEqual(readJson(settingsPath).packages, ['../../.claude/cache/pstack']);
+}, {});
+
 withWorkspace('a local layer is a Pi package only when its package.json names a pi key', (ctx) => {
   writeLayerStub(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), {
     claudePlugin: 'simpsonm09-org-ai-plugin',
