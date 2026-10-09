@@ -86,9 +86,9 @@ What Pi loads:
 
 - `packages` lists each layer whose `package.json` has a `pi` key. The pstack package is the root of its pinned cache, `.claude\cache\pstack`, because its `pi` key names paths from the repository root. It loads the pstack extension (`/loop`) and its skills.
 - `skills` lists each layer's installed skills folder. The org and personal skills load this way today.
-- The org layer's Pi tool-call gate arrives as a `pi` key on its branch, which is not merged yet. When it merges, the installer lists the org layer as a package. The installer refuses a `pi` key that names a file the installed copy does not carry, so the org layer's `files` list must include its `pi` folder.
+- The org layer's Pi tool-call gate is on its `main` branch, and its `package.json` has a `pi` key, so the installer lists the org layer as a package. The installer refuses a `pi` key that names a file, or a `package.json`, that the installed copy does not carry. The org layer's `files` list must therefore include its `pi` folder and `package.json`.
 
-The wrapper sets `AGENT_ACCESS_PI_ASK=allow`, as the Copilot wrapper does, so the org gate's `ask` becomes `allow` in T3 runs. Denials and the repository access level still apply. The variable has no effect until the org gate reads it.
+The wrapper sets `AGENT_ACCESS_PI_ASK=allow`, as the Copilot wrapper does, and the org gate reads that variable. So the gate's `ask` becomes `allow` in T3 runs. Denials and the repository access level still apply.
 
 Known limits:
 
@@ -97,7 +97,7 @@ Known limits:
 
 Verified: with the generated `pi.cmd` and the pinned pstack commit in a temporary workspace, `get_commands` in `rpc` mode lists 68 skills (pstack 58, org 6, personal 4) and the pstack `loop` extension, with no model call. The installer tests cover the wrappers, the settings merge, and the verifier.
 
-Not verified: the `piSimpsonm09` instance in a T3 session, any model turn, a login, the org gate under Pi, and `pi.sh` run with the real Pi CLI.
+Not verified: the `piSimpsonm09` instance in a T3 session, any model turn, a login, an org gate decision under a real Pi session (the rpc probe lists no commands for the gate), and `pi.sh` run with the real Pi CLI. On macOS, nothing in this section has been run.
 
 ## Not set up
 

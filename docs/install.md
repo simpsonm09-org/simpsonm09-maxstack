@@ -50,7 +50,7 @@ To test the wrapper without an install, pass a different executable: `-CopilotCo
 
 ## Pi
 
-`Install-Workspace.ps1` writes `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`. The wrappers set `PI_CODING_AGENT_DIR` to `.pi\agent`. `pi.cmd` runs the `pi` the installer found on `PATH`, so rerun the installer after moving Pi. `pi.sh` runs whichever `pi` is on `PATH` at run time. `MAXSTACK_PI_BIN` names another Pi for both. The settings hold a `packages` list and a `skills` list. The installer owns only those two keys and the entries it wrote last time: a `defaultProvider` or `defaultModel` the user sets stays, and the installer writes no model or provider. A layer is a Pi package only when its `package.json` has a `pi` key. See [T3 setup](t3-setup.md#pi-maxstack).
+`Install-Workspace.ps1` writes `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`. The wrappers set `PI_CODING_AGENT_DIR` to `.pi\agent`. `pi.cmd` runs the `pi` the installer found on `PATH`, so rerun the installer after moving Pi. `pi.sh` runs whichever `pi` is on `PATH` at run time. `MAXSTACK_PI_BIN` names another Pi for both. The wrappers bake absolute paths: the agent folder into both, and the Pi CLI into `pi.cmd`. After the workspace or Pi moves, rerun `Install-Workspace.ps1` to regenerate them. The settings hold a `packages` list and a `skills` list. The installer owns only those two keys and the entries it wrote last time: a `defaultProvider` or `defaultModel` the user sets stays, and the installer writes no model or provider. A layer is a Pi package only when its `package.json` has a `pi` key. See [T3 setup](t3-setup.md#pi-maxstack).
 
 ## Audit and apply
 
