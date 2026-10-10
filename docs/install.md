@@ -37,7 +37,7 @@ The selection is recorded in `stack.lock.json`, with each list sorted:
 The rules:
 
 - A plain `-Apply`, with no flags, reuses the recorded selection. It does not select a layer or runtime that `layers.json` gained after the selection was recorded.
-- A flag adds its names to the recorded selection, and never removes one. Naming a runtime or layer that is already selected prints `Already selected ...` and changes nothing. Removing one is the future `remove` command.
+- A flag adds its names to the recorded selection, and never removes one. Naming a runtime or layer that is already selected prints `Already selected ...` and changes nothing. Removing one is `-Remove`, described in [Removing and uninstalling](#removing-and-uninstalling).
 - `all` expands to every runtime or layer that `layers.json` names at the time of the run. The lock then records the expanded names, not the word `all`, so a layer added later is not selected until a flag names it.
 - An unnamed dimension keeps its recorded value. A new workspace with no flags selects every runtime and every layer, so a plain `-Apply` installs what it did before. A new workspace with `-Runtimes` selects exactly the runtimes named, and every layer unless `-Layers` names some.
 - A layer or runtime that `layers.json` names but the selection leaves out is reported on every apply, audit, and status, with the flag that adds it, for example `-Layers <name>`. `-Status` also lists it as `not selected`. It is not installed until a flag names it.
@@ -113,23 +113,29 @@ A layer that stops naming a runtime leaves its folder behind. `-Apply` removes a
 
 ## Ownership and status
 
-`-Apply` writes an ownership record into `stack.lock.json`: the `owned` list, with `ownedSchema: 1`. It names each path the apply wrote, sorted by path, kind, and key:
+`-Apply` writes an ownership record into `stack.lock.json`: the `owned` list, with `ownedSchema: 2`. It names each path the apply wrote, sorted by path, kind, and key. Each record also names the `runtime` it belongs to, or `null` for the claude cache, and the `layers` it was installed for, sorted, so `-Remove` can pick the records of what it removes:
 
 - `opencode.jsonc`, `.maxstack\bin\copilot.*`, `.maxstack\bin\pi.*`, and each agent profile in `.opencode\agents`: a `file` with its SHA-256.
 - `.claude\plugins\<layer>`: a `link` with its `target` for a local layer with `opencode` selected, or a `dir` for a pinned copy or a local copy of its items.
 - `.claude\cache\<layer>`: a `dir` for each pinned layer.
 - `.opencode\plugins\<layer>`: a `dir`.
 - `.pi\agent\settings.json`: one `json-entries` record for `packages` and one for `skills`. Each holds only the entries the installer added, and none when it added none. An entry the user already listed is the user's, so it is not recorded, and a second copy the user wrote beside an installer entry stays the user's.
-- `opencode.jsonc.bak` and `.pi\agent\settings.json.bak`: a `file` record each, once an apply has written the backup.
+- `opencode.jsonc.bak` and `.pi\agent\settings.json.bak`, and their numbered copies `.bak.N`: a `file` record each, once an apply has written it, with a `role`. An apply copies a file before it replaces it when the file exists, differs from the new text, and holds something other than the installer's last write. The name and role of the copy follow what the lock knows:
+  - `X.bak`, role `original`: the file the install first replaced. An apply never overwrites it. When a removal restored the file and stopped before its lock write, the file still holds the original bytes, so the next apply writes them back as `X.bak`, role `original`, and the file it replaces is kept as usual. When a lock is missing and an `X.bak` already exists that the installer did not write, the live file is copied to `X.bak.N` with role `original`, and the existing `X.bak` is recorded with role `user`.
+  - `X.bak.N`, role `edited`: a hand edit, or a change to a file the installer created. When an earlier backup already holds the same bytes, no copy is written, and the apply says where those bytes are kept.
+  - Role `user`: a backup the installer did not write. No removal restores or deletes it.
+  A lock from before roles names no role. Its plain `X.bak` is the original, and a numbered copy has no role and is never restored.
 
-A `json-entries` record for a key the installer created in a settings file that already existed carries `createdKey: true`. The top-level `createdDirs` lists each directory an apply created, and `createdFiles` each file it created (a settings file that already existed is not listed). Both are sorted, and both lists name only what was not there before the first apply.
+A `json-entries` record for a key the installer created in a settings file that already existed carries `createdKey: true`. The top-level `createdDirs` lists each directory an apply created, and `createdFiles` each file it created: `opencode.jsonc` and `.pi\agent\settings.json` when the apply created them, and not when they already existed. Both are sorted, and both lists name only what was not there before the first apply. The `pi` section records `settingsSha256`, the SHA-256 the last apply wrote to the Pi settings, so a backup can be put back only while the file still holds it.
 
 A `dir` record is the hash of what the installer wrote. An owned folder is wholly the installer's: each apply removes whatever the layer does not install, printing each removal, and replaces each item with a fresh copy. The hash covers each file's relative path and SHA-256, and each link by its target, and it leaves out `node_modules` and `.git` at any depth. The record holds no absolute path and does not list the lock itself. Re-applying with nothing to change leaves the lock the same except `generatedAt`.
 
 ```json
+"ownedSchema": 2,
 "owned": [
-  { "path": ".maxstack/bin/copilot.cmd", "kind": "file", "sha256": "…" },
-  { "path": ".pi/agent/settings.json", "kind": "json-entries", "key": "packages", "entries": ["../../.claude/cache/pstack"] }
+  { "path": ".maxstack/bin/copilot.cmd", "kind": "file", "sha256": "…", "runtime": "copilot", "layers": [] },
+  { "path": ".claude/cache/pstack", "kind": "dir", "sha256": "…", "runtime": null, "layers": ["pstack"] },
+  { "path": ".pi/agent/settings.json", "kind": "json-entries", "key": "packages", "entries": ["../../.claude/cache/pstack"], "runtime": "pi", "layers": ["pstack"] }
 ]
 ```
 
@@ -160,6 +166,65 @@ Limits of the record:
 - A backup the next apply would write is not reported until it exists.
 - Apply does not remove the agent profiles of a layer that stopped installing them, nor the cache of a removed pinned layer. Those files drop out of the record at the next apply.
 - A lock from before the record has no `owned` list, so status reports no record until one apply. That apply takes the entries its `pi` section lists as the installer's, and the claude `treeSha256` values keep the legacy rule, so they do not report `differs` after the upgrade.
+- A lock at `ownedSchema: 1` names no runtime or layer for its records, so `-Remove` refuses it until one `-Apply` writes version 2. `-Uninstall` still works from it when it has an `owned` list, because it names each path directly. Its plain `X.bak` is restored as the original while the config still holds the installer's text, and a config with no backup is taken as the installer's, since that lock records no created config. An upgrade apply over such a lock records that config as created in the same way, so the upgraded lock removes it on uninstall.
+
+## Removing and uninstalling
+
+`-Remove` removes the runtimes or layers it names. `-Uninstall` removes everything the lock records, then the lock files. Both print a plan and write nothing until `-Apply` is given:
+
+```powershell
+pwsh -File scripts/Install-Workspace.ps1 -Remove -Runtimes pi
+pwsh -File scripts/Install-Workspace.ps1 -Remove -Runtimes pi -Apply
+pwsh -File scripts/Install-Workspace.ps1 -Remove -Layers simpsonm09-personal-ai-plugin -Apply
+pwsh -File scripts/Install-Workspace.ps1 -Uninstall -Apply
+```
+
+The rules:
+
+- `-Remove` needs `-Runtimes` or `-Layers`, and `-Uninstall` takes neither. The two switches exclude each other, and neither takes `-Status`. `-Strict` exits 1 when a removal skips anything, in a dry run or an apply.
+- `-Remove` needs a lock with `ownedSchema: 2` and an `owned` list, because it picks each record by its runtime and layers. `-Uninstall` needs only an `owned` list, so it also works from an `ownedSchema: 1` lock. A lock with no `owned` list is refused with `it has no owned list`, and a lock at another schema version with `its ownedSchema is N`. Each refusal says to run `Install-Workspace.ps1 -Apply once` and writes nothing. A workspace with no lock but some of the installer's outputs is refused the same way. A workspace with no lock and none of them has nothing to remove, and says so.
+- `-Remove` takes each name out of the recorded selection. A name that is not selected removes nothing, and the run says so. It then applies the remaining selection, so a claude junction whose OpenCode copy was removed becomes a copy, and it deletes the records the remaining selection no longer produces.
+- `-Remove` refuses a removal that leaves `copilot` or `pi` selected without `claude`, and one that leaves no runtime or no layer. Name each runtime that needs it in the same command, for example `-Remove -Runtimes claude,copilot,pi`, or use `-Uninstall`.
+- `-Uninstall` deletes the lock files (`stack.lock.json`, `.bak`, and `.new`) only when nothing was skipped. Otherwise it prints `N items skipped; lock kept; rerun -Uninstall -Apply to retry.` and keeps the lock, with only the records still owed. It exits 0 in that case, and 1 with `-Strict`. `-Remove -Apply` prints the matching line, `N items skipped; lock kept; rerun -Remove -Apply to retry.` When a removal that finishes keeps files on disk, its final line names them, as `Uninstalled: the lock files are removed. Kept on disk, not restored or deleted: <paths>.` Without kept files it says that every recorded path was removed.
+- Each run ends with a `Summary:` line that counts each state.
+- A second run changes nothing and says `Nothing to remove`.
+
+Each path is printed with one state:
+
+| State | Meaning |
+| --- | --- |
+| `DELETE` | The record matches the disk, so the installer removes the path. A folder is first renamed to `<name>.maxstack-removing` beside it, then the renamed folder is deleted. |
+| `RESTORE` | The installer replaced a file. Its original backup goes back in place, and the backup is removed. A backup whose file already holds its bytes is removed without a copy. |
+| `GONE` | The path is already absent, so the record is complete and nothing is deleted. The record leaves the lock. `-Strict` does not count it. |
+| `KEEP` | The record is finished, and what is left is not the installer's to delete, such as a folder that holds a user file, a settings file with keys the installer did not write, or a backup copy that is kept. |
+| `SKIP` | The disk differs from the record, or the path is not safe to act on, or a folder is in use. Nothing is deleted, and the record stays in the lock. |
+
+The deletion rules. Each one must hold for a path to be deleted:
+
+1. A file is deleted only if its SHA-256 equals the record. A folder is deleted only if its tree hash equals the record, and a record with no hash is a `SKIP`. The tree hash covers each file's relative path and SHA-256, and each link by its target. It leaves out `node_modules` and `.git` at any depth (see [Excluded folders](#excluded-folders)). So a file added to an owned folder, or a changed file outside those two folders, makes the folder a `SKIP` as `modified by hand`.
+2. A link is deleted as a link, and only while it points at the recorded target. The target is never read or changed. A junction inside a deleted folder is removed as a link the same way.
+3. The Pi settings file loses only the entries the record names, each from the key it was written to, after a strict JSON parse. Every other key and entry stays. A key the installer created is removed once its list is empty. When the installer created the file, and only its empty `packages` and `skills` lists remain, the file is deleted. A file that is not strict JSON (comments, trailing commas, or not an object) is a `SKIP` and is left as it is.
+4. A replaced file is put back from its original backup (role `original`, or a plain `X.bak` in a lock from before roles) only while the file still holds the text the last apply wrote, and the backup still holds the bytes its record names. The copy is written beside the file and replaced over it, so a failed restore leaves no copy behind. Otherwise the file is not restored. For the config, a changed config is a `SKIP` that keeps its original, or, for a plain `X.bak` from a lock before roles, a `KEEP` of the config that names the original in the summary. The Pi settings lose only the installer's entries, and the backup is a `KEEP`, or a `SKIP` when the settings are not strict JSON.
+5. A folder the installer created is deleted only when it is empty, deepest first. A folder that existed before the install is kept with its user files, and a folder the installer did not record is never deleted.
+6. A recorded path must resolve inside the workspace, and no folder on its way may be a junction. A path that fails this is a `SKIP`, with one of three reasons: `outside the workspace: the record does not name a workspace path`, `outside the workspace: the path resolves outside it`, or `outside the workspace: a folder on its path is a junction`. Nothing outside the workspace is read or changed.
+7. A removal never touches a file the record does not name. The retired `pstack-opencode` folder, the pinned caches the record does not name, and the user's own files are left alone.
+8. The lock is rewritten after each item that finishes, so an interrupted run leaves it listing only what is still owed. A run that stops after a delete, or after a restore, but before its lock write leaves that record in the lock. The rerun reports it as `GONE`: the path is absent, or, for a restored config, the config holds the bytes of its original backup, and the record completes as already restored. A retry finishes the rest.
+
+Backups, in more detail. Only the role `original` copy is restored. Numbered `edited` copies and `user` copies are kept, and the summary names them. A changed original is kept, and a missing one is `GONE`. If the config is missing when the removal runs, its original is kept and the config's record is `GONE`. A removal never deletes a `user` copy.
+
+Before each action, the path is resolved again, its junctions are checked again, and its hash is checked against the plan. A change since the plan is a `SKIP` with the reason `changed since the plan: rerun the command to plan it again`. A Pi settings write re-hashes the file just before it writes, and then writes through a temporary file.
+
+A folder is recorded in the lock with its quarantine name, `<name>.maxstack-removing`, and then renamed to that name before it is deleted. A file held open by another process makes the rename fail, and the folder stays unchanged as a `SKIP` with `in use: could not be renamed`. If a file is held open during the delete, the quarantine stays, the item is a `SKIP` with `in use: part of it could not be deleted; it is quarantined as ...`, and a rerun deletes the quarantine. A rerun resumes a quarantine only when the lock names it for that folder and its tree still has the recorded hash. A plain apply does the same check first: when the journaled hash still matches, it deletes the quarantine before it writes the folder again, and it prints that once. Otherwise it keeps the quarantine and the journal, prints the folder and the reason once, and writes the folder again beside it. Any other folder with that name is a `SKIP` (`in the way`), and it is kept.
+
+Leftover copies. An interrupted write or removal can leave `X.uninstall-restore`, `X.uninstall-replaced`, `X.maxstack-tmp`, or `X.maxstack-old` beside a recorded file `X`. Every apply and removal reports them. A copy whose bytes the lock records for `X`, for its backups, or as the text the installer last wrote is deleted. Any other copy is a `SKIP` with the reason `a leftover copy of X whose bytes the lock does not record, so it is kept`. It stays on disk, and a removal keeps the lock for it. An apply names a quarantine folder that an interrupted removal left, and a removal resumes it through its record.
+
+A `SKIP` is a path the installer cannot account for as its own: a file edited by hand, a folder that changed, a folder in use, or a record that points outside the workspace. The skip names the path and the reason. Fix the cause, and rerun the same command. A file that was deleted by hand is reported as `GONE` by a removal, which drops its record. `-Status` reports it as `missing` until then.
+
+### Excluded folders
+
+`node_modules` and `.git` inside an owned folder are not part of its tree hash. A change under either one does not make the folder a `SKIP`, and a removal deletes each of them with the folder, because they are the installer's copy. Files a user put only in those two folders are deleted too. The plan prints each excluded folder it will delete with its file count and total size, for example `also deletes the excluded folders .claude/cache/pstack/.git (35 files, 36139 bytes)`. A junction under an excluded folder is removed as a link, and its target is kept. A junction under an excluded folder that leads outside the workspace makes the whole owned folder a `SKIP`, with the reason `refused: a junction under ... leads outside the workspace`.
+
+After a partial uninstall the lock still describes the selection, so `verify-workspace-install.py` reports the removed paths as missing until the rerun finishes.
 
 ## A legacy global install
 
