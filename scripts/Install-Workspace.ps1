@@ -1914,6 +1914,14 @@ function Get-ConfigGroupItems {
         $state = Get-BackupState $original
         $replacedEntry = Resolve-WorkspaceEntry $name
         if ($state -eq 'missing') {
+            # The backup is deleted by a restore, so a backup that is gone with the config holding its bytes means a run
+            # restored the config and stopped before it wrote the lock. The restore is complete: the record is finished.
+            if ($replacedEntry.ok -and (Test-RecordedFile -Full $replacedEntry.full -Sha256 $original.sha256)) {
+                $restored = @($original)
+                if ($null -ne $File) { $restored += $File }
+                $items.Add((New-GoneItem $name $restored "already restored: $name holds the bytes of its original backup, which an earlier run restored before it stopped"))
+                return $items.ToArray()
+            }
             $items.Add((New-GoneItem $original.path @($original) 'already gone: the original backup is missing'))
         } elseif ($state -eq 'modified') {
             $items.Add((New-KeepBackupItem $original 'kept: the original backup changed by hand, so it is not restored'))

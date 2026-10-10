@@ -2797,3 +2797,22 @@ withWorkspace('a hand edit of files the installer created is kept as an edited c
   assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc')), false, 'the installer-created config was not removed');
   assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), false);
 }, {});
+
+// Review 2, item 3: a run that restored the config and stopped before its lock write must finish on the next run. The
+// backup is gone and the config holds its bytes, so the restore is complete, not a hand edit to skip.
+withWorkspace('a run that stops after restoring the config and before its lock write finishes on the next run', (ctx) => {
+  const original = '{\n  "original": true\n}\n';
+  writeFile(ctx.workspace, 'opencode.jsonc', original);
+  mustApply(ctx);
+  const crashed = withHook('crash:opencode.jsonc', () => removal(ctx, ['-Uninstall']));
+  assert.notEqual(crashed.status, 0, `the injected fault did not stop the run\n${crashed.stdout}`);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), original, 'the restore did not happen before the fault');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), false);
+  assert.equal(existsSync(lockPath(ctx)), true, 'the lock was written before the fault');
+  const retry = removal(ctx, ['-Uninstall']);
+  assertOk(retry);
+  assert.doesNotMatch(retry.stdout, /modified by hand/, retry.stdout);
+  assert.match(retry.stdout, /^GONE\s+opencode\.jsonc\s+already restored/m, retry.stdout);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), original, 'the retry changed the restored config');
+  assert.equal(existsSync(lockPath(ctx)), false, 'the retry did not remove the lock');
+}, {});
