@@ -2768,3 +2768,32 @@ withWorkspace('a user backup beside the live config is kept, and the live config
   assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'utf8'), userBackup, 'the user backup changed on uninstall');
   assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak.1')), false, 'the restored copy was left behind');
 }, {});
+
+// Review 2, item 2: the installer created the config and the Pi settings. A hand edit of either, made after the first
+// apply, is an edited copy. It is never the original, so uninstall does not put it back as the file the install replaced.
+withWorkspace('a hand edit of files the installer created is kept as an edited copy, and uninstall never restores it as the original', (ctx) => {
+  mustApply(ctx);
+  const handConfig = '{\n  "hand": "config"\n}\n';
+  const handSettings = '{\n  "packages": [\n    "hand-package"\n  ]\n}\n';
+  writeFileSync(join(ctx.workspace, 'opencode.jsonc'), handConfig);
+  writeFileSync(settingsPath(ctx), handSettings);
+  mustApply(ctx);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak.1'), 'utf8'), handConfig, 'the config edit was not kept as an edited copy');
+  assert.equal(readFileSync(`${settingsPath(ctx)}.bak.1`, 'utf8'), handSettings, 'the settings edit was not kept as an edited copy');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), false, 'a hand edit became the original config backup');
+  assert.equal(existsSync(`${settingsPath(ctx)}.bak`), false, 'a hand edit became the original settings backup');
+  const lock = readJson(lockPath(ctx));
+  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak.1', 'file').role, 'edited');
+  assert.equal(ownedRecord(lock, '.pi/agent/settings.json.bak.1', 'file').role, 'edited');
+
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  assert.doesNotMatch(run.stdout, /^RESTORE\s+opencode\.jsonc\s/m, run.stdout);
+  assert.doesNotMatch(run.stdout, /^RESTORE\s+\.pi\/agent\/settings\.json\s/m, run.stdout);
+  assert.match(run.stdout, /^KEEP\s+opencode\.jsonc\.bak\.1\s/m, run.stdout);
+  assert.match(run.stdout, /^KEEP\s+\.pi\/agent\/settings\.json\.bak\.1\s/m, run.stdout);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak.1'), 'utf8'), handConfig, 'the kept edit changed');
+  // The second apply wrote the installer's text back, so the config is the installer's and is removed; the edit is not put back.
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc')), false, 'the installer-created config was not removed');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), false);
+}, {});
