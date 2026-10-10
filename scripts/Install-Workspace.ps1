@@ -1199,7 +1199,7 @@ function Get-PriorBackupRole {
     if ($null -eq $priorOwned) { return 'user' }
     $prior = @($priorOwned | Where-Object { $_.path -ceq $Relative -and $_.kind -eq 'file' }) | Select-Object -First 1
     if ($null -eq $prior) { return 'user' }
-    return (Get-Field $prior 'role')
+    return (Get-BackupRole $prior)
 }
 
 # One record of the ownership list. A file or folder holds its SHA-256, a folder a tree hash; a link
@@ -1859,10 +1859,15 @@ function Get-BackupState {
     return 'modified'
 }
 
+# The role of a backup record. A lock from before roles names none, and then a plain X.bak is the file the install first
+# replaced: only a file that existed before an install was given a plain .bak. A numbered copy from such a lock has no role.
 function Get-BackupRole {
     param($Record)
 
-    return (Get-Field $Record 'role')
+    $role = Get-Field $Record 'role'
+    if ($null -ne $role) { return $role }
+    if ($Record.path -cmatch '\.bak$') { return 'original' }
+    return $null
 }
 
 # Why a backup a removal does not restore is kept: the user's own copy, or an earlier version of the file.
@@ -1899,7 +1904,9 @@ function New-RestoreItem {
 }
 
 # The opencode.jsonc group: the config the installer wrote, and its backups. The original is restored only while the
-# config still holds the text the last apply wrote. Otherwise the config's own records are removed, and the copies are kept.
+# config still holds the text the last apply wrote. Otherwise the config's own records are removed, and the copies are
+# kept. A legacy original (a plain .bak from a lock before roles) is restored under the same test, and only when its bytes
+# differ from the installer's text. A changed config with a legacy original is kept as it is, and the original is named.
 function Get-ConfigGroupItems {
     param($File, [object[]] $Backups, [bool] $Created)
 
@@ -1909,7 +1916,12 @@ function Get-ConfigGroupItems {
     foreach ($copy in @($Backups | Where-Object { $null -eq $original -or $_.path -cne $original.path })) {
         $items.Add((New-KeepBackupItem $copy (Get-KeepCopyReason $copy)))
     }
-    $originalHandled = $false
+    $legacy = ($null -ne $original) -and ($null -eq (Get-Field $original 'role'))
+    if ($legacy -and $null -ne $File -and $original.sha256 -eq $File.sha256) {
+        # A copy with the installer's own text is no earlier version of the config, so it is kept and never restored.
+        $items.Add((New-KeepBackupItem $original 'kept: a copy of the installer''s own text, not restored'))
+        $original = $null
+    }
     if ($null -ne $original) {
         $state = Get-BackupState $original
         $replacedEntry = Resolve-WorkspaceEntry $name
@@ -1925,10 +1937,9 @@ function Get-ConfigGroupItems {
             $items.Add((New-GoneItem $original.path @($original) 'already gone: the original backup is missing'))
         } elseif ($state -eq 'modified') {
             $items.Add((New-KeepBackupItem $original 'kept: the original backup changed by hand, so it is not restored'))
-            $originalHandled = $true
         } elseif ($null -eq $File) {
             $items.Add((New-KeepBackupItem $original 'kept: the file it replaced is not in the record'))
-            $originalHandled = $true
+            return $items.ToArray()
         } elseif ($replacedEntry.ok -and (Test-RecordedFile -Full $replacedEntry.full -Sha256 $original.sha256)) {
             $items.Add((New-RemovalItem -State RESTORE -Path $name -Reason "already holds $($original.path): its backup is removed" -Action 'drop-backup' -Records (@($original) + @($File)) -Gone @($original.path) -Source (Resolve-WorkspaceEntry $original.path).full -ExpectSource $original.sha256))
             return $items.ToArray()
@@ -1938,6 +1949,10 @@ function Get-ConfigGroupItems {
         } elseif ($null -eq (Get-EntryItem $replacedEntry.full)) {
             $items.Add((New-KeepBackupItem $original 'kept: the config is missing, so the original is kept'))
             $items.Add((New-GoneItem $name @($File) 'already gone: opencode.jsonc is missing'))
+            return $items.ToArray()
+        } elseif ($legacy) {
+            $items.Add((New-RemovalItem -State KEEP -Path $name -Reason "kept: it changed since the install, so the original is not restored; the original is in $($original.path)" -Records @($File)))
+            $items.Add((New-KeepBackupItem $original 'kept: the config changed since the install, so this original is not restored'))
             return $items.ToArray()
         } else {
             $items.Add((New-SkipItem $name 'modified by hand: kept with its original backup, which is not restored'))
@@ -1972,6 +1987,7 @@ function Get-SettingsGroupItems {
         $replacedEntry = Resolve-WorkspaceEntry $name
         if ($state -eq 'missing') {
             $items.Add((New-GoneItem $original.path @($original) 'already gone: the original backup is missing'))
+            $originalHandled = $true
         } elseif ($state -eq 'modified') {
             $items.Add((New-KeepBackupItem $original 'kept: the original backup changed by hand, so it is not restored'))
             $originalHandled = $true
@@ -1980,9 +1996,15 @@ function Get-SettingsGroupItems {
             return $items.ToArray()
         }
     }
-    foreach ($item in @(Get-SettingsEditItems -Records $Records -Created ($Created -and $null -eq $original))) { $items.Add($item) }
+    $edits = @(Get-SettingsEditItems -Records $Records -Created ($Created -and $null -eq $original))
+    foreach ($item in $edits) { $items.Add($item) }
     if (-not $originalHandled -and $null -ne $original) {
-        $items.Add((New-KeepBackupItem $original 'kept: the settings file was edited, so only the installer entries were removed'))
+        # The backup stays owed, as a skip, while the settings file could not be edited: the lock must keep it for a rerun.
+        if (@($edits | Where-Object { $_.state -eq 'SKIP' }).Count -gt 0) {
+            $items.Add((New-SkipItem $original.path 'kept: the settings file could not be edited, so its original stays in place'))
+        } else {
+            $items.Add((New-KeepBackupItem $original 'kept: the original is not restored; only the installer entries were removed'))
+        }
     }
     return $items.ToArray()
 }
@@ -2114,7 +2136,9 @@ function Get-RemovalPlanItems {
         if ($members.Count -eq 0) { continue }
         $file = @($members | Where-Object { $_.path -ceq $group -and $_.kind -eq 'file' }) | Select-Object -First 1
         $backups = @($members | Where-Object { $_.path -cmatch ('^' + [regex]::Escape($group) + '\.bak(\.\d+)?$') })
-        $created = $CreatedFiles -ccontains $group
+        # A lock from before schema 2 records createdFiles for the Pi settings only. There, a file with no backup was
+        # made by the installer, since a file that existed before an install always got one.
+        $created = ($CreatedFiles -ccontains $group) -or ($priorLegacy -and $backups.Count -eq 0)
         $groupItems = @()
         try {
             if ($group -eq 'opencode.jsonc') {
@@ -2438,7 +2462,12 @@ function Invoke-UninstallFlow {
         foreach ($file in @($stackTarget, "$stackTarget.bak", "$stackTarget.new")) {
             if (Test-Path -LiteralPath $file -PathType Leaf) { Remove-Item -LiteralPath $file -Force }
         }
-        Write-Host 'Uninstalled: every recorded path was removed, and the lock files with it.'
+        $kept = @($items | Where-Object { $_.state -eq 'KEEP' } | ForEach-Object { $_.path })
+        if ($kept.Count -eq 0) {
+            Write-Host 'Uninstalled: every recorded path was removed, and the lock files with it.'
+        } else {
+            Write-Host "Uninstalled: the lock files are removed. Kept on disk, not restored or deleted: $($kept -join ', ')."
+        }
     } else {
         Write-Host "$skipped items skipped; lock kept; rerun -Uninstall -Apply to retry."
     }
@@ -2482,8 +2511,11 @@ $priorOwned = $null
 # The directories and files an earlier apply recorded as created by the installer.
 $priorCreatedDirs = @()
 $priorCreatedFiles = @()
+# A lock from before schema 2: its records name no runtime or layer, and its createdFiles is partial.
+$priorLegacy = $false
 if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
     $priorStack = Read-PriorLock
+    $priorLegacy = ((Get-Field $priorStack 'ownedSchema') -ne $ownedSchemaVersion)
     foreach ($priorLayer in @($priorStack.layers)) {
         $priorLayers[$priorLayer.name] = $priorLayer
     }

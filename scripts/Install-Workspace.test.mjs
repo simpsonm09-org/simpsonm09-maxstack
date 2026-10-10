@@ -2635,15 +2635,17 @@ withWorkspace('a modified original backup is kept and not restored, and the conf
   assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc')), false, 'the config was not removed by its own record');
 }, {});
 
-withWorkspace('a settings backup with no role, from an older lock, is never restored: only the installer entries are removed', (ctx) => {
+// A plain .bak with no role is the file the install first replaced (review 2, item 4), so it is restored while the
+// settings still hold the installer's text. The user's entries come back with it.
+withWorkspace('a settings backup with no role is the file the install replaced, and it is restored while the settings hold the installer text', (ctx) => {
   writeFile(ctx.workspace, '.pi/agent/settings.json', USER_SETTINGS);
   mustApply(ctx);
   const lock = readJson(lockPath(ctx));
   delete ownedRecord(lock, '.pi/agent/settings.json.bak', 'file').role;
   setLock(ctx, lock);
   assertOk(removal(ctx, ['-Uninstall']));
-  assert.equal(readFileSync(`${settingsPath(ctx)}.bak`, 'utf8'), USER_SETTINGS, 'the old backup was deleted');
-  assert.deepEqual(readJson(settingsPath(ctx)).packages, ['user-package'], 'the user entry was lost');
+  assert.equal(readFileSync(settingsPath(ctx), 'utf8'), USER_SETTINGS, 'the file the install replaced was not restored');
+  assert.equal(existsSync(`${settingsPath(ctx)}.bak`), false, 'the restored backup was left behind');
 }, {});
 
 withWorkspace('a node_modules folder inside an owned folder is counted in the plan, and a junction under it that leads outside refuses the folder', (ctx) => {
@@ -2815,4 +2817,49 @@ withWorkspace('a run that stops after restoring the config and before its lock w
   assert.match(retry.stdout, /^GONE\s+opencode\.jsonc\s+already restored/m, retry.stdout);
   assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), original, 'the retry changed the restored config');
   assert.equal(existsSync(lockPath(ctx)), false, 'the retry did not remove the lock');
+}, {});
+
+// Review 2, item 4: real schema-1 locks. scripts/fixtures/schema1 holds the stack.lock.json, the config, and the Pi
+// settings that the pre-branch installer (28872d2) wrote in two workspaces, with the machine path replaced by a placeholder
+// and every recorded hash recomputed for the normalised bytes.
+const SCHEMA1 = join(repoRoot, 'scripts', 'fixtures', 'schema1');
+
+function seedSchema1(ctx, name, files) {
+  for (const [rel, fixtureFile] of files) writeFile(ctx.workspace, rel, readFileSync(join(SCHEMA1, name, fixtureFile)));
+  writeFile(ctx.workspace, 'stack.lock.json', readFileSync(join(SCHEMA1, name, 'stack.lock.json')));
+}
+
+withWorkspace('a real schema-1 lock with a pre-existing config restores the original from its role-less backup', (ctx) => {
+  seedSchema1(ctx, 'preexisting-config', [['opencode.jsonc', 'opencode.jsonc'], ['opencode.jsonc.bak', 'opencode.jsonc.bak']]);
+  const original = readFileSync(join(SCHEMA1, 'preexisting-config', 'opencode.jsonc.bak'), 'utf8');
+  assert.equal(readJson(lockPath(ctx)).ownedSchema, 1);
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  assert.match(run.stdout, /^RESTORE\s+opencode\.jsonc\s/m, run.stdout);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), original, 'the original was not restored');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), false, 'the restored backup was left behind');
+  assert.equal(existsSync(lockPath(ctx)), false, 'the lock remains');
+}, {});
+
+withWorkspace('a real schema-1 lock whose config changed since the install keeps the config and names the original in its backup', (ctx) => {
+  seedSchema1(ctx, 'preexisting-config', [['opencode.jsonc', 'opencode.jsonc'], ['opencode.jsonc.bak', 'opencode.jsonc.bak']]);
+  const changed = '{\n  "changed": true\n}\n';
+  writeFile(ctx.workspace, 'opencode.jsonc', changed);
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), changed, 'the changed config was deleted or overwritten');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), true, 'the original backup was deleted');
+  assert.match(run.stdout, /^KEEP\s+opencode\.jsonc\s+kept: it changed since the install, so the original is not restored; the original is in opencode\.jsonc\.bak/m, run.stdout);
+  assert.match(run.stdout, /Kept on disk, not restored or deleted: .*opencode\.jsonc\.bak/, run.stdout);
+  assert.doesNotMatch(run.stdout, /every recorded path was removed/, 'the summary claims a removal that did not happen');
+}, {});
+
+withWorkspace('a real schema-1 lock from a fresh install deletes the config and settings the installer created', (ctx) => {
+  seedSchema1(ctx, 'fresh', [['opencode.jsonc', 'opencode.jsonc'], ['.pi/agent/settings.json', 'settings.json']]);
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  assert.match(run.stdout, /^DELETE\s+opencode\.jsonc\s/m, run.stdout);
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc')), false, 'the installer-created config was kept');
+  assert.equal(existsSync(join(ctx.workspace, '.pi', 'agent', 'settings.json')), false, 'the installer-created settings were kept');
+  assert.equal(existsSync(lockPath(ctx)), false, 'the lock remains');
 }, {});
