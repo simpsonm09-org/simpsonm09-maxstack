@@ -2978,3 +2978,95 @@ withWorkspace('a plain apply names a quarantine folder beside a recorded folder,
   assert.match(run.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\.maxstack-removing\s+a folder with the removal quarantine name/m, run.stdout);
   assert.equal(readFileSync(join(quarantine, 'left.txt'), 'utf8'), 'left\n', 'the apply changed the quarantine folder');
 }, {});
+
+// Review 3, item 1: a restore that stopped before its lock write, then a plain apply. The live file is the original again,
+// so the apply writes it back as the original, and uninstall restores it byte for byte.
+withWorkspace('a plain apply after a config restore that stopped keeps the user config as the original, and uninstall restores it byte for byte', (ctx) => {
+  const user = '{\n  "user": "config"\n}\n';
+  writeFile(ctx.workspace, 'opencode.jsonc', user);
+  mustApply(ctx);
+  const crashed = withHook('crash:opencode.jsonc', () => removal(ctx, ['-Uninstall']));
+  assert.notEqual(crashed.status, 0, `the injected fault did not stop the run\n${crashed.stdout}`);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), user, 'the restore did not happen before the fault');
+  mustApply(ctx);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'utf8'), user, 'the user config was not kept as the original');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak.1')), false, 'the user config was filed as an edited copy');
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), user, 'the user config was not restored byte for byte');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), false, 'the restored original was left behind');
+}, {});
+
+withWorkspace('a plain apply after a Pi settings restore that stopped keeps the user settings as the original, and uninstall restores them byte for byte', (ctx) => {
+  writeFile(ctx.workspace, '.pi/agent/settings.json', USER_SETTINGS);
+  mustApply(ctx);
+  const crashed = withHook('crash:.pi/agent/settings.json', () => removal(ctx, ['-Uninstall']));
+  assert.notEqual(crashed.status, 0, `the injected fault did not stop the run\n${crashed.stdout}`);
+  assert.equal(readFileSync(settingsPath(ctx), 'utf8'), USER_SETTINGS, 'the restore did not happen before the fault');
+  mustApply(ctx);
+  assert.equal(readFileSync(`${settingsPath(ctx)}.bak`, 'utf8'), USER_SETTINGS, 'the user settings were not kept as the original');
+  assert.equal(existsSync(`${settingsPath(ctx)}.bak.1`), false, 'the user settings were filed as an edited copy');
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(readFileSync(settingsPath(ctx), 'utf8'), USER_SETTINGS, 'the user settings were not restored byte for byte');
+}, {});
+
+// Review 3, item 2: an upgrade apply over a real schema-1 lock records the config the way uninstall infers it.
+withWorkspace('an upgrade apply over a real schema-1 fresh lock records the config as created, and uninstall removes it and the settings', (ctx) => {
+  seedSchema1(ctx, 'fresh', [['opencode.jsonc', 'opencode.jsonc'], ['.pi/agent/settings.json', 'settings.json']]);
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  assert.equal(lock.ownedSchema, 2);
+  assert.ok(lock.createdFiles.includes('opencode.jsonc'), `createdFiles ${JSON.stringify(lock.createdFiles)}`);
+  const run = removal(ctx, ['-Uninstall']);
+  assertOk(run);
+  assert.doesNotMatch(run.stdout, /it existed before the install/, run.stdout);
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc')), false, 'the installer-created config was kept');
+  assert.equal(existsSync(settingsPath(ctx)), false, 'the installer-created settings were kept');
+  assert.equal(existsSync(lockPath(ctx)), false, 'the lock remains');
+}, {});
+
+withWorkspace('an upgrade apply over a real schema-1 lock with a pre-existing config keeps the original, and uninstall restores it', (ctx) => {
+  seedSchema1(ctx, 'preexisting-config', [['opencode.jsonc', 'opencode.jsonc'], ['opencode.jsonc.bak', 'opencode.jsonc.bak']]);
+  const original = readFileSync(join(SCHEMA1, 'preexisting-config', 'opencode.jsonc.bak.fixture'), 'utf8');
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak', 'file').role, 'original');
+  assert.equal(lock.createdFiles.includes('opencode.jsonc'), false, 'a pre-existing config was recorded as created');
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), original, 'the original was not restored');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak')), false, 'the restored original was left behind');
+}, {});
+
+// Review 3, item 3: a plain apply after a removal that journaled a quarantine.
+withWorkspace('a plain apply finishes a journaled quarantine it left, prints it once, and writes the folder again', (ctx) => {
+  mustApply(ctx);
+  const quarantine = `${ORG_FOLDER_FULL(ctx)}.maxstack-removing`;
+  renameSync(ORG_FOLDER_FULL(ctx), quarantine);
+  const lock = readJson(lockPath(ctx));
+  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'simpsonm09-org-ai-plugin.maxstack-removing';
+  setLock(ctx, lock);
+  const run = mustApply(ctx);
+  assert.equal(existsSync(quarantine), false, 'the journaled quarantine was kept');
+  assert.equal(existsSync(ORG_FOLDER_FULL(ctx)), true, 'the folder was not written again');
+  assert.equal(run.stdout.split(/\r?\n/).filter((line) => line.includes('maxstack-removing')).length, 1, run.stdout);
+  assert.doesNotMatch(run.stdout, /Rerun -Uninstall/, run.stdout);
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(existsSync(lockPath(ctx)), false, 'the lock remains');
+}, {});
+
+withWorkspace('a plain apply keeps a journaled quarantine whose files changed, names it once, and keeps the journal', (ctx) => {
+  mustApply(ctx);
+  const quarantine = `${ORG_FOLDER_FULL(ctx)}.maxstack-removing`;
+  renameSync(ORG_FOLDER_FULL(ctx), quarantine);
+  writeFileSync(join(quarantine, 'skills', 'demo-skill', 'SKILL.md'), 'changed by the user\n');
+  const lock = readJson(lockPath(ctx));
+  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'simpsonm09-org-ai-plugin.maxstack-removing';
+  setLock(ctx, lock);
+  const run = mustApply(ctx);
+  const lines = run.stdout.split(/\r?\n/).filter((line) => line.includes('maxstack-removing'));
+  assert.equal(lines.length, 1, run.stdout);
+  assert.match(lines[0], /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+kept: simpsonm09-org-ai-plugin\.maxstack-removing holds files that changed since its removal began/, lines[0]);
+  assert.equal(readFileSync(join(quarantine, 'skills', 'demo-skill', 'SKILL.md'), 'utf8'), 'changed by the user\n', 'the changed folder was deleted');
+  const kept = readJson(lockPath(ctx));
+  assert.equal(ownedRecord(kept, ORG_FOLDER, 'dir').quarantine, 'simpsonm09-org-ai-plugin.maxstack-removing', 'the journal was dropped');
+  assert.doesNotMatch(run.stdout, /Rerun -Uninstall/, run.stdout);
+}, {});

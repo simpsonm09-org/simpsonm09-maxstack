@@ -1115,7 +1115,7 @@ function Get-PiSettings {
 # is the user's: it stays where it is, and the live file gets a numbered copy as the original.
 # A copy whose bytes an earlier backup already holds is not written again: the action is duplicate.
 function Get-BackupTarget {
-    param([string] $Path, $LastSha, [string] $NewText, [bool] $Created)
+    param([string] $Path, $LastSha, [string] $NewText, [bool] $Created, $RecordedOriginalSha = $null)
 
     $none = [pscustomobject]@{ action = 'none'; path = $null }
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $none }
@@ -1124,6 +1124,11 @@ function Get-BackupTarget {
     if ($LastSha -and $current -eq $LastSha) { return $none }
     $original = "$Path.bak"
     $hasOriginal = Test-Path -LiteralPath $original -PathType Leaf
+    # An interrupted removal restored the original and stopped before its lock write: the lock still records the original,
+    # and the live file holds its bytes. The live file is the original again, so it is written back as the original.
+    if (-not $hasOriginal -and $null -ne $RecordedOriginalSha -and $current -eq $RecordedOriginalSha) {
+        return [pscustomobject]@{ action = 'original'; path = $original }
+    }
     if ($null -eq $LastSha) {
         if ($Created) { return $none }
         if (-not $hasOriginal) { return [pscustomobject]@{ action = 'original'; path = $original } }
@@ -1189,6 +1194,16 @@ function Get-BackupRecordsFor {
         $records.Add($record)
     }
     return $records.ToArray()
+}
+
+# The SHA-256 the previous lock records for the original backup of a file, or $null when it records none.
+function Get-PriorOriginalSha {
+    param([string] $Relative)
+
+    if ($null -eq $priorOwned) { return $null }
+    $prior = @($priorOwned | Where-Object { $_.path -ceq "$Relative.bak" -and $_.kind -eq 'file' -and (Get-BackupRole $_) -eq 'original' }) | Select-Object -First 1
+    if ($null -eq $prior) { return $null }
+    return $prior.sha256
 }
 
 # The role a backup had in the previous lock. A copy the previous lock never named was not written by the installer,
@@ -1814,6 +1829,7 @@ function Get-QuarantineResumeItem {
     if ((Get-Field $Record 'quarantine') -ceq $leaf -and -not (Test-ReparsePoint $Quarantine) -and (Test-Path -LiteralPath $Quarantine -PathType Container) -and ((Get-TreeSha256 $Quarantine) -eq $Record.sha256)) {
         return New-RemovalItem -State DELETE -Path $Record.path -Reason "resumes the removal of the folder quarantined as $leaf" -Action 'resume-quarantine' -Records @($Record) -Gone @($Record.path) -Full $Quarantine -Quarantine $Quarantine -ExpectSha $Record.sha256
     }
+    if ((Get-Field $Record 'quarantine') -ceq $leaf) { return New-SkipItem $Record.path "in the way: $leaf holds files that changed since its removal began, so it is kept; delete or move it aside by hand" }
     return New-SkipItem $Record.path "in the way: a folder named $leaf exists, and it is not the one an earlier removal quarantined for this path"
 }
 
@@ -1836,7 +1852,11 @@ function Get-DirRemovalItem {
     if (Test-ReparsePoint $entry.full) { return New-SkipItem $Record.path 'modified by hand: a link stands where the folder was recorded' }
     if (-not $item.PSIsContainer) { return New-SkipItem $Record.path 'modified by hand: a file stands where the folder was recorded' }
     if ((Get-TreeSha256 $entry.full) -ne $Record.sha256) { return New-SkipItem $Record.path 'modified by hand: a file in it was added, changed, or removed since the install, or the record has no hash' }
-    if (Test-Path -LiteralPath $quarantine) { return New-SkipItem $Record.path "in the way: a folder named $(Split-Path -Leaf $quarantine) already exists" }
+    if (Test-Path -LiteralPath $quarantine) {
+        $leaf = Split-Path -Leaf $quarantine
+        if ((Get-Field $Record 'quarantine') -ceq $leaf) { return New-SkipItem $Record.path "in the way: $leaf holds files that changed since its removal began, so it is kept; delete or move it aside by hand" }
+        return New-SkipItem $Record.path "in the way: a folder named $leaf already exists, and no removal journal names it"
+    }
     $excluded = Get-ExcludedSubtreeReport $entry.full
     if ($null -ne $excluded.outside) { return New-SkipItem $Record.path "refused: a junction under $($Record.path)/$($excluded.outside) leads outside the workspace" }
     $reason = 'tree hash matches the record'
@@ -2251,12 +2271,13 @@ function Invoke-StrayReport {
         }
         Write-Host ('{0,-8} {1}  {2}' -f $item.state, $item.path, $item.reason)
     }
-    foreach ($record in @($Known | Where-Object { $_.kind -eq 'dir' })) {
+    foreach ($record in @($Known | Where-Object { $_.kind -eq 'dir' } | Sort-Object -Property path -Unique)) {
+        if ($keptJournals.ContainsKey($record.path)) { continue }
         $entry = Resolve-WorkspaceEntry $record.path
         if (-not $entry.ok) { continue }
         $leftover = "$($entry.full)$quarantineSuffix"
         if (Test-Path -LiteralPath $leftover) {
-            Write-Host ('SKIP     {0}{1}  a folder with the removal quarantine name is beside a recorded folder; an interrupted removal may have left it. Rerun -Uninstall -Apply to finish it, or move it aside by hand' -f $record.path, $quarantineSuffix)
+            Write-Host ('SKIP     {0}{1}  a folder with the removal quarantine name is beside a recorded folder, and no removal journal names it, so it is kept; delete or move it aside by hand' -f $record.path, $quarantineSuffix)
         }
     }
 }
@@ -2625,9 +2646,14 @@ if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
         $priorLayers[$priorLayer.name] = $priorLayer
     }
     $priorPi = Get-Field $priorStack 'pi'
-    if ($null -ne $priorStack.PSObject.Properties['owned']) { $priorOwned = @($priorStack.owned) }
+    if ($null -ne $priorStack.PSObject.Properties['owned']) { $priorOwned = @($priorStack.owned | Where-Object { $null -ne $_ }) }
     if ($null -ne $priorStack.PSObject.Properties['createdDirs']) { $priorCreatedDirs = @($priorStack.createdDirs) }
     if ($null -ne $priorStack.PSObject.Properties['createdFiles']) { $priorCreatedFiles = @($priorStack.createdFiles) }
+    # A schema-1 lock records no created config. A config it names with no backup was made by the installer, as a removal
+    # of that lock infers, so the upgrade apply records it as created too.
+    if ($priorLegacy -and @($priorOwned | Where-Object { $null -ne $_ -and $_.path -ceq 'opencode.jsonc' -and $_.kind -eq 'file' }).Count -gt 0 -and -not (Test-Path -LiteralPath (Join-Path $Workspace 'opencode.jsonc.bak') -PathType Leaf)) {
+        $priorCreatedFiles = @($priorCreatedFiles) + 'opencode.jsonc'
+    }
 }
 # The hash each replaced file held when the last apply wrote it. A backup is taken only when the file no longer
 # holds it, and -Remove or -Uninstall restores a backup only while the file still holds it.
@@ -2874,11 +2900,32 @@ $configBackupTarget = [pscustomobject]@{ action = 'none'; path = $null }
 $configSourceSha = $null
 if ($null -ne $document) {
     $configSourceSha = Get-FileSha256OrNull $configTarget
-    $configBackupTarget = Get-BackupTarget -Path $configTarget -LastSha $priorOpenCodeSha -NewText $document -Created ($priorCreatedFiles -ccontains 'opencode.jsonc')
+    $configBackupTarget = Get-BackupTarget -Path $configTarget -LastSha $priorOpenCodeSha -NewText $document -Created ($priorCreatedFiles -ccontains 'opencode.jsonc') -RecordedOriginalSha (Get-PriorOriginalSha 'opencode.jsonc')
 }
 $settingsBackupTarget = [pscustomobject]@{ action = 'none'; path = $null }
 if ($null -ne $piSettings -and -not $piPending) {
-    $settingsBackupTarget = Get-BackupTarget -Path $piSettingsTarget -LastSha $priorSettingsSha -NewText $piSettings.text -Created ($priorCreatedFiles -ccontains '.pi/agent/settings.json')
+    $settingsBackupTarget = Get-BackupTarget -Path $piSettingsTarget -LastSha $priorSettingsSha -NewText $piSettings.text -Created ($priorCreatedFiles -ccontains '.pi/agent/settings.json') -RecordedOriginalSha (Get-PriorOriginalSha '.pi/agent/settings.json')
+}
+
+# A removal that stopped after it journaled a quarantine leaves the moved folder beside the recorded one. A plain apply
+# deletes that folder first when its tree still has the journaled hash: it is the installer's own copy, and the folder
+# is written again. Otherwise the apply keeps the folder and its journal, and names the folder and the reason once.
+$keptJournals = @{}
+if ($Apply -and -not $removing -and -not $uninstalling -and $null -ne $priorOwned) {
+    foreach ($record in @($priorOwned | Where-Object { $_.kind -eq 'dir' -and $null -ne (Get-Field $_ 'quarantine') })) {
+        $entry = Resolve-WorkspaceEntry $record.path
+        if (-not $entry.ok) { continue }
+        $quarantine = "$($entry.full)$quarantineSuffix"
+        if (-not (Test-Path -LiteralPath $quarantine)) { continue }
+        $leaf = Split-Path -Leaf $quarantine
+        if (-not (Test-ReparsePoint $quarantine) -and ((Get-TreeSha256 $quarantine) -eq $record.sha256)) {
+            Remove-OwnedTree $quarantine
+            Write-Host "Deleted $leaf, the quarantine an interrupted removal left for $($record.path)."
+        } else {
+            $keptJournals[$record.path] = $leaf
+            Write-Host ('SKIP     {0}  kept: {1} holds files that changed since its removal began, so it is not deleted. The folder is written again beside it; delete or move {1} aside by hand.' -f $record.path, $leaf)
+        }
+    }
 }
 
 $plan = @()
@@ -3071,6 +3118,11 @@ foreach ($layer in $openCodeLayers) {
 # A folder under .opencode\plugins that no selected layer names goes when the previous lock
 # recorded it, or when it is the retired port's folder. Any other folder is kept.
 foreach ($entry in $staleOpenCodeFolders) {
+    # A quarantine beside a recorded folder is named with that folder, once, by the removal journal check.
+    if ($entry.Name.EndsWith($quarantineSuffix)) {
+        $recordedBase = '.opencode/plugins/' + $entry.Name.Substring(0, $entry.Name.Length - $quarantineSuffix.Length)
+        if (@($priorOwned | Where-Object { $null -ne $_ -and $_.kind -eq 'dir' -and $_.path -ceq $recordedBase }).Count -gt 0) { continue }
+    }
     if (($priorOpenCodeFolders -contains $entry.Name) -or ($retiredOpenCodeFolders -contains $entry.Name)) {
         Remove-OwnedTree $entry.FullName
         Write-Host "Removed the stale plugin folder $($entry.FullName)"
@@ -3326,6 +3378,12 @@ $createdFiles = @(Get-CreatedPaths -Candidates $replacedFileNames -Prior $priorC
 # The ownership record: every path this apply wrote, after the writes, so -Status and a later
 # remove or uninstall know what is theirs. It holds no path outside the workspace and not the lock.
 $owned = Get-OwnedRecords -Plan $plan -CreatedKeys $createdKeys
+# A kept quarantine keeps its journal on the folder's new record, so a later removal knows which quarantine is the removal's.
+foreach ($keptPath in @($keptJournals.Keys)) {
+    foreach ($record in @($owned | Where-Object { $_.path -ceq $keptPath -and $_.kind -eq 'dir' })) {
+        $record | Add-Member -NotePropertyName quarantine -NotePropertyValue $keptJournals[$keptPath] -Force
+    }
+}
 
 $stack = [pscustomobject]@{
     generatedAt  = (Get-Date).ToUniversalTime().ToString('o')
