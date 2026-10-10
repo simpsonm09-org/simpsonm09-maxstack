@@ -2821,17 +2821,18 @@ withWorkspace('a run that stops after restoring the config and before its lock w
 
 // Review 2, item 4: real schema-1 locks. scripts/fixtures/schema1 holds the stack.lock.json, the config, and the Pi
 // settings that the pre-branch installer (28872d2) wrote in two workspaces, with the machine path replaced by a placeholder
-// and every recorded hash recomputed for the normalised bytes.
+// and every recorded hash recomputed for the normalised bytes. Each file carries a .fixture suffix, so the linters skip it
+// and its bytes are read exactly as they were written.
 const SCHEMA1 = join(repoRoot, 'scripts', 'fixtures', 'schema1');
 
 function seedSchema1(ctx, name, files) {
-  for (const [rel, fixtureFile] of files) writeFile(ctx.workspace, rel, readFileSync(join(SCHEMA1, name, fixtureFile)));
-  writeFile(ctx.workspace, 'stack.lock.json', readFileSync(join(SCHEMA1, name, 'stack.lock.json')));
+  for (const [rel, fixtureFile] of files) writeFile(ctx.workspace, rel, readFileSync(join(SCHEMA1, name, `${fixtureFile}.fixture`)));
+  writeFile(ctx.workspace, 'stack.lock.json', readFileSync(join(SCHEMA1, name, 'stack.lock.json.fixture')));
 }
 
 withWorkspace('a real schema-1 lock with a pre-existing config restores the original from its role-less backup', (ctx) => {
   seedSchema1(ctx, 'preexisting-config', [['opencode.jsonc', 'opencode.jsonc'], ['opencode.jsonc.bak', 'opencode.jsonc.bak']]);
-  const original = readFileSync(join(SCHEMA1, 'preexisting-config', 'opencode.jsonc.bak'), 'utf8');
+  const original = readFileSync(join(SCHEMA1, 'preexisting-config', 'opencode.jsonc.bak.fixture'), 'utf8');
   assert.equal(readJson(lockPath(ctx)).ownedSchema, 1);
   const run = removal(ctx, ['-Uninstall']);
   assertOk(run);
