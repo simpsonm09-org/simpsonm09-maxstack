@@ -14,7 +14,7 @@ Each harness decides for itself where it looks for configuration. Most do not lo
 
 | Artifact | Across the seven runtimes |
 | --- | --- |
-| `SKILL.md` | Portable. Keep the frontmatter to `name`, `description`, `license`, `compatibility`, `metadata`, and `allowed-tools`. Claude-only keys break the other harnesses. |
+| `SKILL.md` | Portable. The common frontmatter is `name`, `description`, `license`, `compatibility`, `metadata`, and `allowed-tools`. The neutral source may use more keys, such as `user-invocable` and `paths` (24 and 1 of PStack's 58 skills today). The generator strips or maps any key a runtime does not understand. Pi, for one, ignores `user-invocable`, so the principle skills only show up in its completion list. |
 | `AGENTS.md` | Portable. All seven read it. |
 | MCP | Mostly portable. Claude Code and Cursor share the `mcpServers` JSON shape. OpenCode and Codex (TOML) need a conversion. |
 | Hooks | A script that exits 2 on deny works in Claude Code, Copilot, Cursor, and Codex. OpenCode and Pi need a TypeScript shim. Antigravity is unchecked. |
@@ -99,6 +99,10 @@ The committed `layers.json` holds each layer's default source with a full commit
 - Dropping the override returns the layer to its committed default on the next `install` or `update`.
 
 Reading from a repository we do not own is allowed, because upstream PStack is a legitimate source. Opening a pull request there is not, and the ownership rule in the repo-standard skill still applies.
+
+## Parity
+
+The master template promises the same behavior in every runtime where that is possible and a written reason where it is not. [parity-matrix.md](parity-matrix.md) holds that record: one row per behavior, one column per runtime, each cell `same`, `differs`, `cannot`, `not built yet`, or `unverified`, with the evidence behind it. The generator is to assert the rows it can check automatically, and the rest need a live check by hand.
 
 ## Constraints that carry over
 
