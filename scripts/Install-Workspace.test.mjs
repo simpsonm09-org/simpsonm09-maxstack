@@ -1644,15 +1644,16 @@ withWorkspace('a backup the apply writes is recorded with its hash, and it is re
   assert.deepEqual(problemRows(runStatus(ctx)), [{ state: 'modified', label: 'opencode.jsonc' }], 'a backup the apply has not written was reported');
 
   mustApply(ctx);
-  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'utf8'), configBefore);
-  assert.equal(readFileSync(join(ctx.workspace, '.pi', 'agent', 'settings.json.bak'), 'utf8'), settingsBefore);
+  // The installer created both files, so a hand edit of either is an edited copy, never the original.
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak.1'), 'utf8'), configBefore);
+  assert.equal(readFileSync(join(ctx.workspace, '.pi', 'agent', 'settings.json.bak.1'), 'utf8'), settingsBefore);
   const lock = readJson(lockPath(ctx));
-  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak', 'file').sha256, sha256Upper(Buffer.from(configBefore, 'utf8')));
-  assert.equal(ownedRecord(lock, '.pi/agent/settings.json.bak', 'file').sha256, sha256Upper(Buffer.from(settingsBefore, 'utf8')));
+  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak.1', 'file').sha256, sha256Upper(Buffer.from(configBefore, 'utf8')));
+  assert.equal(ownedRecord(lock, '.pi/agent/settings.json.bak.1', 'file').sha256, sha256Upper(Buffer.from(settingsBefore, 'utf8')));
   assert.deepEqual(problemRows(runStatus(ctx)), []);
 
-  appendFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'x');
-  assert.deepEqual(problemRows(runStatus(ctx)), [{ state: 'modified', label: 'opencode.jsonc.bak' }]);
+  appendFileSync(join(ctx.workspace, 'opencode.jsonc.bak.1'), 'x');
+  assert.deepEqual(problemRows(runStatus(ctx)), [{ state: 'modified', label: 'opencode.jsonc.bak.1' }]);
 }, {});
 
 withWorkspace('a layer that stops naming a folder leaves no copy of it in the owned folder', (ctx) => {
@@ -2746,4 +2747,24 @@ withWorkspace('the user removed a backup: its copy is gone, the config is restor
   assertOk(run);
   assert.match(run.stdout, /^GONE\s+opencode\.jsonc\.bak\s/m, run.stdout);
   assert.equal(existsSync(lockPath(ctx)), false);
+}, {});
+
+// Review 2, item 1: a .bak the installer did not write is the user's. The live config is kept in a numbered copy as the
+// original, and the user's copy is left untouched and never deleted.
+withWorkspace('a user backup beside the live config is kept, and the live config is recoverable byte for byte after apply and uninstall', (ctx) => {
+  const live = '{\n  "live": true\n}\n';
+  const userBackup = '{\n  "user": "backup"\n}\n';
+  writeFile(ctx.workspace, 'opencode.jsonc', live);
+  writeFile(ctx.workspace, 'opencode.jsonc.bak', userBackup);
+  const run = mustApply(ctx);
+  assert.match(run.stdout, /Backed up the previous config to .*opencode\.jsonc\.bak\.1/, run.stdout);
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak.1'), 'utf8'), live, 'the live config was not kept');
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'utf8'), userBackup, 'the user backup changed on apply');
+  const lock = readJson(lockPath(ctx));
+  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak.1', 'file').role, 'original', 'the live copy is not the original');
+  assert.equal(ownedRecord(lock, 'opencode.jsonc.bak', 'file').role, 'user', 'the user backup is not recorded as the user\'s');
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc'), 'utf8'), live, 'the live config was not restored');
+  assert.equal(readFileSync(join(ctx.workspace, 'opencode.jsonc.bak'), 'utf8'), userBackup, 'the user backup changed on uninstall');
+  assert.equal(existsSync(join(ctx.workspace, 'opencode.jsonc.bak.1')), false, 'the restored copy was left behind');
 }, {});

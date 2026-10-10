@@ -17,7 +17,7 @@ OWNED_PI_KEYS = ("packages", "skills")
 SHA256_UPPER = re.compile(r"^[0-9A-F]{64}$")
 # A backup of a replaced file: X.bak, the original, or X.bak.N, a numbered copy. Only these may name a role.
 BACKUP_PATH = re.compile(r"\.bak(\.\d+)?$")
-BACKUP_ROLES = ("original", "edited")
+BACKUP_ROLES = ("original", "edited", "user")
 
 
 def is_nonempty_str(value: object) -> bool:

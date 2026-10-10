@@ -1108,10 +1108,12 @@ function Get-PiSettings {
     }
 }
 
-# The backup an apply takes before it replaces a file with its text. X.bak is the original: the first file the
-# installer replaced, and the only copy a removal restores. X.bak.N holds a hand edit made after that. An installer's
-# own last write is replaced without a copy. When the last write is unknown (a lock from before schema 2), an existing
-# X.bak is left untouched, and a file the install created gets no copy.
+# The backup an apply takes before it replaces a file with its text. X.bak is the original: the file the install
+# first replaced, and the only copy a removal restores. X.bak.N holds a copy of a live file the installer no longer
+# owns: a hand edit, or a file that was there before an install with no lock. An installer's own last write is
+# replaced without a copy, and a file the installer created gets no original. An X.bak the installer did not write
+# is the user's: it stays where it is, and the live file gets a numbered copy as the original.
+# A copy whose bytes an earlier backup already holds is not written again: the action is duplicate.
 function Get-BackupTarget {
     param([string] $Path, $LastSha, [string] $NewText, [bool] $Created)
 
@@ -1123,11 +1125,27 @@ function Get-BackupTarget {
     $original = "$Path.bak"
     $hasOriginal = Test-Path -LiteralPath $original -PathType Leaf
     if ($null -eq $LastSha) {
-        if ($hasOriginal -or $Created) { return $none }
-        return [pscustomobject]@{ action = 'original'; path = $original }
+        if ($Created) { return $none }
+        if (-not $hasOriginal) { return [pscustomobject]@{ action = 'original'; path = $original } }
+        return [pscustomobject]@{ action = 'original'; path = (Get-NextBackupPath $Path) }
     }
-    if (-not $hasOriginal) { return [pscustomobject]@{ action = 'original'; path = $original } }
+    $earlier = Get-BackupWithSha -Path $Path -Sha256 $current
+    if ($null -ne $earlier) { return [pscustomobject]@{ action = 'duplicate'; path = $earlier } }
     return [pscustomobject]@{ action = 'edited'; path = (Get-NextBackupPath $Path) }
+}
+
+# An existing backup of a file (X.bak or X.bak.N) whose bytes have the given SHA-256, or $null.
+function Get-BackupWithSha {
+    param([string] $Path, [string] $Sha256)
+
+    $folder = Split-Path -Parent $Path
+    $leaf = Split-Path -Leaf $Path
+    if (-not (Test-Path -LiteralPath $folder -PathType Container)) { return $null }
+    foreach ($file in @(Get-ChildItem -LiteralPath $folder -File -Force -Filter "$leaf.bak*")) {
+        if ($file.Name -cnotmatch ('^' + [regex]::Escape($leaf) + '\.bak(\.\d+)?$')) { continue }
+        if ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -eq $Sha256) { return $file.FullName }
+    }
+    return $null
 }
 
 function Get-NextBackupPath {
@@ -1154,7 +1172,7 @@ function Get-BackupRecordsFor {
         }
     }
     $targetPath = $null
-    if ($Target.action -ne 'none') { $targetPath = $Target.path }
+    if ($Target.action -in @('original', 'edited')) { $targetPath = $Target.path }
     if ($null -ne $targetPath -and -not $paths.Contains($targetPath)) { $paths.Add($targetPath) }
     $records = [System.Collections.Generic.List[object]]::new()
     foreach ($backupPath in $paths) {
@@ -1173,12 +1191,14 @@ function Get-BackupRecordsFor {
     return $records.ToArray()
 }
 
-# The role a backup had in the previous lock. A backup the previous lock never named has none.
+# The role a backup had in the previous lock. A copy the previous lock never named was not written by the installer,
+# so it is the user's: its role is user, and no removal restores or deletes it.
 function Get-PriorBackupRole {
     param([string] $Relative)
 
-    if ($null -eq $priorOwned) { return $null }
+    if ($null -eq $priorOwned) { return 'user' }
     $prior = @($priorOwned | Where-Object { $_.path -ceq $Relative -and $_.kind -eq 'file' }) | Select-Object -First 1
+    if ($null -eq $prior) { return 'user' }
     return (Get-Field $prior 'role')
 }
 
@@ -1845,6 +1865,14 @@ function Get-BackupRole {
     return (Get-Field $Record 'role')
 }
 
+# Why a backup a removal does not restore is kept: the user's own copy, or an earlier version of the file.
+function Get-KeepCopyReason {
+    param($Backup)
+
+    if ((Get-BackupRole $Backup) -eq 'user') { return 'kept: a backup the installer did not write, so it is never restored or deleted' }
+    return 'kept: a copy of an earlier version, not restored'
+}
+
 # The original backup of a file that the installer replaced: the one copy a removal restores.
 function Get-OriginalBackup {
     param([object[]] $Backups)
@@ -1879,7 +1907,7 @@ function Get-ConfigGroupItems {
     $items = [System.Collections.Generic.List[object]]::new()
     $original = Get-OriginalBackup $Backups
     foreach ($copy in @($Backups | Where-Object { $null -eq $original -or $_.path -cne $original.path })) {
-        $items.Add((New-KeepBackupItem $copy 'kept: a copy of an earlier version, not restored'))
+        $items.Add((New-KeepBackupItem $copy (Get-KeepCopyReason $copy)))
     }
     $originalHandled = $false
     if ($null -ne $original) {
@@ -1928,7 +1956,7 @@ function Get-SettingsGroupItems {
     $items = [System.Collections.Generic.List[object]]::new()
     $original = Get-OriginalBackup $Backups
     foreach ($copy in @($Backups | Where-Object { $null -eq $original -or $_.path -cne $original.path })) {
-        $items.Add((New-KeepBackupItem $copy 'kept: a copy of an earlier version, not restored'))
+        $items.Add((New-KeepBackupItem $copy (Get-KeepCopyReason $copy)))
     }
     $originalHandled = $false
     if ($null -ne $original) {
@@ -2822,9 +2850,11 @@ if ($openCodeSelected) {
     if ((Test-Path -LiteralPath $configTarget) -and ((Get-Content -LiteralPath $configTarget -Raw).Trim() -eq $document.Trim())) {
         Write-Host "Config already matches: $configTarget"
     } else {
-        if ($configBackupTarget.action -ne 'none') {
+        if ($configBackupTarget.action -in @('original', 'edited')) {
             Copy-Item -LiteralPath $configTarget -Destination $configBackupTarget.path -Force
             Write-Host "Backed up the previous config to $($configBackupTarget.path)"
+        } elseif ($configBackupTarget.action -eq 'duplicate') {
+            Write-Host "The previous config is already kept in $($configBackupTarget.path), so no new copy was made."
         }
         Assert-UnchangedSince $configTarget $configSourceSha
         Write-FileAtomically $configTarget $document
@@ -2974,9 +3004,11 @@ if ($piSettings) {
     if ((Test-Path -LiteralPath $piSettingsTarget -PathType Leaf) -and ((Get-Content -LiteralPath $piSettingsTarget -Raw).Trim() -eq $piSettingsText.Trim())) {
         Write-Host "Pi settings already match: $piSettingsTarget"
     } else {
-        if ($settingsBackupTarget.action -ne 'none') {
+        if ($settingsBackupTarget.action -in @('original', 'edited')) {
             Copy-Item -LiteralPath $piSettingsTarget -Destination $settingsBackupTarget.path -Force
             Write-Host "Backed up the previous Pi settings to $($settingsBackupTarget.path)"
+        } elseif ($settingsBackupTarget.action -eq 'duplicate') {
+            Write-Host "The previous Pi settings are already kept in $($settingsBackupTarget.path), so no new copy was made."
         }
         Assert-UnchangedSince $piSettingsTarget $piSettings.sourceSha
         Write-FileAtomically $piSettingsTarget $piSettingsText
