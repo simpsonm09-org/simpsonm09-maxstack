@@ -2967,3 +2967,13 @@ withWorkspace('a Pi settings file that is not strict JSON keeps its backup and i
   assert.ok(ownedRecord(readJson(lockPath(ctx)), '.pi/agent/settings.json.bak', 'file'), 'the backup record was dropped');
   assert.equal(readFileSync(`${settingsPath(ctx)}.bak`, 'utf8'), USER_SETTINGS, 'the backup changed');
 }, {});
+
+// Review 2, item 5: a plain apply does not delete a quarantine folder, and it names one an interrupted removal left.
+withWorkspace('a plain apply names a quarantine folder beside a recorded folder, and leaves it in place', (ctx) => {
+  mustApply(ctx);
+  const quarantine = `${ORG_FOLDER_FULL(ctx)}.maxstack-removing`;
+  writeFile(ctx.workspace, `${ORG_FOLDER}.maxstack-removing/left.txt`, 'left\n');
+  const run = mustApply(ctx);
+  assert.match(run.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\.maxstack-removing\s+a folder with the removal quarantine name/m, run.stdout);
+  assert.equal(readFileSync(join(quarantine, 'left.txt'), 'utf8'), 'left\n', 'the apply changed the quarantine folder');
+}, {});
