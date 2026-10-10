@@ -28,6 +28,7 @@ RUNTIMES = ("claude", "opencode", "copilot", "pi")
 PIN_LOCK = "pstack.lock.json"
 RETIRED_LOCK = "pstack-opencode.lock.json"
 MODEL_KEYS = ("model", "small_model")
+BYTECODE = re.compile(r"(^|/)__pycache__/|\.pyc$")
 
 
 def is_nonempty_str(value: object) -> bool:
@@ -313,6 +314,31 @@ def check_surface(failures: list[str]) -> None:
         failures.append(f"README.md or docs/layout.md must reference {PIN_LOCK}")
 
 
+def check_tracked_bytecode(failures: list[str]) -> None:
+    """Fail when git tracks Python bytecode: a compiled file is a build product, and a tracked one goes stale."""
+    if not (REPO_ROOT / ".git").exists():
+        return
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except FileNotFoundError:
+        failures.append("the bytecode check needs git on PATH")
+        return
+    if result.returncode != 0:
+        failures.append(f"git ls-files failed: {result.stderr.strip() or 'no output'}")
+        return
+    for path in result.stdout.split("\0"):
+        if path and BYTECODE.search(path):
+            failures.append(
+                f"{path} is tracked: run git rm --cached on it; __pycache__ and *.pyc belong in .gitignore"
+            )
+
+
 def run_command(args: list[str], failures: list[str]) -> str | None:
     """Run a read-only command; record a failure and return None when it cannot answer."""
     try:
@@ -379,6 +405,7 @@ def main() -> int:
     if config:
         check_workspace_config(config, failures)
     check_surface(failures)
+    check_tracked_bytecode(failures)
     if args.online and pins:
         check_online(pins, failures)
     if args.lock is not None:

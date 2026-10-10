@@ -26,7 +26,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -104,7 +104,12 @@ function writeLayerStub(root, { claudePlugin = null, manifestName = claudePlugin
 // A git repository standing in for simpsonm09/pstack-claude at the fork's layout: the
 // plugin folder carries a Claude manifest, the OpenCode entry and its agent profiles, and
 // the shared skills tree the entry reads. A file outside the folder must not come along.
-function makeFixture(base) {
+// With npm, the OpenCode package declares a dependency and ships no node_modules, so the installer runs npm in the
+// entry's folder. With shipLock, the package also ships a package-lock.json, as a layer may.
+const SHIPPED_LOCK = '{"lockfileVersion": 3, "shipped": true}\n';
+const SHIPPED_SHRINKWRAP = '{"lockfileVersion": 3, "shippedShrinkwrap": true}\n';
+
+function makeFixture(base, { npm = false, shipLock = false, shipShrinkwrap = false } = {}) {
   const dir = join(base, 'pstack-src');
   const plugin = 'plugins/pstack';
   writeFile(dir, `${plugin}/.claude-plugin/plugin.json`, JSON.stringify({ name: 'pstack', version: '0.9.79' }));
@@ -112,8 +117,11 @@ function makeFixture(base) {
     writeFile(dir, `${plugin}/skills/${skillId}/SKILL.md`, `---\nname: ${skillId}\ndescription: fixture\n---\nfixture body\n`);
   }
   writeFile(dir, `${plugin}/opencode/index.ts`, 'export default {};\n');
-  writeFile(dir, `${plugin}/opencode/package.json`, JSON.stringify({ name: 'pstack-opencode', private: true }));
-  writeFile(dir, `${plugin}/opencode/node_modules/@opencode/plugin/index.js`, 'module.exports = {};\n');
+  const packageJson = npm ? { name: 'pstack-opencode', private: true, dependencies: { '@opencode/plugin': '2.0.18' } } : { name: 'pstack-opencode', private: true };
+  writeFile(dir, `${plugin}/opencode/package.json`, JSON.stringify(packageJson));
+  if (shipLock) writeFile(dir, `${plugin}/opencode/package-lock.json`, SHIPPED_LOCK);
+  if (shipShrinkwrap) writeFile(dir, `${plugin}/opencode/npm-shrinkwrap.json`, SHIPPED_SHRINKWRAP);
+  if (!npm) writeFile(dir, `${plugin}/opencode/node_modules/@opencode/plugin/index.js`, 'module.exports = {};\n');
   writeFile(dir, `${plugin}/opencode/agents/pstack-agent.md`, '---\ndescription: worker\nmodel: opencode-go/deepseek-v4.1-flash\n---\nbody\nmodel: a body line\n');
   writeFile(dir, `${plugin}/opencode/agents/pstack-reviewer.md`, '---\ndescription: reviewer\n---\nreview\n');
   writeFile(dir, `${plugin}/opencode/agents/pstack-comment-sicko.md`, '---\ndescription: comments\n---\ncomments\n');
@@ -148,6 +156,53 @@ function writeFakePi(base) {
   return path;
 }
 
+// A stand-in for npm on PATH. A real install beside a package.json writes a package-lock.json and a node_modules
+// folder into its prefix, and nothing else here. FAKE_NPM_EXTRA names one more file it writes, and FAKE_NPM_REWRITE
+// makes it write a different lock, as npm does to a lock the layer ships. A node script runs it, behind a .cmd on
+// Windows and a shell file elsewhere.
+const FAKE_NPM_SCRIPT = `import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+const prefix = process.argv[process.argv.indexOf('--prefix') + 1];
+const shrinkwrap = join(prefix, 'npm-shrinkwrap.json');
+// npm writes into a shrinkwrap the layer ships, and otherwise into package-lock.json; FAKE_NPM_SHRINKWRAP makes it generate one.
+const lockPath = process.env.FAKE_NPM_SHRINKWRAP || existsSync(shrinkwrap) ? shrinkwrap : join(prefix, 'package-lock.json');
+const lock = process.env.FAKE_NPM_REWRITE ? '{"lockfileVersion": 3, "rewritten": true}' : '{"lockfileVersion": 3}';
+writeFileSync(lockPath, lock);
+const sdk = join(prefix, 'node_modules', '@opencode', 'plugin', 'index.js');
+mkdirSync(dirname(sdk), { recursive: true });
+writeFileSync(sdk, 'module.exports = {};\\n');
+if (process.env.FAKE_NPM_EXTRA) {
+  const extra = join(prefix, process.env.FAKE_NPM_EXTRA);
+  mkdirSync(dirname(extra), { recursive: true });
+  writeFileSync(extra, 'written by npm\\n');
+}
+`;
+
+function writeFakeNpm(base) {
+  const bin = join(base, 'fake-npm-bin');
+  const script = join(base, 'fake-npm.mjs');
+  mkdirSync(bin);
+  writeFileSync(script, FAKE_NPM_SCRIPT);
+  if (process.platform === 'win32') {
+    writeFileSync(join(bin, 'npm.cmd'), `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+  } else {
+    const path = join(bin, 'npm');
+    writeFileSync(path, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`);
+    chmodSync(path, 0o755);
+  }
+  return bin;
+}
+
+// The environment the installer runs in, with the fake npm first on PATH. The key is found by case, because
+// Windows keeps the variable as Path in the environment object.
+function environmentWithNpm(bin) {
+  const env = { ...process.env };
+  const key = Object.keys(env).find((name) => name.toUpperCase() === 'PATH') ?? 'PATH';
+  env[key] = `${bin}${delimiter}${env[key] ?? ''}`;
+  return env;
+}
+
 // A stand-in CLI on PATH for the host: a .cmd on Windows, and an executable file with no
 // extension elsewhere, which is what Homebrew or npm put on a POSIX PATH.
 function writeFakeCli(dir, name) {
@@ -162,14 +217,18 @@ function writeFakeCli(dir, name) {
   return path;
 }
 
-function buildWorkspace({ withManifests = true } = {}) {
+// The workspace and its fixtures. An npm fixture runs the installer with the fake npm on PATH, and ctx.env holds that
+// environment, so a test can set FAKE_NPM_EXTRA or FAKE_NPM_REWRITE on it.
+function buildWorkspace({ withManifests = true, fixture = {} } = {}) {
   const base = mkdtempSync(join(tmpdir(), 'maxstack-lock-'));
   const workspace = join(base, 'simpsonm09');
   for (const layerPath of LOCAL_LAYERS) {
     const name = layerPath.split('/').pop();
     writeLayerStub(join(workspace, layerPath), { claudePlugin: name, withManifest: withManifests });
   }
-  return { base, workspace, fixture: makeFixture(base), fakeCopilot: writeFakeCopilot(base), fakePi: writeFakePi(base) };
+  const ctx = { base, workspace, fixture: makeFixture(base, fixture), fakeCopilot: writeFakeCopilot(base), fakePi: writeFakePi(base) };
+  if (fixture.npm) ctx.env = environmentWithNpm(writeFakeNpm(base));
+  return ctx;
 }
 
 // The repository layers.json with the pstack source pointed at the fixture, and an
@@ -202,7 +261,7 @@ function runInstaller(shell, ctx, extra = [], { apply = true, layersFile = write
     ...(apply ? ['-Apply'] : []),
     ...extra,
   ];
-  return spawnSync(shell, args, { encoding: 'utf8' });
+  return spawnSync(shell, args, { encoding: 'utf8', env: ctx.env });
 }
 
 // A junction reports as a symbolic link to lstat.
@@ -1292,6 +1351,85 @@ withWorkspace('the package-lock.json that npm writes beside an installed package
   assert.match(applied.stdout, /Removed .*package-lock\.json/, applied.stdout);
   assert.ok(!existsSync(join(ctx.workspace, ...folder.split('/'), 'package-lock.json')));
 }, {});
+
+// The pstack OpenCode entry is opencode/index.ts, so npm installs in opencode/ and writes its lock there. The
+// pinned folder ships no lock, so an apply removes the one npm wrote, and the folder then matches its plan.
+const PSTACK_FOLDER = '.opencode/plugins/pstack';
+const PSTACK_NPM_FOLDER = `${PSTACK_FOLDER}/opencode`;
+const NPM = { fixture: { npm: true } };
+
+function workspacePath(ctx, rel) {
+  return join(ctx.workspace, ...rel.split('/'));
+}
+
+withWorkspace('an npm install beside a pstack package.json applies, leaves no lock file, and records the folder', (ctx) => {
+  mustApply(ctx);
+  assert.ok(existsSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/node_modules/@opencode/plugin/index.js`)), 'npm did not install the dependency');
+  assert.equal(existsSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/package-lock.json`)), false, 'the lock npm wrote stayed in the folder');
+  assert.ok(ownedRecord(readJson(lockPath(ctx)), PSTACK_FOLDER, 'dir'), 'the pstack folder has no ownership record');
+}, NPM);
+
+withWorkspace('after an npm install every owned path matches, and a file added to the pstack folder by hand is modified', (ctx) => {
+  mustApply(ctx);
+  const run = runStatus(ctx);
+  assert.deepEqual(problemRows(run), [], run.stdout);
+  assert.deepEqual(statusRows(run).find((row) => row.label === PSTACK_FOLDER), { state: 'matching', label: PSTACK_FOLDER });
+  writeFile(ctx.workspace, `${PSTACK_FOLDER}/hand-added.md`, 'added by hand\n');
+  assert.deepEqual(problemRows(runStatus(ctx)), [{ state: 'modified', label: PSTACK_FOLDER }]);
+}, NPM);
+
+withWorkspace('a round trip through an npm install leaves the tree byte-identical to the start', (ctx) => {
+  seedUserFiles(ctx);
+  const before = snapshotTree(ctx.workspace);
+  mustApply(ctx);
+  assertOk(removal(ctx, ['-Uninstall']));
+  assert.deepEqual(snapshotTree(ctx.workspace), before);
+}, NPM);
+
+withWorkspace('an npm install that writes a file beyond its lock and node_modules fails the apply, and writes no record', (ctx) => {
+  ctx.env.FAKE_NPM_EXTRA = `${PSTACK_NPM_FOLDER}/extra.txt`;
+  const run = runInstaller(shell, ctx);
+  assert.notEqual(run.status, 0, run.stdout);
+  assert.match(plainOutput(run), /\.opencode\/plugins\/pstack holds different content from what the install wrote/);
+  assert.equal(existsSync(lockPath(ctx)), false, 'a record was written from a folder that differs from the plan');
+}, NPM);
+
+withWorkspace('a package-lock.json the layer ships is put back as shipped when npm rewrites it', (ctx) => {
+  ctx.env.FAKE_NPM_REWRITE = '1';
+  mustApply(ctx);
+  assert.equal(readFileSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/package-lock.json`), 'utf8'), SHIPPED_LOCK, 'the folder does not hold the lock the layer ships');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, { fixture: { npm: true, shipLock: true } });
+
+withWorkspace('a read-only package-lock.json the layer ships survives a second apply when npm is skipped', (ctx) => {
+  mustApply(ctx);
+  const cachedLock = workspacePath(ctx, '.claude/cache/pstack/plugins/pstack/opencode/package-lock.json');
+  const installedLock = workspacePath(ctx, `${PSTACK_NPM_FOLDER}/package-lock.json`);
+  chmodSync(cachedLock, 0o444);
+  try {
+    mustApply(ctx);
+    assert.deepEqual(problemRows(runStatus(ctx)), []);
+    assert.equal(readFileSync(installedLock, 'utf8'), SHIPPED_LOCK, 'the second apply changed the shipped lock');
+  } finally {
+    chmodSync(cachedLock, 0o666);
+    if (existsSync(installedLock)) chmodSync(installedLock, 0o666);
+  }
+}, { fixture: { shipLock: true } });
+
+withWorkspace('an npm-shrinkwrap.json the layer ships is put back as shipped when npm rewrites it', (ctx) => {
+  ctx.env.FAKE_NPM_REWRITE = '1';
+  mustApply(ctx);
+  assert.equal(readFileSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/npm-shrinkwrap.json`), 'utf8'), SHIPPED_SHRINKWRAP, 'the folder does not hold the shrinkwrap the layer ships');
+  assert.equal(existsSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/package-lock.json`)), false, 'npm wrote a package-lock.json beside the shipped shrinkwrap');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, { fixture: { npm: true, shipShrinkwrap: true } });
+
+withWorkspace('an npm-shrinkwrap.json npm generates, where none was shipped, is removed', (ctx) => {
+  ctx.env.FAKE_NPM_SHRINKWRAP = '1';
+  mustApply(ctx);
+  assert.equal(existsSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/npm-shrinkwrap.json`)), false, 'the shrinkwrap npm generated stayed in the folder');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, NPM);
 
 withWorkspace('a lock without an owned list gets the clear message, and -Strict fails on it', (ctx) => {
   mustApply(ctx);

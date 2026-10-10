@@ -130,6 +130,8 @@ A `json-entries` record for a key the installer created in a settings file that 
 
 A `dir` record is the hash of what the installer wrote. An owned folder is wholly the installer's: each apply removes whatever the layer does not install, printing each removal, and replaces each item with a fresh copy. The hash covers each file's relative path and SHA-256, and each link by its target, and it leaves out `node_modules` and `.git` at any depth. The record holds no absolute path and does not list the lock itself. Re-applying with nothing to change leaves the lock the same except `generatedAt`.
 
+The rule for files the installer generates, stated once. An ownership record covers exactly what the installer wrote, so a file the installer generates in an owned folder is removed unless the layer ships it. Today those are the `package-lock.json` and `npm-shrinkwrap.json` that `npm install` writes beside a layer's `package.json`. An apply removes each one after npm runs, unless the layer's items ship a file of that name in that place. A shipped file is put back after npm, byte for byte, because npm may rewrite it while it installs. The put-back writes only when the bytes differ, so a shipped file that is read-only stays read-only: the attribute is cleared for the rewrite and set again after it. `node_modules` is outside the tree hash, as described under [Excluded folders](#excluded-folders). Any other file that appears in an owned folder changes the hash, so the folder is reported `modified` until the next apply removes the file. When something other than the installer changes a folder during an apply, the apply stops with `holds different content from what the install wrote` and writes no record for it.
+
 ```json
 "ownedSchema": 2,
 "owned": [

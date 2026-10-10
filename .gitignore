@@ -21,3 +21,7 @@ trivy.sarif
 .aislop/history.jsonl
 .aislop/agent/
 .DS_Store
+
+# Python bytecode: a build product, never tracked
+__pycache__/
+*.pyc

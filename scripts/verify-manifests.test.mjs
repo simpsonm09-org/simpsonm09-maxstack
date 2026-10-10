@@ -30,7 +30,8 @@ function shipped(path) {
 
 // Copies the manifests and the files the verifier reads into a temporary repository
 // layout, applies the change, and runs the verifier there.
-function runVerifier({ layers = (manifest) => manifest, pinLock = null, omitPinLock = false, extraFiles = {}, lock = null } = {}) {
+// tracked maps a path to content for files the temporary repository commits to its index; it makes the root a git repository.
+function runVerifier({ layers = (manifest) => manifest, pinLock = null, omitPinLock = false, extraFiles = {}, lock = null, tracked = {} } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'maxstack-manifests-'));
   try {
     const manifest = layers(shipped('layers.json'));
@@ -47,6 +48,14 @@ function runVerifier({ layers = (manifest) => manifest, pinLock = null, omitPinL
     copyFileSync(verifier, join(root, 'scripts', 'verify-manifests.py'));
     copyFileSync(join(repoRoot, 'scripts', 'verify_ownership.py'), join(root, 'scripts', 'verify_ownership.py'));
     for (const [rel, content] of Object.entries(extraFiles)) writeFileSync(join(root, rel), content);
+    if (Object.keys(tracked).length > 0) {
+      spawnSync('git', ['init', '-q'], { cwd: root });
+      for (const [rel, content] of Object.entries(tracked)) {
+        mkdirSync(dirname(join(root, rel)), { recursive: true });
+        writeFileSync(join(root, rel), content);
+        spawnSync('git', ['add', '--', rel], { cwd: root });
+      }
+    }
     const args = [join(root, 'scripts', 'verify-manifests.py')];
     if (lock !== null) {
       writeFileSync(join(root, 'stack.lock.json'), JSON.stringify(lock));
@@ -176,6 +185,25 @@ test('the retired OpenCode port lock is refused while it exists', { skip }, () =
   const run = runVerifier({ extraFiles: { 'pstack-opencode.lock.json': '{}' } });
   assert.equal(run.status, 1, failureOf(run));
   assert.match(failureOf(run), /pstack-opencode\.lock\.json is retired/);
+});
+
+const git = spawnSync('git', ['--version']).status === 0;
+
+test('a tracked Python bytecode file is refused, and the message names it', { skip: python ? (git ? false : 'git is not available') : skip }, () => {
+  const run = runVerifier({ tracked: { 'scripts/__pycache__/verify_ownership.cpython-312.pyc': 'bytecode\n' } });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /scripts\/__pycache__\/verify_ownership\.cpython-312\.pyc is tracked/);
+});
+
+test('a tracked .pyc outside a __pycache__ folder is refused too', { skip: python ? (git ? false : 'git is not available') : skip }, () => {
+  const run = runVerifier({ tracked: { 'scripts/stale.pyc': 'bytecode\n' } });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /scripts\/stale\.pyc is tracked/);
+});
+
+test('tracked source files pass the bytecode check', { skip: python ? (git ? false : 'git is not available') : skip }, () => {
+  const run = runVerifier({ tracked: { 'scripts/helper.py': 'x = 1\n', 'scripts/__pycache_notes.txt': 'kept\n' } });
+  assert.equal(run.status, 0, failureOf(run));
 });
 
 test('the layer names and the single plugin layer are checked', { skip }, () => {
