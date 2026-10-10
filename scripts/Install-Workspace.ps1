@@ -353,7 +353,8 @@ function Get-LinkTargetText {
 # The folders a tree hash leaves out, by the path relative to the tree root. The legacy rule is
 # the one the claude tree hashes have always used: the top-level node_modules, matched without
 # regard to case, because PowerShell's -ne did that. The owned rule leaves out node_modules and
-# .git at any depth, exactly, because npm and git write those beside what the installer copies.
+# .git at any depth, exactly, because npm and git write those beside what the installer copies. The lock
+# npm writes is not left out: Resolve-NpmLock removes it, so the folder holds only what the layer ships.
 function Test-TreeFolderExcluded {
     param([string] $Relative, [string] $Rule)
 
@@ -602,6 +603,22 @@ function Get-NotSelectedPaths {
         }
     }
     return (Sort-Utf8 $found.ToArray())
+}
+
+# The package-lock.json npm writes beside a layer's package.json is the installer's output, so the folder must hold
+# only what the layer ships. A lock the layer ships arrives with its items, before npm runs, and npm may rewrite it,
+# so the shipped bytes are put back. Any other lock is one npm wrote, and it is removed.
+function Resolve-NpmLock {
+    param([string] $Path, [bool] $Shipped, [byte[]] $ShippedBytes)
+
+    if ($Shipped) {
+        [IO.File]::WriteAllBytes($Path, $ShippedBytes)
+        return
+    }
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        Remove-OwnedTree $Path
+        Write-Host "Removed ${Path}: npm wrote it, and the layer does not ship a package-lock.json"
+    }
 }
 
 # Copies the named items of a layer root into a folder. A claude copy of a local layer holds the same
@@ -3081,22 +3098,16 @@ foreach ($layer in $openCodeLayers) {
     Write-Host "Copied plugin layer '$($layer.name)' into $folder"
 
     $installDir = if ($spec.dir -eq '') { $folder } else { Join-Path $folder ($spec.dir -replace '/', '\') }
+    # Before npm runs, a lock here came from the layer's items, so it is the layer's and not npm's.
+    $npmLock = Join-Path $installDir 'package-lock.json'
+    $lockShipped = Test-Path -LiteralPath $npmLock -PathType Leaf
+    $shippedBytes = if ($lockShipped) { [IO.File]::ReadAllBytes($npmLock) } else { [byte[]] @() }
     if ((Test-Path -LiteralPath (Join-Path $installDir 'package.json') -PathType Leaf) -and -not (Test-Path -LiteralPath (Join-Path $installDir 'node_modules\@opencode\plugin'))) {
         Write-Host 'Installing plugin dependencies'
         & npm install --prefix $installDir --omit=dev --no-audit --no-fund
         if ($LASTEXITCODE -ne 0) { throw "npm install failed in $installDir" }
     }
-    # npm writes a package-lock.json beside the package.json it installs from. The folder holds what the
-    # installer copied, so that file goes unless a layer item named it.
-    $lockRelative = 'package-lock.json'
-    if ($spec.dir -ne '') { $lockRelative = "$($spec.dir)/package-lock.json" }
-    # Windows names are case-insensitive, so an item named Package-Lock.json is the same file as npm's.
-    $lockCopied = @($items | Where-Object { $lockRelative -ieq $_ -or $lockRelative.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
-    $npmLock = Join-Path $installDir 'package-lock.json'
-    if (-not $lockCopied -and (Test-Path -LiteralPath $npmLock -PathType Leaf)) {
-        Remove-OwnedTree $npmLock
-        Write-Host "Removed the package-lock.json that npm wrote beside $($layer.name)'s package.json"
-    }
+    Resolve-NpmLock -Path $npmLock -Shipped $lockShipped -ShippedBytes $shippedBytes
 
     $agentNamesByLayer[$layer.name] = @()
     if ($spec.agents) {
