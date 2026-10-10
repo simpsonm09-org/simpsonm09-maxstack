@@ -1805,6 +1805,18 @@ function Measure-ExcludedSubtree {
     $Report.subtrees.Add([pscustomobject]@{ path = $Relative; files = $files; bytes = $bytes })
 }
 
+# A quarantine left beside a folder is resumed only when the lock journaled that quarantine's name for this record, and
+# its tree still has the recorded hash. Any other folder with that name is the user's, so it is named and not touched.
+function Get-QuarantineResumeItem {
+    param($Record, [string] $Quarantine)
+
+    $leaf = Split-Path -Leaf $Quarantine
+    if ((Get-Field $Record 'quarantine') -ceq $leaf -and -not (Test-ReparsePoint $Quarantine) -and (Test-Path -LiteralPath $Quarantine -PathType Container) -and ((Get-TreeSha256 $Quarantine) -eq $Record.sha256)) {
+        return New-RemovalItem -State DELETE -Path $Record.path -Reason "resumes the removal of the folder quarantined as $leaf" -Action 'resume-quarantine' -Records @($Record) -Gone @($Record.path) -Full $Quarantine -Quarantine $Quarantine -ExpectSha $Record.sha256
+    }
+    return New-SkipItem $Record.path "in the way: a folder named $leaf exists, and it is not the one an earlier removal quarantined for this path"
+}
+
 # A folder is deleted only when its tree hash is the recorded one. The owned folder is wholly the installer's, so a
 # file added to it, or a change to one, makes the hash differ and the folder is kept. The folder is renamed to its
 # quarantine name first; a rerun resumes a quarantine that a failed delete left behind.
@@ -1817,7 +1829,7 @@ function Get-DirRemovalItem {
     $item = Get-EntryItem $entry.full
     if ($null -eq $item) {
         if (Test-Path -LiteralPath $quarantine) {
-            return New-RemovalItem -State DELETE -Path $Record.path -Reason "resumes the removal of the folder quarantined as $(Split-Path -Leaf $quarantine)" -Action 'resume-quarantine' -Records @($Record) -Gone @($Record.path) -Full $entry.full -Quarantine $quarantine
+            return (Get-QuarantineResumeItem -Record $Record -Quarantine $quarantine)
         }
         return New-GoneItem $Record.path @($Record)
     }
@@ -2115,6 +2127,57 @@ function Get-CreatedDirItems {
     return $items.ToArray()
 }
 
+# The leftover copies the installer writes beside a file while it works. A copy is deleted only when its bytes are a
+# hash the lock records for that file; any other copy is named and kept, so no unknown bytes are removed.
+$strayFileSuffixes = @('.uninstall-restore', '.uninstall-replaced', '.maxstack-tmp', '.maxstack-old')
+
+# The SHA-256 values the lock or the apply knows for one file: the file's own records and its backups, and the text the
+# installer last wrote to the config or the Pi settings.
+function Get-KnownShas {
+    param([string] $Path, [object[]] $Known, $ConfigSha, $SettingsSha)
+
+    $shas = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($record in @($Known)) {
+        if ($record.kind -ne 'file' -or -not $record.sha256) { continue }
+        if ($record.path -ceq $Path -or $record.path -cmatch ('^' + [regex]::Escape($Path) + '\.bak(\.\d+)?$')) { $shas.Add($record.sha256) | Out-Null }
+    }
+    if ($Path -ceq 'opencode.jsonc' -and $ConfigSha) { $shas.Add($ConfigSha) | Out-Null }
+    if ($Path -ceq '.pi/agent/settings.json' -and $SettingsSha) { $shas.Add($SettingsSha) | Out-Null }
+    return , $shas
+}
+
+# The leftover copies beside each recorded file. A copy whose bytes the lock knows is a DELETE; any other copy is a SKIP,
+# which keeps the lock for a rerun. A leftover that is a folder or a link is a SKIP too.
+function Get-StrayItems {
+    param([object[]] $Candidates, [object[]] $Known, $ConfigSha, $SettingsSha)
+
+    $items = [System.Collections.Generic.List[object]]::new()
+    $bases = @($Candidates | Where-Object { $_.kind -in @('file', 'json-entries') } | ForEach-Object { $_.path } | Sort-Object -Unique)
+    foreach ($base in $bases) {
+        $baseEntry = Resolve-WorkspaceEntry $base
+        if (-not $baseEntry.ok) { continue }
+        $shas = Get-KnownShas -Path $base -Known $Known -ConfigSha $ConfigSha -SettingsSha $SettingsSha
+        foreach ($suffix in $strayFileSuffixes) {
+            $stray = "$base$suffix"
+            $strayEntry = Resolve-WorkspaceEntry $stray
+            if (-not $strayEntry.ok) { continue }
+            $strayItem = Get-EntryItem $strayEntry.full
+            if ($null -eq $strayItem) { continue }
+            if ($strayItem.PSIsContainer -or (Test-ReparsePoint $strayEntry.full)) {
+                $items.Add((New-SkipItem $stray 'a leftover folder or link beside a recorded file, so it is kept'))
+                continue
+            }
+            $sha = (Get-FileHash -LiteralPath $strayEntry.full -Algorithm SHA256).Hash
+            if ($shas.Contains($sha)) {
+                $items.Add((New-RemovalItem -State DELETE -Path $stray -Reason "a leftover copy of $base from an interrupted run; its bytes match the lock" -Action 'remove-file' -Full $strayEntry.full -ExpectSha $sha))
+            } else {
+                $items.Add((New-SkipItem $stray "a leftover copy of $base whose bytes the lock does not record, so it is kept"))
+            }
+        }
+    }
+    return $items.ToArray()
+}
+
 # Whether a path is one of the file groups or a backup of one.
 function Test-GroupMember {
     param([string] $Path)
@@ -2165,9 +2228,37 @@ function Get-RemovalPlanItems {
             $items.Add((New-SkipItem $record.path "could not be checked: $($_.Exception.Message)"))
         }
     }
+    foreach ($stray in @(Get-StrayItems -Candidates $Candidates -Known $priorOwned -ConfigSha (Get-Field $priorStack 'configSha256') -SettingsSha $priorSettingsSha)) { $items.Add($stray) }
     $gone = @($items | Where-Object { $_.state -in @('DELETE', 'RESTORE') } | ForEach-Object { $_.gone })
     foreach ($item in @(Get-CreatedDirItems -Dirs $CreatedDirs -Gone $gone -Report $Report)) { $items.Add($item) }
     return $items.ToArray()
+}
+
+# An apply prints the leftover copies beside the recorded files, and deletes the ones whose bytes the lock knows. A
+# quarantine folder an interrupted removal left is named: a removal finishes it through its record.
+function Invoke-StrayReport {
+    param([object[]] $Known, $ConfigSha, $SettingsSha)
+
+    foreach ($item in @(Get-StrayItems -Candidates $Known -Known $Known -ConfigSha $ConfigSha -SettingsSha $SettingsSha)) {
+        if ($item.state -eq 'DELETE') {
+            try {
+                Confirm-RemovalItem $item
+                Invoke-RemovalAction $item
+            } catch {
+                $item.state = 'SKIP'
+                $item.reason = "could not be deleted: $($_.Exception.Message)"
+            }
+        }
+        Write-Host ('{0,-8} {1}  {2}' -f $item.state, $item.path, $item.reason)
+    }
+    foreach ($record in @($Known | Where-Object { $_.kind -eq 'dir' })) {
+        $entry = Resolve-WorkspaceEntry $record.path
+        if (-not $entry.ok) { continue }
+        $leftover = "$($entry.full)$quarantineSuffix"
+        if (Test-Path -LiteralPath $leftover) {
+            Write-Host ('SKIP     {0}{1}  a folder with the removal quarantine name is beside a recorded folder; an interrupted removal may have left it. Rerun -Uninstall -Apply to finish it, or move it aside by hand' -f $record.path, $quarantineSuffix)
+        }
+    }
 }
 
 # The records a removal deletes: those whose runtime or layers the remaining selection does not keep, and which
@@ -2282,7 +2373,7 @@ function Invoke-RemovalTestHook {
 function Confirm-RemovalItem {
     param($Item)
 
-    if ($Item.action -in @('none', 'resume-quarantine', 'delete-empty')) { return }
+    if ($Item.action -eq 'none') { return }
     $entry = Resolve-WorkspaceEntry $Item.path
     if (-not $entry.ok) { throw $entry.reason }
     $changed = 'changed since the plan: rerun the command to plan it again'
@@ -2304,6 +2395,15 @@ function Confirm-RemovalItem {
             if (-not (Test-RecordedFile -Full $Item.source -Sha256 $Item.expectSource)) { throw 'the backup changed since the plan' }
         }
         'drop-backup' { if (-not (Test-RecordedFile -Full $Item.source -Sha256 $Item.expectSource)) { throw 'the backup changed since the plan' } }
+        'resume-quarantine' {
+            if (-not (Test-Path -LiteralPath $Item.quarantine -PathType Container) -or (Test-ReparsePoint $Item.quarantine)) { throw $changed }
+            if ((Get-TreeSha256 $Item.quarantine) -ne $Item.expectSha) { throw $changed }
+        }
+        'delete-empty' {
+            $current = Get-EntryItem $entry.full
+            if ($null -eq $current -or -not $current.PSIsContainer -or (Test-ReparsePoint $entry.full)) { throw $changed }
+            if (@(Get-ChildItem -LiteralPath $entry.full -Force).Count -gt 0) { throw $changed }
+        }
     }
 }
 
@@ -2381,6 +2481,11 @@ function Invoke-RemovalItems {
             try {
                 Invoke-RemovalTestHook -Stage before -Path $item.path
                 Confirm-RemovalItem $item
+                if ($item.action -eq 'remove-dir' -and $null -ne $Stack) {
+                    # The journal: the lock names the quarantine before the rename, so a rerun resumes only that folder.
+                    $item.records[0] | Add-Member -NotePropertyName quarantine -NotePropertyValue (Split-Path -Leaf $item.quarantine) -Force
+                    Save-RemovalProgress -Stack $Stack -Keep $Keep -Pending (Get-PendingRecords -Candidates $Candidates -Finished $finished)
+                }
                 Invoke-RemovalAction $item
             } catch {
                 $item.state = 'SKIP'
@@ -3241,6 +3346,10 @@ if ($removing) {
     Invoke-RemovalFlow -Stack $stack -PlanRecords $owned -Plan $plan
     return
 }
+# Leftovers of an interrupted write or removal beside the recorded files: named, and deleted when the lock knows their bytes.
+$knownNow = @(@($owned) + @($priorOwned) | Where-Object { $null -ne $_ })
+$settingsNowSha = if (($null -ne $piSettings) -and -not $piPending) { Get-TextSha256 $piSettingsText } else { $priorSettingsSha }
+Invoke-StrayReport -Known $knownNow -ConfigSha $stack.configSha256 -SettingsSha $settingsNowSha
 Write-LockAtomically -Text ($stack | ConvertTo-Json -Depth 8)
 Write-Host "Wrote $stackTarget"
 
