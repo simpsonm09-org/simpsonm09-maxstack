@@ -107,8 +107,9 @@ function writeLayerStub(root, { claudePlugin = null, manifestName = claudePlugin
 // With npm, the OpenCode package declares a dependency and ships no node_modules, so the installer runs npm in the
 // entry's folder. With shipLock, the package also ships a package-lock.json, as a layer may.
 const SHIPPED_LOCK = '{"lockfileVersion": 3, "shipped": true}\n';
+const SHIPPED_SHRINKWRAP = '{"lockfileVersion": 3, "shippedShrinkwrap": true}\n';
 
-function makeFixture(base, { npm = false, shipLock = false } = {}) {
+function makeFixture(base, { npm = false, shipLock = false, shipShrinkwrap = false } = {}) {
   const dir = join(base, 'pstack-src');
   const plugin = 'plugins/pstack';
   writeFile(dir, `${plugin}/.claude-plugin/plugin.json`, JSON.stringify({ name: 'pstack', version: '0.9.79' }));
@@ -119,6 +120,7 @@ function makeFixture(base, { npm = false, shipLock = false } = {}) {
   const packageJson = npm ? { name: 'pstack-opencode', private: true, dependencies: { '@opencode/plugin': '2.0.18' } } : { name: 'pstack-opencode', private: true };
   writeFile(dir, `${plugin}/opencode/package.json`, JSON.stringify(packageJson));
   if (shipLock) writeFile(dir, `${plugin}/opencode/package-lock.json`, SHIPPED_LOCK);
+  if (shipShrinkwrap) writeFile(dir, `${plugin}/opencode/npm-shrinkwrap.json`, SHIPPED_SHRINKWRAP);
   if (!npm) writeFile(dir, `${plugin}/opencode/node_modules/@opencode/plugin/index.js`, 'module.exports = {};\n');
   writeFile(dir, `${plugin}/opencode/agents/pstack-agent.md`, '---\ndescription: worker\nmodel: opencode-go/deepseek-v4.1-flash\n---\nbody\nmodel: a body line\n');
   writeFile(dir, `${plugin}/opencode/agents/pstack-reviewer.md`, '---\ndescription: reviewer\n---\nreview\n');
@@ -158,12 +160,15 @@ function writeFakePi(base) {
 // folder into its prefix, and nothing else here. FAKE_NPM_EXTRA names one more file it writes, and FAKE_NPM_REWRITE
 // makes it write a different lock, as npm does to a lock the layer ships. A node script runs it, behind a .cmd on
 // Windows and a shell file elsewhere.
-const FAKE_NPM_SCRIPT = `import { mkdirSync, writeFileSync } from 'node:fs';
+const FAKE_NPM_SCRIPT = `import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const prefix = process.argv[process.argv.indexOf('--prefix') + 1];
+const shrinkwrap = join(prefix, 'npm-shrinkwrap.json');
+// npm writes into a shrinkwrap the layer ships, and otherwise into package-lock.json; FAKE_NPM_SHRINKWRAP makes it generate one.
+const lockPath = process.env.FAKE_NPM_SHRINKWRAP || existsSync(shrinkwrap) ? shrinkwrap : join(prefix, 'package-lock.json');
 const lock = process.env.FAKE_NPM_REWRITE ? '{"lockfileVersion": 3, "rewritten": true}' : '{"lockfileVersion": 3}';
-writeFileSync(join(prefix, 'package-lock.json'), lock);
+writeFileSync(lockPath, lock);
 const sdk = join(prefix, 'node_modules', '@opencode', 'plugin', 'index.js');
 mkdirSync(dirname(sdk), { recursive: true });
 writeFileSync(sdk, 'module.exports = {};\\n');
@@ -1395,6 +1400,36 @@ withWorkspace('a package-lock.json the layer ships is put back as shipped when n
   assert.equal(readFileSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/package-lock.json`), 'utf8'), SHIPPED_LOCK, 'the folder does not hold the lock the layer ships');
   assert.deepEqual(problemRows(runStatus(ctx)), []);
 }, { fixture: { npm: true, shipLock: true } });
+
+withWorkspace('a read-only package-lock.json the layer ships survives a second apply when npm is skipped', (ctx) => {
+  mustApply(ctx);
+  const cachedLock = workspacePath(ctx, '.claude/cache/pstack/plugins/pstack/opencode/package-lock.json');
+  const installedLock = workspacePath(ctx, `${PSTACK_NPM_FOLDER}/package-lock.json`);
+  chmodSync(cachedLock, 0o444);
+  try {
+    mustApply(ctx);
+    assert.deepEqual(problemRows(runStatus(ctx)), []);
+    assert.equal(readFileSync(installedLock, 'utf8'), SHIPPED_LOCK, 'the second apply changed the shipped lock');
+  } finally {
+    chmodSync(cachedLock, 0o666);
+    if (existsSync(installedLock)) chmodSync(installedLock, 0o666);
+  }
+}, { fixture: { shipLock: true } });
+
+withWorkspace('an npm-shrinkwrap.json the layer ships is put back as shipped when npm rewrites it', (ctx) => {
+  ctx.env.FAKE_NPM_REWRITE = '1';
+  mustApply(ctx);
+  assert.equal(readFileSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/npm-shrinkwrap.json`), 'utf8'), SHIPPED_SHRINKWRAP, 'the folder does not hold the shrinkwrap the layer ships');
+  assert.equal(existsSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/package-lock.json`)), false, 'npm wrote a package-lock.json beside the shipped shrinkwrap');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, { fixture: { npm: true, shipShrinkwrap: true } });
+
+withWorkspace('an npm-shrinkwrap.json npm generates, where none was shipped, is removed', (ctx) => {
+  ctx.env.FAKE_NPM_SHRINKWRAP = '1';
+  mustApply(ctx);
+  assert.equal(existsSync(workspacePath(ctx, `${PSTACK_NPM_FOLDER}/npm-shrinkwrap.json`)), false, 'the shrinkwrap npm generated stayed in the folder');
+  assert.deepEqual(problemRows(runStatus(ctx)), []);
+}, NPM);
 
 withWorkspace('a lock without an owned list gets the clear message, and -Strict fails on it', (ctx) => {
   mustApply(ctx);

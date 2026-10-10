@@ -354,7 +354,7 @@ function Get-LinkTargetText {
 # the one the claude tree hashes have always used: the top-level node_modules, matched without
 # regard to case, because PowerShell's -ne did that. The owned rule leaves out node_modules and
 # .git at any depth, exactly, because npm and git write those beside what the installer copies. The lock
-# npm writes is not left out: Resolve-NpmLock removes it, so the folder holds only what the layer ships.
+# npm writes is not left out: Resolve-NpmLocks settles it, so the folder holds only what the layer ships.
 function Test-TreeFolderExcluded {
     param([string] $Relative, [string] $Rule)
 
@@ -605,19 +605,55 @@ function Get-NotSelectedPaths {
     return (Sort-Utf8 $found.ToArray())
 }
 
-# The package-lock.json npm writes beside a layer's package.json is the installer's output, so the folder must hold
-# only what the layer ships. A lock the layer ships arrives with its items, before npm runs, and npm may rewrite it,
-# so the shipped bytes are put back. Any other lock is one npm wrote, and it is removed.
-function Resolve-NpmLock {
-    param([string] $Path, [bool] $Shipped, [byte[]] $ShippedBytes)
+# The lock files npm writes beside a layer's package.json. npm writes into a shrinkwrap the layer ships, and otherwise
+# into package-lock.json, or it generates npm-shrinkwrap.json. Both are the installer's output, so the folder must
+# hold only what the layer ships.
+$npmLockNames = @('package-lock.json', 'npm-shrinkwrap.json')
 
-    if ($Shipped) {
-        [IO.File]::WriteAllBytes($Path, $ShippedBytes)
+# The lock files of a folder before npm runs: the bytes of each one the layer ships, and $null for each one it does not.
+# A file here before npm runs came from the layer's items, so it is the layer's and not npm's.
+function Get-ShippedLocks {
+    param([string] $Folder)
+
+    $shipped = @{}
+    foreach ($name in $npmLockNames) {
+        $shipped[$name] = $null
+        $path = Join-Path $Folder $name
+        if (Test-Path -LiteralPath $path -PathType Leaf) { $shipped[$name] = [IO.File]::ReadAllBytes($path) }
+    }
+    return $shipped
+}
+
+# Puts back the bytes a layer ships. A file that already holds them is not written, so a read-only shipped file stays
+# as it is. Otherwise the read-only attribute is cleared for the write, and set again after it.
+function Set-ShippedFile {
+    param([string] $Path, [byte[]] $Bytes)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        [IO.File]::WriteAllBytes($Path, $Bytes)
         return
     }
-    if (Test-Path -LiteralPath $Path -PathType Leaf) {
-        Remove-OwnedTree $Path
-        Write-Host "Removed ${Path}: npm wrote it, and the layer does not ship a package-lock.json"
+    if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($Path)) -eq [Convert]::ToBase64String($Bytes)) { return }
+    $attributes = [IO.File]::GetAttributes($Path)
+    [IO.File]::SetAttributes($Path, [IO.FileAttributes]::Normal)
+    [IO.File]::WriteAllBytes($Path, $Bytes)
+    [IO.File]::SetAttributes($Path, $attributes)
+}
+
+# Each npm lock file ends as the layer ships it: a shipped one is put back as shipped, and one npm wrote is removed.
+function Resolve-NpmLocks {
+    param([string] $Folder, [hashtable] $Shipped)
+
+    foreach ($name in $npmLockNames) {
+        $path = Join-Path $Folder $name
+        if ($null -ne $Shipped[$name]) {
+            Set-ShippedFile -Path $path -Bytes $Shipped[$name]
+            continue
+        }
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            Remove-OwnedTree $path
+            Write-Host "Removed ${path}: npm wrote it, and the layer does not ship $name"
+        }
     }
 }
 
@@ -3098,16 +3134,13 @@ foreach ($layer in $openCodeLayers) {
     Write-Host "Copied plugin layer '$($layer.name)' into $folder"
 
     $installDir = if ($spec.dir -eq '') { $folder } else { Join-Path $folder ($spec.dir -replace '/', '\') }
-    # Before npm runs, a lock here came from the layer's items, so it is the layer's and not npm's.
-    $npmLock = Join-Path $installDir 'package-lock.json'
-    $lockShipped = Test-Path -LiteralPath $npmLock -PathType Leaf
-    $shippedBytes = if ($lockShipped) { [IO.File]::ReadAllBytes($npmLock) } else { [byte[]] @() }
+    $shippedLocks = Get-ShippedLocks $installDir
     if ((Test-Path -LiteralPath (Join-Path $installDir 'package.json') -PathType Leaf) -and -not (Test-Path -LiteralPath (Join-Path $installDir 'node_modules\@opencode\plugin'))) {
         Write-Host 'Installing plugin dependencies'
         & npm install --prefix $installDir --omit=dev --no-audit --no-fund
         if ($LASTEXITCODE -ne 0) { throw "npm install failed in $installDir" }
     }
-    Resolve-NpmLock -Path $npmLock -Shipped $lockShipped -ShippedBytes $shippedBytes
+    Resolve-NpmLocks -Folder $installDir -Shipped $shippedLocks
 
     $agentNamesByLayer[$layer.name] = @()
     if ($spec.agents) {
