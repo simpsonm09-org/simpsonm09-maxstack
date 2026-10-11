@@ -24,7 +24,7 @@ The installer lists the PStack entry in the workspace `opencode.jsonc`, as `./.o
 
 ### Models
 
-Use an `opencode-go/*` model. `opencode/*` models report insufficient funds. No default model is set for OpenCode or Claude, so pick one in the T3 model picker.
+OpenCode runs on free models: the free OpenCode Zen models (`opencode/*`) and the zero-priced OpenRouter models. OpenCode Go is retired, so an `opencode-go/*` model no longer works. Which providers are connected, and any default model, live in the person's own OpenCode config under the user profile. maxstack does not write them: it sets no model for OpenCode or Claude, and the workspace `opencode.jsonc` holds no `model` and no `providers`. Pick a model in the T3 model picker. Free models are offered for a limited time, so a model id in a doc is an example and not a pin.
 
 ## Claude Code
 
