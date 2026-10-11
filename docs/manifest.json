@@ -1,5 +1,5 @@
 {
   "readme": true,
-  "features": [],
+  "features": ["docs/features/settings.md"],
   "diagrams": []
 }

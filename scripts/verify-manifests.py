@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from verify_ownership import check_lock_file
+from verify_settings import check_settings_files
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
@@ -405,6 +406,7 @@ def main() -> int:
     if config:
         check_workspace_config(config, failures)
     check_surface(failures)
+    check_settings_files(REPO_ROOT, failures)
     check_tracked_bytecode(failures)
     if args.online and pins:
         check_online(pins, failures)

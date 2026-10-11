@@ -19,6 +19,8 @@ Ubuntu WSL can also run the OpenCode CLI. It reads the same workspace files unde
 
 ## Runtime and layer selection
 
+An optional [`maxstack.settings.json`](features/settings.md) beside `stack.lock.json` can declare runtime and layer selections. Its names add to the recorded selection. Omitted names stay selected until removed with `-Remove`. On a new workspace, a dimension named in the settings file selects exactly those names. `-Remove` warns about each removed name the file still lists, since the next apply selects it again. See [Workspace settings](features/settings.md) for its schema and reserved fields.
+
 The workspace installs only the runtimes and layers it selects. `-Runtimes` names runtimes: `claude`, `opencode`, `copilot`, `pi`, or `all`. `-Layers` names layers by their names in `layers.json`, or `all`. Both take comma-separated values, which `pwsh -File` passes as one token:
 
 ```powershell
@@ -38,10 +40,10 @@ The selection is recorded in `stack.lock.json`, with each list sorted:
 
 The rules:
 
-- A plain `-Apply`, with no flags, reuses the recorded selection. It does not select a layer or runtime that `layers.json` gained after the selection was recorded.
+- A plain `-Apply`, with no flags, reuses the recorded selection. It does not select a layer or runtime that `layers.json` gained after the selection was recorded. On a new workspace, no settings selection means all runtimes and layers; a dimension named in `maxstack.settings.json` selects exactly its listed names.
 - A flag adds its names to the recorded selection, and never removes one. Naming a runtime or layer that is already selected prints `Already selected ...` and changes nothing. Removing one is `-Remove`, described in [Removing and uninstalling](#removing-and-uninstalling).
 - `all` expands to every runtime or layer that `layers.json` names at the time of the run. The lock then records the expanded names, not the word `all`, so a layer added later is not selected until a flag names it.
-- An unnamed dimension keeps its recorded value. A new workspace with no flags selects every runtime and every layer, so a plain `-Apply` installs what it did before. A new workspace with `-Runtimes` selects exactly the runtimes named, and every layer unless `-Layers` names some.
+- An unnamed dimension keeps its recorded value. A new workspace with no settings selection and no flags selects every runtime and every layer, so a plain `-Apply` installs what it did before. A new workspace with `-Runtimes` selects exactly the runtimes named, and every layer unless `-Layers` names some.
 - A layer or runtime that `layers.json` names but the selection leaves out is reported on every apply, audit, and status, with the flag that adds it, for example `-Layers <name>`. `-Status` also lists it as `not selected`. It is not installed until a flag names it.
 - A recorded name that `layers.json` no longer names, such as a layer removed from it, is dropped from the selection with a warning. The next apply removes the folders that layer installed, the same way it removes a layer that stopped installing a runtime.
 - A lock with no `selection` predates the field. It reads as all, and the next apply writes the field.
