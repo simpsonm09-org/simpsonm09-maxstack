@@ -41,6 +41,23 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$workspaceWasSpecified = $PSBoundParameters.ContainsKey('Workspace')
+. (Join-Path $PSScriptRoot 'Install-WorkspaceDiscovery.ps1')
+$workspaceResolutionArguments = @{
+    ExplicitSpecified = $workspaceWasSpecified
+    ExplicitValue = $Workspace
+    CurrentDirectory = (Get-Location).Path
+    ScriptRoot = $PSScriptRoot
+}
+if (-not $workspaceWasSpecified) { $workspaceResolutionArguments.LegacyWorkspace = $Workspace }
+$workspaceResolution = Resolve-MaxstackWorkspace @workspaceResolutionArguments
+$Workspace = $workspaceResolution.Workspace
+Write-Host "Workspace: $(Get-MaxstackSafePathDisplay $Workspace) (from $($workspaceResolution.Origin))"
+if ($workspaceResolution.Note) { Write-Warning $workspaceResolution.Note }
+if ($workspaceResolution.Warning) {
+    Write-Warning 'Using the legacy workspace default. Pass -Workspace or set MAXSTACK_WORKSPACE; this fallback will be removed after one release.'
+}
+
 if ($Apply -and $Status) { throw '-Apply writes the workspace and -Status only reports it. Choose one.' }
 if ($Remove -and $Uninstall) { throw '-Remove names what to remove and -Uninstall removes everything. Choose one.' }
 if (($Remove -or $Uninstall) -and $Status) { throw '-Status only reports. Choose -Status, -Remove, or -Uninstall.' }
@@ -69,6 +86,10 @@ $workspaceSettingsPath = Join-Path $Workspace 'maxstack.settings.json'
 $baseConfigFile = Join-Path $repoRoot 'workspace\opencode.jsonc'
 $configTarget = Join-Path $Workspace 'opencode.jsonc'
 $stackTarget = Join-Path $Workspace 'stack.lock.json'
+# A linked lock is refused by the destructive modes: they would read and remove through the link, in another folder.
+if (($removing -or $uninstalling) -and (Test-MaxstackLinkedPath $stackTarget)) {
+    throw 'stack.lock.json is a symbolic link or junction, so -Remove and -Uninstall refuse to act through it. Replace it with a regular file first.'
+}
 $agentsTarget = Join-Path $Workspace '.opencode\agents'
 $opencodePluginsTarget = Join-Path $Workspace '.opencode\plugins'
 $claudePluginsTarget = Join-Path $Workspace '.claude\plugins'
@@ -2842,14 +2863,8 @@ function Invoke-UninstallFlow {
     if ($Strict -and $skipped -gt 0) { exit 1 }
 }
 
-if (-not (Test-Path -LiteralPath $Workspace -PathType Container)) {
-    throw "Workspace not found: $Workspace"
-}
 
 $workspaceName = Split-Path -Leaf $Workspace.TrimEnd('\', '/')
-if ([string]::IsNullOrWhiteSpace($workspaceName)) {
-    throw "Could not derive a workspace name from: $Workspace"
-}
 
 $layerManifest = Get-Content -LiteralPath $layersPath -Raw | ConvertFrom-Json
 $layers = @($layerManifest.layers | ForEach-Object { New-LayerModel $_ })

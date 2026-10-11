@@ -2,6 +2,14 @@
 
 > **Requires PowerShell 7 or later (`pwsh`).** `scripts/Install-Workspace.ps1` declares `#requires -Version 7.0`. Windows PowerShell 5.1 (`powershell.exe`) stops at once with that requirement and does not run the installer. Every installer command in this document is written as `pwsh -File`.
 
+## Workspace discovery
+
+The installer resolves its target in this order: `-Workspace`, `MAXSTACK_WORKSPACE`, the nearest folder from the current directory upward that holds a `maxstack.settings.json` or `stack.lock.json` file, the script's own `projects\repos\<repo>\scripts` or `projects\worktrees\<repo>\scripts` location, then the previous default folder if it still exists. It prints the resolved absolute path and its origin on the first line of a successful run. The legacy default also prints a warning. Pass `-Workspace` or set `MAXSTACK_WORKSPACE` to stop using it.
+
+An explicit or environment target must already exist as a directory. An empty value, a missing folder, or a non-filesystem current location is an error, and none of them falls through to another source. Discovery never creates a folder, so `-Status` and `-Update -Check` cannot create one either. Relative explicit and environment paths resolve from the current directory. A marker must be a file, and only its name is checked. A junction or symbolic link keeps the path you gave, so the lock names the link; the folder it names is checked like any other folder. A `stack.lock.json` that is a symbolic link or a junction is refused by `-Remove` and `-Uninstall`, which would otherwise act through it in another folder. Replace it with a regular file first. A folder inside `.git`, `.claude\cache`, `projects\repos`, or `projects\worktrees` is never a workspace.
+
+Device prefixes (`\\?\` and `\\.\`), UNC paths (`\\server\share`), 8.3 short names, and paths with control characters are refused by their text before any filesystem lookup. Control, format, and separator characters in a message are shown as `\uXXXX`, and a long value is cut with `...`. The full rules and an example are in [Workspace settings](features/settings.md#workspace-discovery).
+
 ## Model
 
 maxstack sets no model. The workspace `opencode.jsonc` has no `model` or `small_model` key, and the installed agent profiles have no `model:` line, so each agent runs the model the session uses. You pick that model in the harness: the T3 Code model picker for a thread or project, or your own OpenCode, Claude Code, or Copilot settings. The PStack Claude plugin's per-role models are set with its own `/setup-pstack` command.
@@ -64,7 +72,7 @@ The lock is replaced whole. The installer writes the new text to `stack.lock.jso
 
 An empty, `null`, or truncated `stack.lock.json` stops every command before anything is written. The message says how to recover. Restore the lock from `stack.lock.json.bak` if that file reads, or repair it by hand. Deleting the lock is the last resort, and it has a cost: the selection resets to all runtimes and layers, and the `createdDirs` and `createdFiles` record is lost, so a later uninstall could not tell what the installer created. Keep `stack.lock.json.bak` either way.
 
-An unselected runtime's files are left alone. An apply does not write, remove, or report them as drift. `-Status` names any that exist as `not selected`, and `-Strict` does not count them. `-Status` takes no selection flags, because it reports the recorded selection, which it prints first.
+An unselected runtime's files are left alone. An apply does not write, remove, or report them as drift. `-Status` names any that exist as `not selected`, and `-Strict` does not count them. `-Status` takes no selection flags, because it reports the recorded selection before owned path status rows.
 
 ## Install and reload
 
