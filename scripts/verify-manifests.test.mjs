@@ -39,15 +39,24 @@ function runVerifier({ layers = (manifest) => manifest, pinLock = null, omitPinL
     if (!omitPinLock) writeFileSync(join(root, 'pstack.lock.json'), JSON.stringify(pinLock ?? shipped('pstack.lock.json')));
     mkdirSync(join(root, 'workspace'));
     copyFileSync(join(repoRoot, 'workspace', 'opencode.jsonc'), join(root, 'workspace', 'opencode.jsonc'));
+    copyFileSync(join(repoRoot, 'workspace', 'maxstack.settings.json'), join(root, 'workspace', 'maxstack.settings.json'));
+    mkdirSync(join(root, 'schemas'));
+    copyFileSync(join(repoRoot, 'schemas', 'maxstack.settings.schema.json'), join(root, 'schemas', 'maxstack.settings.schema.json'));
     copyFileSync(join(repoRoot, 'README.md'), join(root, 'README.md'));
     mkdirSync(join(root, 'docs'));
     copyFileSync(join(repoRoot, 'docs', 'layout.md'), join(root, 'docs', 'layout.md'));
     writeFileSync(join(root, 'docs', 'plugin-publishing.md'), '# plugin publishing\n');
     mkdirSync(join(root, 'scripts'));
     writeFileSync(join(root, 'scripts', 'Install-Workspace.ps1'), '# installer\n');
+    copyFileSync(join(repoRoot, 'scripts', 'Install-Settings.ps1'), join(root, 'scripts', 'Install-Settings.ps1'));
     copyFileSync(verifier, join(root, 'scripts', 'verify-manifests.py'));
+    copyFileSync(join(repoRoot, 'scripts', 'verify_settings.py'), join(root, 'scripts', 'verify_settings.py'));
+    copyFileSync(join(repoRoot, 'scripts', 'settings_document.py'), join(root, 'scripts', 'settings_document.py'));
     copyFileSync(join(repoRoot, 'scripts', 'verify_ownership.py'), join(root, 'scripts', 'verify_ownership.py'));
-    for (const [rel, content] of Object.entries(extraFiles)) writeFileSync(join(root, rel), content);
+    for (const [rel, content] of Object.entries(extraFiles)) {
+      mkdirSync(dirname(join(root, rel)), { recursive: true });
+      writeFileSync(join(root, rel), content);
+    }
     if (Object.keys(tracked).length > 0) {
       spawnSync('git', ['init', '-q'], { windowsHide: true, cwd: root });
       for (const [rel, content] of Object.entries(tracked)) {
@@ -79,6 +88,77 @@ test('the shipped manifests pass the verifier', { skip }, () => {
   const run = spawnSync(python, [verifier], { windowsHide: true, encoding: 'utf8' });
   assert.equal(run.status, 0, failureOf(run));
   assert.match(run.stdout, /^PASS:/);
+});
+
+test('the settings seed is valid and schema keys match the PowerShell validator', { skip }, () => {
+  const run = spawnSync(python, [verifier], { windowsHide: true, encoding: 'utf8' });
+  assert.equal(run.status, 0, failureOf(run));
+  assert.deepEqual(shipped('workspace/maxstack.settings.json'), { version: 1 });
+});
+
+test('the manifest verifier rejects settings schema and validator key drift', { skip }, () => {
+  const validator = readFileSync(join(repoRoot, 'scripts', 'Install-Settings.ps1'), 'utf8');
+  const altered = validator.replace("'claude', 'copilot', 'opencode', 'pi'", "'claude', 'copilot', 'opencode', 'new-harness'");
+  assert.notEqual(altered, validator, 'the fixture replacement found the validator list');
+  const run = runVerifier({ extraFiles: { 'scripts/Install-Settings.ps1': altered } });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /schema runtime ids differ/);
+});
+
+test('the manifest verifier compares settings enums and structural constraints from the shipped schema', { skip }, () => {
+  const schema = shipped('schemas/maxstack.settings.schema.json');
+  schema.properties.runtimes.propertyNames.enum = ['claude', 'copilot', 'opencode', 'changed'];
+  const run = runVerifier({ extraFiles: { 'schemas/maxstack.settings.schema.json': JSON.stringify(schema) } });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /schema runtime ids differ/);
+});
+
+test('the manifest verifier reports malformed settings schema shapes without a traceback', { skip }, () => {
+  const cases = [
+    [(schema) => { schema.properties.runtimes = []; }, /settings schema runtimes must be an object/],
+    [(schema) => { schema.properties.runtimes.propertyNames.enum = 'claude'; }, /propertyNames must have an enum list/],
+    [(schema) => { schema.properties.runtimes.additionalProperties.properties.cli.enum = 'detect'; }, /SettingsCliModes enum must have an enum list/],
+    [(schema) => { schema.properties.layers.additionalProperties = 'object'; }, /settings schema layer entries must be objects/],
+    [(schema) => { schema.properties.t3.properties = []; }, /settings schema T3 entries need an object properties field/],
+  ];
+  for (const [mutate, expected] of cases) {
+    const schema = shipped('schemas/maxstack.settings.schema.json');
+    mutate(schema);
+    const run = runVerifier({ extraFiles: { 'schemas/maxstack.settings.schema.json': JSON.stringify(schema) } });
+    assert.equal(run.status, 1, failureOf(run));
+    assert.match(failureOf(run), expected);
+    assert.doesNotMatch(failureOf(run), /Traceback/);
+  }
+});
+
+test('the manifest verifier reports invalid UTF-8 settings files without a traceback', { skip }, () => {
+  const run = runVerifier({ extraFiles: { 'schemas/maxstack.settings.schema.json': Buffer.from([0xff]) } });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /maxstack\.settings\.schema\.json is not valid UTF-8/);
+  assert.doesNotMatch(failureOf(run), /Traceback|UnicodeDecodeError/);
+});
+
+test('the settings seed and schema must each hold one strict JSON object, with version an integer 1', { skip }, () => {
+  const seedCases = [
+    ['null', 'null', /workspace\/maxstack\.settings\.json must hold one JSON object/],
+    ['boolean version', '{"version":true}', /needs "version": 1/],
+    ['float version', '{"version":1.0}', /needs "version": 1/],
+    ['exponent version', '{"version":1e0}', /needs "version": 1/],
+    ['escaped duplicate key', '{"version":1,"\\u0076ersion":1}', /duplicate key 'version'/],
+    ['deep nesting', `{"version":1,"x":${'['.repeat(40)}0${']'.repeat(40)}}`, /nested deeper than 32/],
+    ['NaN', '{"version":NaN}', /not strict JSON/],
+  ];
+  for (const [label, text, expected] of seedCases) {
+    const run = runVerifier({ extraFiles: { 'workspace/maxstack.settings.json': text } });
+    assert.equal(run.status, 1, `${label}: ${failureOf(run)}`);
+    assert.match(failureOf(run), expected, label);
+    assert.doesNotMatch(failureOf(run), /Traceback/, label);
+  }
+  const bom = runVerifier({ extraFiles: { 'workspace/maxstack.settings.json': Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"version":1}')]) } });
+  assert.equal(bom.status, 0, failureOf(bom));
+  const nullSchema = runVerifier({ extraFiles: { 'schemas/maxstack.settings.schema.json': 'null' } });
+  assert.equal(nullSchema.status, 1, failureOf(nullSchema));
+  assert.match(failureOf(nullSchema), /maxstack\.settings\.schema\.json must be an object/);
 });
 
 test('the shipped pstack layer is one git source with all four runtimes', { skip }, () => {
@@ -387,4 +467,132 @@ test('a malformed source block is refused, with the rule it breaks', { skip }, (
     assert.equal(run.status, 1, `${JSON.stringify(source)} passed`);
     assert.match(failureOf(run), reason, JSON.stringify(source));
   }
+});
+
+// The differential test: one PowerShell process runs Read-MaxstackSettings on each input, and one Python process runs the
+// document reader on each input. The two must accept and refuse the same inputs. The driver is written to a temporary
+// folder and receives the scripts folder, the input folder, and the layer names as arguments.
+const SETTINGS_DRIVER = `param([string] $Scripts, [string] $Folder, [string] $LayerList)
+Set-StrictMode -Version Latest
+. (Join-Path $Scripts 'Install-LayerSources.ps1')
+. (Join-Path $Scripts 'Install-Settings.ps1')
+$layers = @($LayerList -split ',')
+foreach ($file in @(Get-ChildItem -LiteralPath $Folder -Filter '*.json' | Sort-Object Name)) {
+  try {
+    $null = Read-MaxstackSettings -Path $file.FullName -LayerNames $layers
+    $verdict = 'ACCEPT'
+  } catch {
+    $verdict = 'REFUSE'
+  }
+  Write-Output "DIFF|$($file.BaseName)|$verdict"
+}
+`;
+
+function findPwsh() {
+  return spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0'], { windowsHide: true }).status === 0 ? 'pwsh' : null;
+}
+
+const differentialSkip = python && findPwsh() ? false : 'python and pwsh are needed for the reader differential';
+
+// The settings inputs, as [name, bytes]. Each becomes one file in the input folder.
+function settingsDifferentialInputs() {
+  const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  const padded = (size) => {
+    const prefix = '{"version":1,"$schema":"';
+    const suffix = '"}';
+    return `${prefix}${'a'.repeat(size - prefix.length - suffix.length)}${suffix}`;
+  };
+  return [
+    ['minimal', '{"version":1}'],
+    ['bom', Buffer.concat([bom, Buffer.from('{"version":1}')])],
+    ['double-bom', Buffer.concat([bom, bom, Buffer.from('{"version":1}')])],
+    ['null', 'null'],
+    ['version-true', '{"version":true}'],
+    ['version-float', '{"version":1.0}'],
+    ['version-exponent', '{"version":1e0}'],
+    ['version-big-int', '{"version":100000000000000000000000000000000}'],
+    ['duplicate-key', '{"version":1,"version":1}'],
+    ['escaped-duplicate-key', '{"version":1,"\\u0076ersion":1}'],
+    ['nbsp-before-object', '\u00a0{"version":1}'],
+    ['vertical-tab', '\u000b{"version":1}'],
+    ['form-feed', '\u000c{"version":1}'],
+    ['lone-surrogate-escape', '{"version":1,"layers":{"pstack":{"source":"local:\\ud800"}}}'],
+    ['lone-surrogate-bytes', Buffer.concat([Buffer.from('{"version":1,"layers":{"pstack":{"source":"local:'), Buffer.from([0xed, 0xa0, 0x80]), Buffer.from('"}}}')])],
+    ['proto-key', '{"version":1,"__proto__":{}}'],
+    ['constructor-key', '{"version":1,"constructor":{}}'],
+    ['nan', '{"version":NaN}'],
+    ['infinity', '{"version":Infinity}'],
+    ['case-variant-version', '{"Version":1}'],
+    ['case-variant-runtimes', '{"version":1,"Runtimes":{"claude":{}}}'],
+    ['case-variant-cli', '{"version":1,"runtimes":{"claude":{"CLI":"detect"}}}'],
+    ['unknown-key', '{"version":1,"extra":true}'],
+    ['empty-runtimes', '{"version":1,"runtimes":{}}'],
+    ['all-as-runtime', '{"version":1,"runtimes":{"all":{}}}'],
+    ['os-all', '{"version":1,"os":"all"}'],
+    ['cli-boolean', '{"version":1,"runtimes":{"claude":{"cli":true}}}'],
+    ['t3-defaults-boolean', '{"version":1,"t3":{"defaults":true}}'],
+    ['os-boolean', '{"version":1,"os":true}'],
+    ['snapshot-integer', '{"version":1,"t3":{"snapshot":1}}'],
+    ['deep-array-100000', `{"version":1,"x":${'['.repeat(100000)}${']'.repeat(100000)}}`],
+    ['deep-object-100000', `{"version":1,"x":${'{"a":'.repeat(100000)}0${'}'.repeat(100000)}}`],
+    ['deep-40', `{"version":1,"x":${'['.repeat(40)}0${']'.repeat(40)}}`],
+    ['size-65536', padded(65536)],
+    ['size-65537', padded(65537)],
+    ['empty-local-path', '{"version":1,"layers":{"pstack":{"source":"local:"}}}'],
+    ['date-like-schema', '{"version":1,"$schema":"2020-12-01T00:00:00Z"}'],
+    ['date-like-source', '{"version":1,"layers":{"pstack":{"source":"2020-12-01"}}}'],
+    ['https-source', '{"version":1,"layers":{"pstack":{"source":"https://example.invalid/owner/repo.git@main"}}}'],
+    ['owner-source', '{"version":1,"layers":{"pstack":{"source":"sample-org/sample-layer@main"}}}'],
+    ['control-in-source', '{"version":1,"layers":{"pstack":{"source":"sample/repo@main\\u0007"}}}'],
+    ['del-source', '{"version":1,"layers":{"pstack":{"source":"sample/repo@main\u007f"}}}'],
+    ['c1-source', '{"version":1,"layers":{"pstack":{"source":"sample/repo@main\u0085"}}}'],
+    ['nbsp-source', '{"version":1,"layers":{"pstack":{"source":"sample/repo@main\u00a0"}}}'],
+    ['bidi-source', '{"version":1,"layers":{"pstack":{"source":"sample/repo@main\u202e"}}}'],
+    ['accented-source', '{"version":1,"layers":{"pstack":{"source":"sample/repo@main\u00e9"}}}'],
+    ['dotdot-ref', '{"version":1,"layers":{"pstack":{"source":"sample/repo@bad..ref"}}}'],
+    ['default-source', '{"version":1,"layers":{"pstack":{"source":"default"}}}'],
+    ['unknown-layer', '{"version":1,"layers":{"absent":{}}}'],
+    ['trailing-comma', '{"version":1,}'],
+    ['line-comment', '// note\n{"version":1}'],
+    ['empty-file', ''],
+    ['invalid-utf8', Buffer.from([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d])],
+    ['full-valid', '{"$schema":"https://json-schema.org/draft/2020-12/schema","version":1,"os":"auto","runtimes":{"claude":{"cli":"detect"}},"layers":{"pstack":{"source":"default"}},"t3":{"cli":"detect","snapshot":true,"defaults":"leave-alone"}}'],
+    ['pi-alone', '{"version":1,"runtimes":{"pi":{}}}'],
+  ];
+}
+
+// The verdict of each input from each reader: ACCEPT or REFUSE. Python exits 0 for accept and 1 for refuse.
+function runSettingsDifferential(inputs) {
+  const dir = mkdtempSync(join(tmpdir(), 'maxstack-differential-'));
+  try {
+    const folder = join(dir, 'inputs');
+    mkdirSync(folder);
+    for (const [name, bytes] of inputs) writeFileSync(join(folder, `${name}.json`), bytes);
+    const driver = join(dir, 'driver.ps1');
+    writeFileSync(driver, SETTINGS_DRIVER);
+    const layerList = shipped('layers.json').layers.map((layer) => layer.name).join(',');
+    const ps = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', driver, '-Scripts', join(repoRoot, 'scripts'), '-Folder', folder, '-LayerList', layerList], { windowsHide: true, encoding: 'utf8' });
+    assert.equal(ps.status, 0, `the PowerShell driver failed: ${ps.stderr}`);
+    const powershell = new Map(ps.stdout.split(/\r?\n/).filter((line) => line.startsWith('DIFF|')).map((line) => line.split('|').slice(1)));
+    const reader = new Map();
+    for (const [name] of inputs) {
+      const run = spawnSync(python, [join(repoRoot, 'scripts', 'verify_settings.py'), '--document', join(folder, `${name}.json`)], { windowsHide: true, encoding: 'utf8' });
+      assert.ok(run.status === 0 || (run.status === 1 && run.stderr === ''), `the Python reader crashed on ${name}: ${run.stderr}`);
+      reader.set(name, run.status === 0 ? 'ACCEPT' : 'REFUSE');
+    }
+    return { powershell, reader };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('the Python reader and the PowerShell reader accept and refuse the same settings files', { skip: differentialSkip }, () => {
+  const inputs = settingsDifferentialInputs();
+  const { powershell, reader } = runSettingsDifferential(inputs);
+  const disagreements = inputs
+    .filter(([name]) => powershell.get(name) !== reader.get(name))
+    .map(([name]) => `${name}: PowerShell ${powershell.get(name)}, Python ${reader.get(name)}`);
+  assert.deepEqual(disagreements, [], 'the two readers disagree');
+  const verdicts = new Set(powershell.values());
+  assert.ok(verdicts.has('ACCEPT') && verdicts.has('REFUSE'), 'the differential needs both accepted and refused inputs');
 });

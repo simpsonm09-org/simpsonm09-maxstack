@@ -63,7 +63,9 @@ $updating = [bool] $Update
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Install-LayerSources.ps1')
+. (Join-Path $PSScriptRoot 'Install-Settings.ps1')
 $layersPath = if ($LayersFile) { $LayersFile } else { Join-Path $repoRoot 'layers.json' }
+$workspaceSettingsPath = Join-Path $Workspace 'maxstack.settings.json'
 $baseConfigFile = Join-Path $repoRoot 'workspace\opencode.jsonc'
 $configTarget = Join-Path $Workspace 'opencode.jsonc'
 $stackTarget = Join-Path $Workspace 'stack.lock.json'
@@ -309,7 +311,7 @@ function Get-OpenCodeState {
 }
 
 # Turns one layer's claude runtime into a record. A local layer is a junction under
-# .claude\plugins to its installed copy in .opencode\plugins, so both harnesses share
+# .claude\plugins to its installed copy in .opencode\plugins, so both runtimes share
 # one copy. Without the opencode runtime there is no such copy, so a local layer is copied
 # from its items. A git layer is a copy of its pinned folder.
 function Get-ClaudeRecord {
@@ -526,11 +528,12 @@ function Merge-Selected {
 # Fails when copilot or pi is selected without claude. Their wrapper or settings name the Claude
 # plugin folders, and only the claude runtime writes them.
 function Assert-SelectionRuntimes {
-    param([string[]] $Runtimes)
+    param([string[]] $Runtimes, [string[]] $FromSettings = @())
 
     foreach ($dependent in @('copilot', 'pi')) {
         if (($Runtimes -contains $dependent) -and ($Runtimes -notcontains 'claude')) {
-            throw "Runtime '$dependent' needs claude: its wrapper or settings name the Claude plugin folders, so select claude with it."
+            $source = if ($FromSettings -contains $dependent) { " maxstack.settings.json names '$dependent'; add claude there or remove '$dependent' from it." } else { '' }
+            throw "Runtime '$dependent' needs claude: its wrapper or settings name the Claude plugin folders, so select claude with it.$source"
         }
     }
 }
@@ -2853,6 +2856,26 @@ $layers = @($layerManifest.layers | ForEach-Object { New-LayerModel $_ })
 $layerNames = @($layers | ForEach-Object { $_.name })
 if (@($layerNames | Select-Object -Unique).Count -ne $layerNames.Count) { throw 'layers.json names a layer twice.' }
 
+# Settings syntax, fields, source shape, and apply OS are checked before source parsing or recorded-ref checks can start git.
+$workspaceSettings = [pscustomobject]@{ present = $false; value = $null; hash = $null }
+$settingsInvalid = $false
+$settingsChanged = $false
+if (-not ($removing -or $uninstalling)) {
+    try {
+        $workspaceSettings = Read-MaxstackSettings -Path $workspaceSettingsPath -LayerNames $layerNames
+    } catch {
+        if (-not $Status) { throw }
+        $settingsInvalid = $true
+        Write-Host "Settings: invalid $($_.Exception.Message)"
+    }
+}
+if ($Apply -and $workspaceSettings.present -and $workspaceSettings.value.Contains('os') -and $workspaceSettings.value.os -cne 'auto') {
+    $machineOs = if ($IsWindows) { 'windows' } elseif ($IsMacOS) { 'macos' } else { 'linux' }
+    if ($workspaceSettings.value.os -cne $machineOs) {
+        throw "maxstack.settings.json: os targets a different machine. This apply writes for the detected OS '$machineOs'; use auto."
+    }
+}
+
 # The per-run sources the command line names: -Source, and -LayerSource as its local alias. A name not in layers.json is refused.
 $explicitSources = Read-SourceSpecs -Specs $SourceOverrides -LayerSpecs $LayerSource -LayerNames $layerNames
 
@@ -2891,6 +2914,33 @@ if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
     # of that lock infers, so the upgrade apply records it as created too.
     if ($priorLegacy -and @($priorOwned | Where-Object { $null -ne $_ -and $_.path -ceq 'opencode.jsonc' -and $_.kind -eq 'file' }).Count -gt 0 -and -not (Test-Path -LiteralPath (Join-Path $Workspace 'opencode.jsonc.bak') -PathType Leaf)) {
         $priorCreatedFiles = @($priorCreatedFiles) + 'opencode.jsonc'
+    }
+}
+if (-not ($removing -or $uninstalling)) {
+    if ($workspaceSettings.present) {
+        Write-Host 'Settings: maxstack.settings.json is present; omitted names in declared dimensions are unlisted and remain selected.'
+        $priorSettings = Get-Field $priorStack 'settings'
+        if ($null -ne $priorSettings -and (Get-Field $priorSettings 'sha256') -cne $workspaceSettings.hash) {
+            $settingsChanged = $true
+            Write-Host 'Settings: changed since the last apply.'
+        }
+        foreach ($runtime in $script:SettingsRuntimeIds) {
+            if ($workspaceSettings.value.Contains('runtimes') -and $workspaceSettings.value.runtimes.Contains($runtime) -and $workspaceSettings.value.runtimes[$runtime].Contains('cli') -and $workspaceSettings.value.runtimes[$runtime].cli -ceq 'install') {
+                Write-Host "Settings: runtimes.$runtime.cli install is recorded; CLI installation is unsupported in this release."
+            }
+        }
+        if ($workspaceSettings.value.Contains('t3') -and $workspaceSettings.value.t3.Contains('cli') -and $workspaceSettings.value.t3.cli -ceq 'install') {
+            Write-Host 'Settings: t3.cli install is recorded; CLI installation is unsupported in this release.'
+        }
+        Write-UnappliedSourceNotes -Settings $workspaceSettings
+    } elseif (-not $settingsInvalid) {
+        # An absent file prints nothing, unless the lock recorded a settings hash: then the file is missing since the last apply.
+        # An invalid file prints only its invalid line, so it is never also called absent.
+        $priorSettings = Get-Field $priorStack 'settings'
+        if ($null -ne $priorSettings) {
+            $settingsChanged = $true
+            Write-Host 'Settings: missing since the last apply.'
+        }
     }
 }
 # The hash each replaced file held when the last apply wrote it. A backup is taken only when the file no longer
@@ -2941,6 +2991,16 @@ $runtimesNamed = $PSBoundParameters.ContainsKey('RequestedRuntimes')
 $layersNamed = $PSBoundParameters.ContainsKey('RequestedLayers')
 $namedRuntimes = if ($runtimesNamed) { Get-NamedValues -Values $RequestedRuntimes -Valid $runtimeNames -Parameter 'Runtimes' } else { @() }
 $namedLayers = if ($layersNamed) { Get-NamedValues -Values $RequestedLayers -Valid $layerNames -Parameter 'Layers' } else { @() }
+$settingsRuntimes = @()
+$settingsLayers = @()
+if (-not ($updating -or $Status)) {
+    $settingsRuntimes = @(Get-SettingsNames -Settings $workspaceSettings -Key 'runtimes')
+    $settingsLayers = @(Get-SettingsNames -Settings $workspaceSettings -Key 'layers')
+}
+$pendingRuntimes = @(Get-SettingsNames -Settings $workspaceSettings -Key 'runtimes' | Where-Object { $null -eq $recordedRuntimes -or $recordedRuntimes -cnotcontains $_ })
+$pendingLayers = @(Get-SettingsNames -Settings $workspaceSettings -Key 'layers' | Where-Object { $null -eq $recordedLayers -or $recordedLayers -cnotcontains $_ })
+$unlistedRuntimes = if ($workspaceSettings.present -and $workspaceSettings.value.Contains('runtimes')) { @($recordedRuntimes | Where-Object { (Get-SettingsNames -Settings $workspaceSettings -Key 'runtimes') -cnotcontains $_ }) } else { @() }
+$unlistedLayers = if ($workspaceSettings.present -and $workspaceSettings.value.Contains('layers')) { @($recordedLayers | Where-Object { (Get-SettingsNames -Settings $workspaceSettings -Key 'layers') -cnotcontains $_ }) } else { @() }
 if ($removing) {
     # -Remove narrows the recorded selection. A name that is not selected removes nothing. With nothing to
     # remove and no leftovers from an interrupted remove, the run ends here.
@@ -2955,10 +3015,34 @@ if ($removing) {
     $selectedRuntimes = @(Get-RemainingSelection -Recorded $recordedRuntimes -Named $namedRuntimes -Label 'runtime')
     $selectedLayers = @(Get-RemainingSelection -Recorded $recordedLayers -Named $namedLayers -Label 'layer')
     Assert-RemainingSelection -Runtimes $selectedRuntimes -Layers $selectedLayers
+    # A removed name that the settings file still lists comes back on the next apply. Said here; it never blocks the removal.
+    $removedRuntimes = @($recordedRuntimes | Where-Object { $selectedRuntimes -cnotcontains $_ })
+    $removedLayers = @($recordedLayers | Where-Object { $selectedLayers -cnotcontains $_ })
+    Write-RemovalSettingsNotes -Settings (Read-SettingsForRemoval -Path $workspaceSettingsPath -LayerNames $layerNames) -Runtimes $removedRuntimes -Layers $removedLayers
 } else {
-    $selectedRuntimes = @(Merge-Selected -Recorded $recordedRuntimes -All $runtimeNames -Named $namedRuntimes -HasNames $runtimesNamed -Label 'runtimes')
-    $selectedLayers = @(Merge-Selected -Recorded $recordedLayers -All $layerNames -Named $namedLayers -HasNames $layersNamed -Label 'layers')
-    Assert-SelectionRuntimes -Runtimes $selectedRuntimes
+    $allNamedRuntimes = @($settingsRuntimes + $namedRuntimes)
+    $allNamedLayers = @($settingsLayers + $namedLayers)
+    $hasRuntimeNames = $runtimesNamed -or (@($settingsRuntimes).Count -gt 0)
+    $hasLayerNames = $layersNamed -or (@($settingsLayers).Count -gt 0)
+    $selectedRuntimes = @(Merge-Selected -Recorded $recordedRuntimes -All $runtimeNames -Named $allNamedRuntimes -HasNames $hasRuntimeNames -Label 'runtimes')
+    $selectedLayers = @(Merge-Selected -Recorded $recordedLayers -All $layerNames -Named $allNamedLayers -HasNames $hasLayerNames -Label 'layers')
+    Assert-SelectionRuntimes -Runtimes $selectedRuntimes -FromSettings $settingsRuntimes
+}
+if (-not ($removing -or $uninstalling)) {
+    $claudeAvailable = @(@($recordedRuntimes) + @(Get-SettingsNames -Settings $workspaceSettings -Key 'runtimes')) -ccontains 'claude'
+    Write-PendingSettingsNotes -Runtimes $pendingRuntimes -Layers $pendingLayers -ClaudeAvailable $claudeAvailable -Applying ([bool] $Apply) -Updating $updating
+    foreach ($name in $unlistedRuntimes) { Write-Host "Settings: unlisted runtime '$name'; it remains selected. Remove it with -Remove -Runtimes $name." }
+    foreach ($name in $unlistedLayers) { Write-Host "Settings: unlisted layer '$name'; it remains selected. Remove it with -Remove -Layers $name." }
+    if ($workspaceSettings.present -and $workspaceSettings.value.Contains('runtimes')) {
+        foreach ($name in @($namedRuntimes | Where-Object { $workspaceSettings.value.runtimes.Keys -cnotcontains $_ })) {
+            Write-Host "Settings: runtime '$name' is selected by a flag and is not in maxstack.settings.json; add it there to keep it declared."
+        }
+    }
+    if ($workspaceSettings.present -and $workspaceSettings.value.Contains('layers')) {
+        foreach ($name in @($namedLayers | Where-Object { $workspaceSettings.value.layers.Keys -cnotcontains $_ })) {
+            Write-Host "Settings: layer '$name' is selected by a flag and is not in maxstack.settings.json; add it there to keep it declared."
+        }
+    }
 }
 # A layer or runtime that layers.json names but the selection leaves out is said so, on every run. A removal
 # leaves out what it removed on purpose, so it is not said.
@@ -3262,7 +3346,7 @@ if ($Status) {
         "$(@($results | Where-Object { $_.state -eq $state }).Count) $state"
     }
     Write-Host ('Summary: ' + ($counts -join ', '))
-    if ($Strict -and @($results | Where-Object { $_.state -notin @('matching', 'not selected') }).Count -gt 0) { exit 1 }
+    if ($Strict -and (@($results | Where-Object { $_.state -notin @('matching', 'not selected') }).Count -gt 0 -or $settingsInvalid -or $settingsChanged -or @($pendingRuntimes).Count -gt 0 -or @($pendingLayers).Count -gt 0 -or @($unlistedRuntimes).Count -gt 0 -or @($unlistedLayers).Count -gt 0)) { exit 1 }
     return
 }
 
@@ -3691,7 +3775,7 @@ foreach ($keptPath in @($keptJournals.Keys)) {
     }
 }
 
-$stack = [pscustomobject]@{
+$stackValues = [ordered]@{
     generatedAt  = (Get-Date).ToUniversalTime().ToString('o')
     workspace    = $workspaceName
     selection    = [pscustomobject]@{ runtimes = @($selectedRuntimes); layers = @($selectedLayers) }
@@ -3704,6 +3788,14 @@ $stack = [pscustomobject]@{
     createdDirs  = $createdDirs
     createdFiles = $createdFiles
 }
+# A plain apply records the file it selected from. An update or a removal selects nothing from the file, so it keeps the hash
+# the last apply recorded, and the file still reads as changed until an apply selects its names.
+if ($workspaceSettings.present -and -not ($updating -or $removing)) {
+    $stackValues.settings = [pscustomobject]@{ file = 'maxstack.settings.json'; version = 1; sha256 = $workspaceSettings.hash }
+} elseif (($updating -or $removing) -and $null -ne (Get-Field $priorStack 'settings')) {
+    $stackValues.settings = Get-Field $priorStack 'settings'
+}
+$stack = [pscustomobject]$stackValues
 if ($removing) {
     # The removal writes the lock: it keeps the records this selection produces, and each record it removes
     # leaves the lock once its file is gone.

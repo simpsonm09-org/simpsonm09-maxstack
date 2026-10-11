@@ -5,6 +5,7 @@ Index for this repository.
 ## Guides
 
 - [Install and reload](install.md) covers the model rule, the runtime and layer selection, the runtimes, layer sources and their overrides, `-Update`, the ownership record, removing a runtime or layer, and uninstalling.
+- [Workspace settings](features/settings.md) describes the optional selection file and its additive behavior.
 - [Layout](layout.md) describes every top-level path.
 - [Repository relationships](relationship.md) names the repository ownership, the one cross-repo edge, and the workspace definition.
 - [MCP servers](mcp.md) defines the workspace MCP servers and their default states.

@@ -431,13 +431,27 @@ function Test-CommitRef {
     return ($Ref -cmatch '^[0-9a-f]{40}\z')
 }
 
+# The ref-name rules git check-ref-format enforces for refs/heads/<name>, without starting git.
+# This lets callers reject malformed input before any guarded git command runs.
+function Test-SafeRefNameSyntax {
+    param([string] $Ref)
+
+    if ([string]::IsNullOrEmpty($Ref) -or $Ref.StartsWith('-')) { return $false }
+    if ($Ref -match '[\x00-\x20\x7f~^:?*\[\\]' -or $Ref.Contains('..') -or $Ref.Contains('@{') -or $Ref.Contains('//')) { return $false }
+    if ($Ref.StartsWith('/') -or $Ref.EndsWith('/') -or $Ref.EndsWith('.')) { return $false }
+    foreach ($part in $Ref.Split('/')) {
+        if ($part.StartsWith('.') -or $part.EndsWith('.lock', [StringComparison]::Ordinal)) { return $false }
+    }
+    return $true
+}
+
 # Whether a ref is a safe git ref name. git check-ref-format is the authority. A leading dash is refused here too,
 # because the ref is passed to git as an argument.
 function Test-SafeRefName {
     param([string] $Ref)
 
     if (Test-CommitRef $Ref) { return $true }
-    if ($Ref.StartsWith('-') -or $Ref -match '\s' -or $Ref.Contains('..')) { return $false }
+    if (-not (Test-SafeRefNameSyntax $Ref)) { return $false }
     return ((Invoke-GitGuarded -Arguments @('check-ref-format', "refs/heads/$Ref")).code -eq 0)
 }
 
