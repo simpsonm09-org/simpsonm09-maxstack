@@ -596,3 +596,36 @@ test('the Python reader and the PowerShell reader accept and refuse the same set
   const verdicts = new Set(powershell.values());
   assert.ok(verdicts.has('ACCEPT') && verdicts.has('REFUSE'), 'the differential needs both accepted and refused inputs');
 });
+
+// The decision log is read as lines, so a carriage return inside a field or a line with other than six tab-separated fields
+// changes what every reader sees. The verifier refuses both.
+test('the decision log has exactly six tab-separated fields per line and no carriage return', { skip }, () => {
+  const header = ['ts', 'phase', 'decision', 'why', 'evidence', 'result'].join('\t');
+  const row = ['2026-10-11T05:47:28-04:00', 'phase', 'a decision', 'a reason', 'evidence', 'verified'].join('\t');
+  const good = `${header}\n${row}\n`;
+  let run = runVerifier({ extraFiles: { 'docs/decisions.tsv': good } });
+  assert.equal(run.status, 0, failureOf(run));
+
+  const carriage = `${header}\n${row.replace('a decision', `a deci${String.fromCharCode(13)}sion`)}\n`;
+  run = runVerifier({ extraFiles: { 'docs/decisions.tsv': carriage } });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /decisions\.tsv.*carriage return/);
+
+  const short = `${header}\na\tb\tc\td\te\n`;
+  run = runVerifier({ extraFiles: { 'docs/decisions.tsv': short } });
+  assert.equal(run.status, 1, failureOf(run));
+  assert.match(failureOf(run), /decisions\.tsv line 2 has 5 tab-separated fields; each line has six/);
+});
+
+// A device prefix and a UNC path are written with their full leading backslashes in the docs. A single backslash is a different,
+// relative path, so the example would not say what the installer refuses. The form \\?\UNC\server\share is correct, so a bare
+// \server\share counts only where it starts a token, not after the UNC separator.
+test('the docs write device prefixes and UNC paths with their two leading backslashes', () => {
+  const singleBackslashPrefix = /(?:^|[^\\])\\(?:\?\\|\.\\)/m;
+  const singleBackslashShare = /(?:^|[\s`(])\\server\\share/m;
+  for (const doc of ['docs/features/settings.md', 'docs/install.md']) {
+    const text = readFileSync(join(repoRoot, doc), 'utf8');
+    assert.doesNotMatch(text, singleBackslashPrefix, `${doc} writes a device prefix with one leading backslash`);
+    assert.doesNotMatch(text, singleBackslashShare, `${doc} writes a UNC share with one leading backslash`);
+  }
+});

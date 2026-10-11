@@ -381,6 +381,37 @@ def check_online(pins: list[dict], failures: list[str]) -> None:
             )
 
 
+DECISIONS = "docs/decisions.tsv"
+DECISION_FIELDS = 6
+
+
+def check_decisions(failures: list[str]) -> None:
+    """The decision log is an append-only table: one row per line, six tab-separated fields, no carriage return."""
+    path = REPO_ROOT / DECISIONS
+    if not path.exists():
+        return
+    data = path.read_bytes()
+    if b"\r" in data:
+        failures.append(
+            f"{DECISIONS} holds a carriage return; a row ends with a line feed and holds no CR inside a field"
+        )
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        failures.append(f"{DECISIONS} is not UTF-8: {error}")
+        return
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    for number, line in enumerate(lines, 1):
+        count = line.count("\t") + 1
+        if count != DECISION_FIELDS:
+            failures.append(
+                f"{DECISIONS} line {number} has {count} tab-separated fields; each line has six: "
+                "ts, phase, decision, why, evidence, result"
+            )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -406,6 +437,7 @@ def main() -> int:
     if config:
         check_workspace_config(config, failures)
     check_surface(failures)
+    check_decisions(failures)
     check_settings_files(REPO_ROOT, failures)
     check_tracked_bytecode(failures)
     if args.online and pins:

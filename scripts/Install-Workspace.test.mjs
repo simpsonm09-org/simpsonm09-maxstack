@@ -293,6 +293,17 @@ function runInstaller(shell, ctx, extra = [], { apply = true, layersFile = write
   return spawnSync(shell, args, { windowsHide: true, encoding: 'utf8', env: testEnvironment(env ?? ctx.env) });
 }
 
+function runWorkspaceDiscovery(ctx, caseValue, { launchCwd = ctx.base, env = undefined } = {}) {
+  const helper = join(repoRoot, 'scripts', 'Install-WorkspaceDiscovery.ps1').replaceAll("'", "''");
+  const encoded = Buffer.from(JSON.stringify(caseValue)).toString('base64');
+  const script = join(ctx.base, 'workspace-discovery.ps1');
+  writeFileSync(script, `$ErrorActionPreference = 'Stop'\n$PSStyle.OutputRendering = 'PlainText'\n. '${helper}'\n$caseValue = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}')) | ConvertFrom-Json -AsHashtable\ntry {\n  switch ($caseValue.kind) {\n    'explicit' { $result = Resolve-MaxstackWorkspace -ExplicitSpecified -ExplicitValue $caseValue.path }\n    'environment' { $result = Resolve-MaxstackWorkspace -ScriptRoot $caseValue.scriptRoot }\n    'scriptRoot' { $result = Resolve-MaxstackWorkspace -ScriptRoot $caseValue.path }\n    'currentDirectory' { $result = Resolve-MaxstackWorkspace -CurrentDirectory $caseValue.path -ScriptRoot $caseValue.scriptRoot }\n    'marker' { $result = Resolve-MaxstackWorkspace -CurrentDirectory $caseValue.path -ScriptRoot $caseValue.scriptRoot }\n    'legacy' { $result = Resolve-MaxstackWorkspace -ScriptRoot $caseValue.scriptRoot -LegacyWorkspace $caseValue.path }\n    'defaultCurrentDirectory' { $result = Resolve-MaxstackWorkspace -ExplicitSpecified -ExplicitValue $caseValue.path -ScriptRoot $caseValue.scriptRoot }\n  }\n  [Console]::Out.WriteLine("ORIGIN=$($result.Origin);WORKSPACE=$($result.Workspace)")\n} catch { [Console]::Out.WriteLine($_.Exception.Message); exit 2 }\n`);
+  const childEnv = testEnvironment(env ?? process.env);
+  for (const key of Object.keys(childEnv)) if (key.toUpperCase() === 'MAXSTACK_WORKSPACE') delete childEnv[key];
+  if (caseValue.kind === 'environment') childEnv.MAXSTACK_WORKSPACE = caseValue.path;
+  return spawnSync(shell, ['-NoProfile', '-NonInteractive', '-File', script], { windowsHide: true, encoding: 'utf8', cwd: launchCwd, env: childEnv });
+}
+
 // The installer of MAIN_COMMIT, extracted from git archive into a folder under base. Returns its path.
 function exportMainInstaller(base) {
   const archive = spawnSync('git', ['-C', repoRoot, 'archive', '--format=tar', MAIN_COMMIT], { windowsHide: true, maxBuffer: 512 * 1024 * 1024 });
@@ -498,12 +509,42 @@ const COMPARED_STEPS = [
   { label: 'apply', args: [], apply: true },
 ];
 
+// The one line this slice adds to the output: the resolved target and its origin, printed first. A comparison removes
+// that exact line from the new installer's output and nothing else. The main installer never prints it, so its output
+// is compared as it is.
+function stripDiscoveryLine(output, workspace) {
+  const expected = `Workspace: ${workspace} (from -Workspace)`;
+  const first = /^([^\r\n]*)(\r?\n)/.exec(output);
+  if (first && first[1] === expected) return output.slice(first[0].length);
+  return output;
+}
+
 function runComparedSteps(ctx, installerPath, layersFile) {
   return COMPARED_STEPS.map((step) => {
     const run = runInstaller(shell, ctx, step.args, { apply: step.apply, layersFile, installerPath });
-    return { label: step.label, status: run.status, stdout: run.stdout, tree: workspaceState(ctx) };
+    const stdout = installerPath === installer ? stripDiscoveryLine(run.stdout, ctx.workspace) : run.stdout;
+    return { label: step.label, status: run.status, stdout, tree: workspaceState(ctx) };
   });
 }
+
+test('the discovery line removal takes only the exact first line for this target and origin', () => {
+  const workspace = 'workspace-under-test';
+  const line = `Workspace: ${workspace} (from -Workspace)`;
+  const cases = [
+    ['exact first line, LF', `${line}\nSummary: unchanged\n`, 'Summary: unchanged\n'],
+    ['exact first line, CRLF', `${line}\r\nSummary: unchanged\r\n`, 'Summary: unchanged\r\n'],
+    ['exact line without a terminator', line, line],
+    ['wrong target', `Workspace: other-workspace (from -Workspace)\nSummary: unchanged\n`, `Workspace: other-workspace (from -Workspace)\nSummary: unchanged\n`],
+    ['wrong origin', `Workspace: ${workspace} (from script layout)\nSummary: unchanged\n`, `Workspace: ${workspace} (from script layout)\nSummary: unchanged\n`],
+    ['suffix after the origin', `${line} unexpected\nSummary: unchanged\n`, `${line} unexpected\nSummary: unchanged\n`],
+    ['a second copy of the line', `${line}\n${line}\nSummary: unchanged\n`, `${line}\nSummary: unchanged\n`],
+    ['the line after another line', `Warning: prior\n${line}\nSummary: unchanged\n`, `Warning: prior\n${line}\nSummary: unchanged\n`],
+    ['no discovery line at all', 'Summary: unchanged\n', 'Summary: unchanged\n'],
+  ];
+  for (const [name, input, expected] of cases) {
+    assert.equal(stripDiscoveryLine(input, workspace), expected, name);
+  }
+});
 
 withMainCommit('a no-settings apply matches the upstream main output and workspace tree', (ctx) => {
   const mainInstaller = exportMainInstaller(ctx.base);
@@ -2933,8 +2974,8 @@ withWorkspace('status prints the selection first, names an unselected file, and 
   writeFile(ctx.workspace, '.maxstack/bin/pi.cmd', '@echo off\r\n');
   const run = runStatus(ctx);
   assert.equal(run.status, 0, run.stdout);
-  // Warnings also print to stdout, so the first line that is not a warning must be the selection.
-  const [first] = run.stdout.split(/\r?\n/).filter((line) => !line.includes('WARNING:'));
+  // Warnings also print to stdout, and the discovery line names the resolved target, so the first line that is neither must be the selection.
+  const [first] = run.stdout.split(/\r?\n/).filter((line) => !line.includes('WARNING:') && !line.startsWith(`Workspace: ${ctx.workspace} (from -Workspace)`));
   assert.equal(first, 'Selection: runtimes claude, copilot; layers pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin', 'the selection is not the first line');
   assert.match(run.stdout, /^not selected +\.maxstack\/bin\/pi\.cmd\r?$/m, run.stdout);
   assert.doesNotMatch(run.stdout, /^(matching|drifted|modified|missing|untracked) .*opencode/m, 'status judged an OpenCode path');
@@ -6080,4 +6121,111 @@ test('a git that is too old is named as too old, a git that is new enough gives 
   assert.match(run.stdout, /NEW=git could not read its configuration, so the filter guard cannot be passed: fatal: bad config line 1/, run.stdout);
   assert.match(run.stdout, /SILENT=git did not read the guard settings, so the filter guard cannot be passed/, run.stdout);
   assert.match(run.stdout, /ABSENT=git 2\.31 or later is needed, so the filter guard cannot be passed: git could not start: no such file/, run.stdout);
+}, {});
+
+withWorkspace('workspace discovery rejects control characters before path APIs and escapes them in errors', (ctx) => {
+  const esc = String.fromCharCode(27);
+  const del = String.fromCharCode(127);
+  const unsafe = `bad${esc}[31m`;
+  const cases = [
+    { kind: 'explicit', path: unsafe, safe: 'bad\\u001B[31m' },
+    { kind: 'environment', path: unsafe, safe: 'bad\\u001B[31m', scriptRoot: join(ctx.base, 'unrecognized') },
+    { kind: 'scriptRoot', path: unsafe, safe: 'bad\\u001B[31m' },
+    { kind: 'legacy', path: `bad${del}`, safe: 'bad\\u007F', scriptRoot: join(ctx.base, 'unrecognized') },
+  ];
+  for (const item of cases) {
+    const run = runWorkspaceDiscovery(ctx, item);
+    assert.equal(run.status, 2, `${item.kind}: ${run.stdout}${run.stderr}`);
+    assert.match(run.stdout, /path contains control characters/i);
+    assert.ok(run.stdout.includes(item.safe), `${item.kind} did not escape the control character: ${run.stdout}`);
+    assert.equal(run.stdout.includes(esc), false, `${item.kind} echoed the raw ESC byte`);
+    assert.doesNotMatch(run.stdout, /Illegal characters|invalid path syntax|parameter is incorrect/i);
+  }
+}, {});
+
+withWorkspace('workspace discovery uses the shell current directory default and safely reports a missing current directory', (ctx) => {
+  const explicit = runWorkspaceDiscovery(ctx, { kind: 'defaultCurrentDirectory', path: 'simpsonm09', scriptRoot: join(ctx.base, 'unrecognized') });
+  assert.equal(explicit.status, 0, `${explicit.stdout}${explicit.stderr}`);
+  assert.match(explicit.stdout, /ORIGIN=-Workspace;/);
+
+  // A missing current directory holds no marker, so discovery falls through and fails with its own message.
+  const missing = join(ctx.base, 'missing-current-directory');
+  const invalid = runWorkspaceDiscovery(ctx, { kind: 'currentDirectory', path: missing, scriptRoot: join(ctx.base, 'unrecognized') }, { launchCwd: ctx.base });
+  assert.equal(invalid.status, 2, `${invalid.stdout}${invalid.stderr}`);
+  assert.match(invalid.stdout, /Workspace discovery failed/);
+  assert.doesNotMatch(invalid.stdout, /Cannot find path|Cannot bind argument|Exception calling "GetFullPath"|missing-current-directory/);
+}, {});
+
+withWorkspace('an unusable current directory holds no marker and is never echoed into an error', (ctx) => {
+  const esc = String.fromCharCode(27);
+  const run = runWorkspaceDiscovery(ctx, { kind: 'currentDirectory', path: `bad${esc}[31m`, scriptRoot: join(ctx.base, 'unrecognized') });
+  assert.equal(run.status, 2, `${run.stdout}${run.stderr}`);
+  assert.match(run.stdout, /Workspace discovery failed/);
+  assert.equal(run.stdout.includes(esc), false, 'the raw ESC byte reached the output');
+}, {});
+
+withWorkspace('a marker under a temporary directory junction selects its workspace without reading the marker', (ctx) => {
+  const target = join(ctx.base, 'marker-target');
+  const linked = join(ctx.base, 'marker-link');
+  const cwd = join(linked, 'nested');
+  mkdirSync(target);
+  writeFileSync(join(target, 'stack.lock.json'), '');
+  symlinkSync(target, linked, 'junction');
+  mkdirSync(cwd);
+
+  const run = runWorkspaceDiscovery(ctx, { kind: 'marker', path: cwd, scriptRoot: join(ctx.base, 'unrecognized') });
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  assert.match(run.stdout, /ORIGIN=cwd marker stack\.lock\.json;/);
+}, {});
+
+withWorkspace('the legacy workspace fallback warns before command validation and never writes on a rejected command', (ctx) => {
+  const copyRoot = join(ctx.base, 'isolated-copy');
+  const copyScripts = join(copyRoot, 'scripts');
+  const legacyTarget = join(ctx.base, 'legacy-target');
+  mkdirSync(copyScripts, { recursive: true });
+  mkdirSync(legacyTarget);
+  const source = readFileSync(installer, 'utf8');
+  const replaced = source.replace(/(\[string\] \$Workspace = ')[^']+(')/, (_match, prefix, suffix) => `${prefix}${legacyTarget.replaceAll("'", "''")}${suffix}`);
+  assert.notEqual(replaced, source, 'the isolated script no longer has the legacy workspace parameter');
+  writeFileSync(join(copyScripts, 'Install-Workspace.ps1'), replaced);
+  cpSync(join(repoRoot, 'scripts', 'Install-WorkspaceDiscovery.ps1'), join(copyScripts, 'Install-WorkspaceDiscovery.ps1'));
+
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.toUpperCase() === 'MAXSTACK_WORKSPACE') delete env[key];
+  const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-File', join(copyScripts, 'Install-Workspace.ps1'), '-Apply', '-Status'], {
+    windowsHide: true,
+    encoding: 'utf8',
+    cwd: ctx.base,
+    env,
+  });
+  assert.notEqual(run.status, 0, 'the conflicting command was accepted');
+  assert.match(run.stdout.split(/\r?\n/)[0], /^Workspace: .* \(from legacy default\)$/);
+  assert.match(`${run.stdout}\n${run.stderr}`, /legacy workspace default.*one release/i);
+  assert.match(`${run.stdout}\n${run.stderr}`, /-Apply writes the workspace and -Status only reports it/);
+  assert.deepEqual(readdirSync(legacyTarget), [], 'the rejected command wrote into the legacy workspace');
+}, {});
+
+// A workspace reached through a junction keeps the path the user gave: upstream main writes under that path and records its
+// leaf name in the lock, so the resolved folder is used only for the checks.
+withMainCommit('a workspace reached through a junction keeps the given path in the lock and the output, as upstream main does', (ctx) => {
+  const mainInstaller = exportMainInstaller(ctx.base);
+  const layersFile = writeLayers(ctx);
+  const linkParent = join(ctx.base, 'junction-parent');
+  const linkPath = join(linkParent, 'linkname');
+  mkdirSync(linkParent);
+  symlinkSync(ctx.workspace, linkPath, 'junction');
+  const linkCtx = { ...ctx, workspace: linkPath };
+
+  clearInstallOutputs(ctx.workspace);
+  const mainRun = runInstaller(shell, linkCtx, [], { layersFile, installerPath: mainInstaller });
+  assert.equal(mainRun.status, 0, `${mainRun.stdout}${mainRun.stderr}`);
+  const mainLock = readJson(join(ctx.workspace, 'stack.lock.json'));
+
+  clearInstallOutputs(ctx.workspace);
+  const newRun = runInstaller(shell, linkCtx, [], { layersFile });
+  assert.equal(newRun.status, 0, `${newRun.stdout}${newRun.stderr}`);
+  assert.equal(newRun.stdout.split(/\r?\n/)[0], `Workspace: ${linkPath} (from -Workspace)`, 'the resolved line must keep the given path');
+  const newLock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.equal(newLock.workspace, 'linkname', 'the lock must record the leaf name the user gave');
+  assert.equal(newLock.workspace, mainLock.workspace, 'upstream main records the same workspace name');
 }, {});
