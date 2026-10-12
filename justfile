@@ -54,6 +54,11 @@ check-agent-tools:
 generate-layers runtime out layers check="":
     node scripts/generate-layers.mjs --runtime {{ if os_family() == "windows" { "'" + replace(runtime, "'", "''") + "'" } else { quote(runtime) } }} --out {{ if os_family() == "windows" { "'" + replace(out, "'", "''") + "'" } else { quote(out) } }} --layers {{ if os_family() == "windows" { "'" + replace(layers, "'", "''") + "'" } else { quote(layers) } }} {{ if check == "" { "" } else if os_family() == "windows" { "'" + replace(check, "'", "''") + "'" } else { quote(check) } }}
 
+# Run the model-free Pi smoke check against the resolved workspace: a stub model on loopback, no GPU, no
+# download. It reads the workspace's Pi settings and wrapper and writes nothing to the workspace.
+verify-pi:
+    node scripts/verify-pi-harness.mjs
+
 # Run the Biome complexity gate over the repository.
 complexity:
     mise exec -- biome lint .
