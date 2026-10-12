@@ -8,12 +8,14 @@
 # exits. A call that outlasts the limit is stopped with its whole process tree, and
 # the function throws and names the command. The caller passes the ApplicationInfo
 # from Get-Command.
+. (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
+
 function Invoke-OpenCode {
     param($Command, [string[]] $Arguments, [string] $Directory, [int] $TimeoutSeconds)
 
     $fileName = $Command.Source
     $prefix = @()
-    if ([IO.Path]::GetExtension($fileName) -eq '.ps1') {
+    if (Test-OrdinalEqual ([IO.Path]::GetExtension($fileName)) '.ps1') {
         # The npm PowerShell shim is not a process of its own, so run it under this host.
         $prefix = @('-NoProfile', '-NonInteractive', '-File', $fileName)
         $fileName = (Get-Process -Id $PID).Path

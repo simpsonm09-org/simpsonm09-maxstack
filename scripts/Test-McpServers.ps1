@@ -12,6 +12,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
 
 if (-not $ConfigFile) { $ConfigFile = Join-Path $Workspace 'opencode.jsonc' }
 $document = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
@@ -42,8 +43,8 @@ function Get-PackageFromCommand {
 
     $parts = @($Command)
     if ($parts.Count -eq 0) { return $null }
-    if ($parts[0] -eq 'npx') { return ($parts[-1] -replace '@latest$', '') }
-    if ($parts[0] -eq 'docker') { return 'docker-image:' + ($parts[-1]) }
+    if (Test-OrdinalEqual $parts[0] 'npx') { return ($parts[-1] -replace '@latest$', '') }
+    if (Test-OrdinalEqual $parts[0] 'docker') { return 'docker-image:' + ($parts[-1]) }
     return $parts[-1]
 }
 
@@ -52,7 +53,7 @@ function Test-Local {
 
     $package = Get-PackageFromCommand $Command
     if (-not $package) { return @{ status = 'unknown'; detail = 'no command' } }
-    if ($package -like 'docker-image:*') { return @{ status = 'needs-docker'; detail = 'requires a Docker daemon' } }
+    if (([string] $package).StartsWith('docker-image:', [StringComparison]::Ordinal)) { return @{ status = 'needs-docker'; detail = 'requires a Docker daemon' } }
 
     $version = npm view $package version 2>&1 | Select-Object -First 1
     if ($LASTEXITCODE -eq 0) { return @{ status = 'ok'; detail = "npm package $version" } }
@@ -64,10 +65,10 @@ function Test-Local {
 foreach ($property in $servers.PSObject.Properties) {
     $name = $property.Name
     $server = $property.Value
-    $enabled = -not ($server.PSObject.Properties.Name -contains 'disabled' -and $server.disabled)
+    $enabled = -not ((Test-OrdinalIn 'disabled' @($server.PSObject.Properties.Name)) -and $server.disabled)
     $default = if ($enabled) { 'on' } else { 'off' }
 
-    if ($server.type -eq 'remote') {
+    if (Test-OrdinalEqual $server.type 'remote') {
         $result = Test-Remote $server.url
     } else {
         $result = Test-Local $server.command

@@ -1,13 +1,16 @@
 """The settings document reader: the rules of scripts/Install-Settings.ps1 (Read-MaxstackSettings), in Python.
 
 A file the installer accepts is accepted here and the reverse. scripts/verify_settings.py runs the schema and seed checks
-and the `--document` command that the differential test uses.
+and the `--document` command that the differential test uses. A name or value that holds a control, a format character, a
+line or paragraph separator, or an unpaired surrogate is refused, as the installer refuses it, and every name in a message
+is shown with those characters escaped as \\uXXXX.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 MAX_BYTES = 65536
@@ -19,20 +22,70 @@ CLI_MODES = ("detect", "install")
 OS_MODES = ("auto", "windows", "macos", "linux")
 T3_DEFAULTS = ("leave-alone", "apply-defaults")
 BOM = b"\xef\xbb\xbf"
+NON_BREAKING_SPACE = " "
+UNSAFE_CATEGORIES = ("Cc", "Cf", "Zl", "Zp")
 
-SOURCE_FORBIDDEN = re.compile(
-    r"[\x00-\x1f\x7f-\x9f\xa0\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
-)
 SOURCE_SHAPE = re.compile(
     r"^(?:[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+|https://[^/@\s]+/[^@\s]+)@[^@\s]+$",
     re.IGNORECASE,
 )
+ABSOLUTE_PATH = re.compile(r"[A-Za-z]:[\\/]")
+ROOTED_RELATIVE_PATH = re.compile(r"[A-Za-z]:|[\\/]")
+UNC_OR_DEVICE_PATH = re.compile(r"[\\/]{2}")
+PARENT_SEGMENT = re.compile(r"(^|[\\/])\.\.([\\/]|$)")
 OWNER_REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+")
 HTTPS_LOCATION = re.compile(r"https://[^/\\?#@]+/[^\\?#@]+")
+SEGMENT_SPLIT = re.compile(r"[\\/]")
 
 
 class SettingsRefusal(Exception):
     """A document the installer's reader refuses. The message gives the reason and no path."""
+
+
+def _escape(text: str) -> str:
+    """Shows each control, format, separator, and unpaired surrogate as \\uXXXX, and keeps every other character."""
+    shown = []
+    for character in text:
+        code = ord(character)
+        unpaired = 0xD800 <= code <= 0xDFFF
+        if unpaired or unicodedata.category(character) in UNSAFE_CATEGORIES:
+            shown.append("\\u%04X" % code)
+        else:
+            shown.append(character)
+    return "".join(shown)
+
+
+def _unsafe_character(text: str) -> str | None:
+    """The escape of the first character a name or value may not hold, or None when the text holds none."""
+    for character in text:
+        code = ord(character)
+        if 0xD800 <= code <= 0xDFFF or unicodedata.category(character) in UNSAFE_CATEGORIES:
+            return "\\u%04X" % code
+    return None
+
+
+def _check_text_tree(value: object, label: str) -> None:
+    """Refuses a name or string anywhere in the parsed document that holds a character a name or value may not hold."""
+    if isinstance(value, str):
+        code = _unsafe_character(value)
+        if code is not None:
+            raise SettingsRefusal(
+                f"{_escape(label)} '{_escape(value)}' holds the character {code}, which a name or value may not hold."
+            )
+        return
+    if isinstance(value, dict):
+        for key in value:
+            code = _unsafe_character(key)
+            if code is not None:
+                raise SettingsRefusal(
+                    f"{_escape(label)} key '{_escape(key)}' holds the character {code}, which a name or value may not hold."
+                )
+        for key, child in value.items():
+            _check_text_tree(child, f"{label}.{_escape(key)}")
+        return
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            _check_text_tree(child, f"{label}[{index}]")
 
 
 def _refuse_constant(name: str) -> object:
@@ -45,7 +98,7 @@ def _object_without_duplicates(pairs: list) -> dict:
     result: dict = {}
     for key, value in pairs:
         if key in result:
-            raise SettingsRefusal(f"duplicate key '{key}'")
+            raise SettingsRefusal(f"duplicate key '{_escape(key)}'")
         result[key] = value
     return result
 
@@ -92,7 +145,7 @@ def _keys_only(value: object, allowed: tuple, where: str) -> None:
     for key in value:
         if key not in allowed:
             raise SettingsRefusal(
-                f"unknown key '{key}' in {where}. Valid keys: {', '.join(allowed)}."
+                f"unknown key '{_escape(key)}' in {where}. Valid keys: {', '.join(allowed)}."
             )
 
 
@@ -127,29 +180,47 @@ def _spec_ok(value: str) -> bool:
     return bool(valid_location) and _safe_ref(ref)
 
 
+def _local_fault(local: str) -> str | None:
+    """The reason a settings local path is refused, or None. The order is the installer's: the text rules first, then the
+    settings form, where a drive-relative or root-relative path and a relative path with .. are unsafe."""
+    if UNC_OR_DEVICE_PATH.match(local):
+        return "has a UNC or device path, which cannot be a layer source."
+    for segment in SEGMENT_SPLIT.split(local):
+        if segment in ("", ".", ".."):
+            continue
+        if segment.endswith((".", " ")):
+            return "has a folder name with a trailing dot or space, which cannot be a layer source."
+    if not local.strip():
+        return "has an unsafe local path. Use local:<workspace-relative-path>."
+    if not ABSOLUTE_PATH.match(local):
+        if ROOTED_RELATIVE_PATH.match(local) or PARENT_SEGMENT.search(local):
+            return "has an unsafe local path. Use local:<workspace-relative-path>."
+    return None
+
+
 def _check_source(name: str, value: object) -> None:
+    where = f"layers.{_escape(name)}.source"
     too_long = (
         isinstance(value, str)
         and len(value.encode("utf-16-le", "surrogatepass")) // 2 > SOURCE_MAX_UNITS
     )
-    if (
-        not isinstance(value, str)
-        or not value.strip()
-        or too_long
-        or SOURCE_FORBIDDEN.search(value)
-    ):
+    if not isinstance(value, str) or not value.strip() or too_long:
         raise SettingsRefusal(
-            f"layers.{name}.source must be a non-empty source string of at most {SOURCE_MAX_UNITS} characters."
+            f"{where} must be a non-empty source string of at most {SOURCE_MAX_UNITS} characters."
+        )
+    if NON_BREAKING_SPACE in value:
+        raise SettingsRefusal(
+            f"{where} holds a non-breaking space, which a source may not hold."
         )
     if value == "default":
         return
     if value.startswith("local:"):
-        local = value[len("local:") :]
-        if not local.strip() or re.search(r"(^|[\\/])\.\.([\\/]|$)", local):
-            raise SettingsRefusal(f"layers.{name}.source has an unsafe local path.")
+        reason = _local_fault(value[len("local:") :])
+        if reason is not None:
+            raise SettingsRefusal(f"{where} {reason}")
         return
     if not SOURCE_SHAPE.search(value) or not _spec_ok(value):
-        raise SettingsRefusal(f"layers.{name}.source is not a supported source.")
+        raise SettingsRefusal(f"{where} is not a supported source.")
 
 
 def _check_runtimes(runtimes: object) -> None:
@@ -157,9 +228,9 @@ def _check_runtimes(runtimes: object) -> None:
     if not runtimes:
         raise SettingsRefusal("runtimes names no runtime.")
     for name, entry in runtimes.items():
-        _keys_only(entry, ("cli",), f"runtimes.{name}")
+        _keys_only(entry, ("cli",), f"runtimes.{_escape(name)}")
         if "cli" in entry and not _enum_value(entry["cli"], CLI_MODES):
-            raise SettingsRefusal(f"runtimes.{name}.cli must be detect or install.")
+            raise SettingsRefusal(f"runtimes.{_escape(name)}.cli must be detect or install.")
 
 
 def _check_layers(layers: object, names: tuple) -> None:
@@ -167,7 +238,7 @@ def _check_layers(layers: object, names: tuple) -> None:
     if not layers:
         raise SettingsRefusal("layers names no layer.")
     for name, entry in layers.items():
-        _keys_only(entry, ("source",), f"layers.{name}")
+        _keys_only(entry, ("source",), f"layers.{_escape(name)}")
         if "source" in entry:
             _check_source(name, entry["source"])
 
@@ -184,6 +255,7 @@ def _check_t3(t3: object) -> None:
 
 def validate_settings(value: object, names: tuple) -> None:
     """Applies the field rules of Read-MaxstackSettings to a parsed object. Raises SettingsRefusal on the first failure."""
+    _check_text_tree(value, "maxstack.settings.json")
     _keys_only(value, TOP_KEYS, "the top level")
     if "$schema" in value and not isinstance(value["$schema"], str):
         raise SettingsRefusal("$schema must be a string.")

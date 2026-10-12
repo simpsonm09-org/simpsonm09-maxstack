@@ -33,18 +33,18 @@ $heading = $null
 $unsafe = @()
 foreach ($line in ($run.StdOut -split '\r?\n' | Where-Object { $_.Trim() })) {
     try { $event = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
-    if ($event.type -eq 'text' -and $event.part.text) {
+    if ((Test-OrdinalEqual $event.type 'text') -and $event.part.text) {
         $match = [regex]::Match($event.part.text, 'WORKSPACE_PSTACK_OK=\s*[#*\s]*<?([A-Za-z]+)')
         if ($match.Success) { $heading = $match.Groups[1].Value }
     }
-    if ($event.type -ne 'tool_use' -or $event.part.type -ne 'tool') { continue }
+    if ((-not (Test-OrdinalEqual $event.type 'tool_use')) -or (-not (Test-OrdinalEqual $event.part.type 'tool'))) { continue }
     $tool = $event.part.tool
-    if ($tool -eq 'skill' -and $event.part.state.input.id -eq $SkillId) { $loaded = $true }
-    if ($tool -in @('shell', 'edit', 'write', 'patch', 'subagent', 'execute')) { $unsafe += $tool }
+    if ((Test-OrdinalEqual $tool 'skill') -and (Test-OrdinalEqual $event.part.state.input.id $SkillId)) { $loaded = $true }
+    if (Test-OrdinalIn $tool @('shell', 'edit', 'write', 'patch', 'subagent', 'execute')) { $unsafe += $tool }
 }
 
 if (-not $loaded) { throw "FAIL: no skill tool call loaded '$SkillId'." }
-if ($heading -ne 'Investigation') { throw "FAIL: the agent did not read the skill's sibling playbook." }
+if (-not (Test-OrdinalEqual $heading 'Investigation')) { throw "FAIL: the agent did not read the skill's sibling playbook." }
 if ($unsafe.Count -gt 0) { throw "FAIL: bounded run used restricted tools: $($unsafe -join ', ')" }
 
 Write-Host "PASS: workspace skill '$SkillId' loaded and its sibling file was read."

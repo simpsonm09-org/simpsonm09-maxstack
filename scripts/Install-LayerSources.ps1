@@ -1,10 +1,19 @@
 # platforms: windows
+# The ordinal helpers, which every comparison here uses.
+. (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
 # Layer sources: the -Source and -LayerSource overrides, how each layer's source is chosen, and the source
 # record the lock keeps. A layer installs from a git source (a url, a ref, and the commit the ref resolved to) or
 # from a local working tree. layers.json gives each layer's default source. An override changes the source for one
 # run, and the lock records it, so a plain apply reuses it until -Source name=default drops it.
 #
 # Dot-sourced by Install-Workspace.ps1, so it shares that script's variables and functions.
+
+# Whether a value is a string with text in it. The installer and the source grammar both use it, so it lives with the grammar.
+function Test-NonEmptyString {
+    param($Value)
+
+    return (($Value -is [string]) -and $Value.Trim().Length -gt 0)
+}
 
 # A test seam, and nothing else. The owner/repo shorthand names a bare repository under MAXSTACK_TEST_GITHUB_ROOT instead
 # of github.com, so the tests fetch from local repositories. The root is honoured only in a test run (MAXSTACK_TEST_MODE is 1)
@@ -32,7 +41,7 @@ function Test-UnderTempFolder {
 
 # Whether the test seam is on. The tests set MAXSTACK_TEST_MODE, and a real run never does.
 function Test-TestSeam {
-    return ($env:MAXSTACK_TEST_MODE -eq '1')
+    return ((Test-OrdinalEqual $env:MAXSTACK_TEST_MODE '1'))
 }
 
 # The form of a path that comparisons use: a long-path prefix is dropped, and each junction or symbolic link on the
@@ -126,7 +135,7 @@ function Set-GitChildEnvironment {
     param($Environment, $Settings)
 
     foreach ($key in @($Environment.Keys)) {
-        if ($key -match '^GIT_CONFIG_(COUNT|KEY_[0-9]+|VALUE_[0-9]+)\z' -or $key -in $script:GitInheritedVariables) { [void] $Environment.Remove($key) }
+        if ($key -match '^GIT_CONFIG_(COUNT|KEY_[0-9]+|VALUE_[0-9]+)\z' -or (Test-OrdinalIn $key.ToUpperInvariant() @($script:GitInheritedVariables | ForEach-Object { $_.ToUpperInvariant() }))) { [void] $Environment.Remove($key) }
     }
     foreach ($entry in (Get-GitChildVariables -Settings $Settings).GetEnumerator()) {
         $Environment[$entry.Key] = $entry.Value
@@ -234,7 +243,7 @@ function Test-GitEnvConfigSupport {
     if ($null -eq $script:gitEnvConfigSupported) {
         $probe = @([pscustomobject]@{ key = 'maxstack.guardprobe'; value = 'on' })
         $run = Invoke-GitNeutral -Arguments @('config', '--get', 'maxstack.guardprobe') -Settings $probe
-        $script:gitEnvConfigSupported = ($run.code -eq 0 -and (@($run.stdout) -contains 'on'))
+        $script:gitEnvConfigSupported = ($run.code -eq 0 -and ((Test-OrdinalIn 'on' @($run.stdout))))
         if (-not $script:gitEnvConfigSupported) { $script:gitEnvConfigFault = Get-GitEnvConfigFault $run }
     }
     return $script:gitEnvConfigSupported
@@ -268,7 +277,7 @@ function Get-GitVersion {
 function Get-UnreadableRemedy {
     param([string] $Reason)
 
-    if ($Reason -ceq $script:DubiousOwnershipReason) { return '' }
+    if ((Test-OrdinalEqual $Reason $script:DubiousOwnershipReason)) { return '' }
     if ($Reason.StartsWith($script:GitVersionReason, [StringComparison]::Ordinal)) { return '. Install git 2.31 or later' }
     if ($Reason.StartsWith($script:GitConfigReason, [StringComparison]::Ordinal)) { return '. Fix the config file that the reason names' }
     return ". Fix the tree's git config"
@@ -419,7 +428,7 @@ function Get-SpecFault {
     param([string] $Spec)
 
     if ($Spec -match '[\s\x00-\x1f\x7f]') { return 'it holds a space or a control character' }
-    if ($Spec.StartsWith('-')) { return 'it starts with a dash' }
+    if ($Spec.StartsWith('-', [StringComparison]::Ordinal)) { return 'it starts with a dash' }
     if ($Spec.Contains('..')) { return 'it holds ..' }
     return $null
 }
@@ -436,11 +445,11 @@ function Test-CommitRef {
 function Test-SafeRefNameSyntax {
     param([string] $Ref)
 
-    if ([string]::IsNullOrEmpty($Ref) -or $Ref.StartsWith('-')) { return $false }
+    if ([string]::IsNullOrEmpty($Ref) -or $Ref.StartsWith('-', [StringComparison]::Ordinal)) { return $false }
     if ($Ref -match '[\x00-\x20\x7f~^:?*\[\\]' -or $Ref.Contains('..') -or $Ref.Contains('@{') -or $Ref.Contains('//')) { return $false }
-    if ($Ref.StartsWith('/') -or $Ref.EndsWith('/') -or $Ref.EndsWith('.')) { return $false }
+    if ($Ref.StartsWith('/', [StringComparison]::Ordinal) -or $Ref.EndsWith('/', [StringComparison]::Ordinal) -or $Ref.EndsWith('.', [StringComparison]::Ordinal)) { return $false }
     foreach ($part in $Ref.Split('/')) {
-        if ($part.StartsWith('.') -or $part.EndsWith('.lock', [StringComparison]::Ordinal)) { return $false }
+        if ($part.StartsWith('.', [StringComparison]::Ordinal) -or $part.EndsWith('.lock', [StringComparison]::Ordinal)) { return $false }
     }
     return $true
 }
@@ -476,27 +485,79 @@ function Get-FullFolderPath {
     return $full
 }
 
+# The text fault of a local path, or $null. A UNC path and a device-namespace path (\\?\, \\.\, and the forward-slash forms)
+# reach the network or a device, so they are refused by their text before any lookup. A folder name with a trailing dot or
+# space is refused too: Windows drops it when it normalises a path, so the folder used is not the one the path names.
+function Get-LocalTextFault {
+    param([string] $Path)
+
+    if ($Path -match '^[\\/]{2}') { return 'has a UNC or device path, which cannot be a layer source.' }
+    foreach ($segment in @($Path -split '[\\/]')) {
+        if ((Test-OrdinalEqual $segment '') -or (Test-OrdinalEqual $segment '.') -or (Test-OrdinalEqual $segment '..')) { continue }
+        if ($segment.EndsWith('.', [StringComparison]::Ordinal) -or $segment.EndsWith(' ', [StringComparison]::Ordinal)) {
+            return 'has a folder name with a trailing dot or space, which cannot be a layer source.'
+        }
+    }
+    return $null
+}
+
+
+# The fault of a recorded local path, read by its text alone: no folder is looked at and no link is followed, so -InitSettings
+# checks the path the lock holds and nothing else. The rules are the text rules of Get-LocalPathFault.
+function Get-LocalPathTextFault {
+    param([string] $Path)
+
+    $textFault = Get-LocalTextFault $Path
+    if ($textFault) { return $textFault }
+    if (-not (Test-NonEmptyString $Path) -or $Path -notmatch '^[A-Za-z]:[\\/]') { return 'needs an absolute path.' }
+    foreach ($segment in @($Path -split '[\\/]')) {
+        if ($segment -cmatch '^[^~]{1,6}~\d+(\.[^.]{0,3})?$') { return 'has an 8.3 short name, which the seed would write and apply then refuses. Give the long path.' }
+    }
+    $normal = (Get-FullFolderPath $Path).TrimEnd('\').ToLowerInvariant()
+    $root = [IO.Path]::GetPathRoot($normal).TrimEnd('\')
+    if (Test-OrdinalEqual $normal $root) { return 'is a drive or share root, which cannot be a layer source.' }
+    $workspaceNormal = (Get-FullFolderPath $Workspace).TrimEnd('\').ToLowerInvariant()
+    if (Test-OrdinalEqual $normal $workspaceNormal) { return 'is the workspace itself, which cannot be a layer source.' }
+    if ($workspaceNormal.StartsWith("$normal\", [StringComparison]::Ordinal)) {
+        return 'is an ancestor of the workspace, and a layer cannot contain the installer that reads it.'
+    }
+    foreach ($output in @('.claude', '.opencode', '.pi', '.maxstack')) {
+        $folder = (Join-Path $Workspace $output).ToLowerInvariant()
+        if ((Test-OrdinalEqual $normal $folder) -or $normal.StartsWith("$folder\", [StringComparison]::Ordinal)) {
+            return "is inside $output, which the installer writes, so it cannot be a layer source."
+        }
+    }
+    return $null
+}
+
+
 # The reason a path cannot be a local layer source, or $null. It must be an absolute path that is not a drive or share
 # root, not the workspace, and not one of the folders the installer writes into. It need not exist: a recorded folder
 # that is gone is reported.
 function Get-LocalPathFault {
     param($Path)
 
-    if (-not (Test-NonEmptyString $Path) -or $Path -notmatch '^([A-Za-z]:[\\/]|[\\/]{2}|/)') { return 'needs an absolute path.' }
+    $textFault = Get-LocalTextFault $Path
+    if ($textFault) { return $textFault }
+    if (-not (Test-NonEmptyString $Path) -or $Path -notmatch '^[A-Za-z]:[\\/]') { return 'needs an absolute path.' }
+    try { Assert-MaxstackShortNames $Path 'local' } catch { return $_.Exception.Message.Substring('local path '.Length) }
     $full = Get-FullFolderPath $Path
-    if ($full.TrimEnd('\') -ieq ([IO.Path]::GetPathRoot($full)).TrimEnd('\')) { return 'is a drive or share root, which cannot be a layer source.' }
+    if (Test-OrdinalEqualIgnoreCase $full.TrimEnd('\') ([IO.Path]::GetPathRoot($full)).TrimEnd('\')) { return 'is a drive or share root, which cannot be a layer source.' }
     $normal = Get-NormalPath $full
     $workspaceNormal = Get-NormalPath $Workspace
-    if ($normal -eq $workspaceNormal) { return 'is the workspace itself, which cannot be a layer source.' }
+    if ((Test-OrdinalEqual $normal $workspaceNormal)) { return 'is the workspace itself, which cannot be a layer source.' }
     if ($workspaceNormal.StartsWith("$normal\", [StringComparison]::Ordinal)) {
         return 'is an ancestor of the workspace, and a layer cannot contain the installer that reads it.'
     }
     foreach ($output in @('.claude', '.opencode', '.pi', '.maxstack')) {
         $folder = Get-NormalPath (Join-Path $Workspace $output)
-        if ($normal -eq $folder -or $normal.StartsWith("$folder\", [StringComparison]::Ordinal)) {
+        if ((Test-OrdinalEqual $normal $folder) -or $normal.StartsWith("$folder\", [StringComparison]::Ordinal)) {
             return "is inside $output, which the installer writes, so it cannot be a layer source."
         }
     }
+    # A maxstack checkout cannot be a source, whether the path is absolute or relative. An 8.3 short name is refused the way the
+    # -Workspace rule refuses one, since it would record a name the lock does not hold.
+    if (Test-MaxstackCheckoutLocation -Path $normal -RepoRoot '') { return 'is a maxstack checkout, which cannot be a layer source.' }
     return $null
 }
 
@@ -504,9 +565,12 @@ function Get-LocalPathFault {
 function Read-LocalSpec {
     param([string] $Name, [string] $Path)
 
+$textFault = Get-LocalTextFault $Path
+    if ($textFault) { throw "-Source $Name=local:$(ConvertTo-SafeName $Path) $textFault" }
     $fault = Get-LocalPathFault $Path
-    if ($fault) { throw "-Source $Name=local:$Path $fault" }
-    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "-Source $Name=local:${Path}: that folder does not exist." }
+    $shown = ConvertTo-SafeName $Path
+    if ($fault) { throw "-Source $Name=local:$shown $fault" }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "-Source $Name=local:${shown}: that folder does not exist." }
     return [pscustomobject]@{ kind = 'local'; path = (Get-FullFolderPath $Path) }
 }
 
@@ -518,39 +582,90 @@ function Test-HttpsGitUrl {
     return ($Url -cmatch '^https://[^/\\?#@]+/[^\\?#@]+\z')
 }
 
-# A git spec is owner/repo@ref, or https://host/path@ref. The ref is the part after the last @.
-function Read-GitSpec {
-    param([string] $Name, [string] $Spec)
+# The characters a source may not hold, for every source form: C0 controls and DEL, the C1 controls, NBSP, and the bidi
+# controls (ALM, LRM, RLM, LRE to RLO, LRI to PDI). A -Source value and a settings value are refused alike.
+$script:SourceExtraForbidden = [string] [char] 0x00A0
 
-    $at = $Spec.LastIndexOf('@')
-    if ($at -lt 1) { throw "-Source $Name=$Spec needs @ref: the branch, tag, or full commit to install." }
-    $location = $Spec.Substring(0, $at)
-    $ref = $Spec.Substring($at + 1)
-    if (-not (Test-SafeRefName $ref)) { throw "-Source $Name=${Spec}: '$ref' is not a safe git ref name." }
-    if ($location -match '^([A-Za-z]:[\\/]|[\\/])') { throw "-Source $Name=${Spec} names a folder with an @ref, which is not a git source: did you mean local:${location}?" }
-    if ($location -match '^[A-Za-z][A-Za-z0-9+.-]*:') {
-        if (-not (Test-HttpsGitUrl $location)) {
-            throw "-Source $Name=${Spec}: only https:// URLs with a host and a path are allowed."
-        }
-        return [pscustomobject]@{ kind = 'git'; url = $location; ref = $ref }
-    }
-    if ($location -cmatch '^([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)$') {
-        $repo = $Matches[2] -replace '\.git$', ''
-        return [pscustomobject]@{ kind = 'git'; url = (Get-GitHubRemoteUrl -Owner $Matches[1] -Repo $repo); ref = $ref }
-    }
-    throw "-Source $Name=${Spec}: the location must be owner/repo or an https:// URL."
+function New-SourceFault {
+    param([string] $Code, [string] $Reason)
+
+    return [pscustomobject]@{ code = $Code; reason = $Reason; kind = $null }
 }
 
-# Reads one -Source spec. Empty or default drops the override. The forms are owner/repo@ref, https://host/path@ref,
-# and local:<absolute path>. Anything else is refused with the rule it broke.
+# The one source grammar. -Source, -LayerSource's local form, and layers.<name>.source in maxstack.settings.json all parse
+# here, so a value means the same in each. A spec is default, local:<path>, owner/repo@ref, or https://host/path@ref. The
+# grammar reads text only: no folder is looked at, and git runs only to check a ref, which -NoGit replaces with the syntax
+# check. -Settings also takes a relative local path, which the caller resolves from the workspace; a path that is drive-
+# relative, root-relative, or climbs with .. is a fault there. A fault has a code and a reason that starts after the spec.
+function Read-SourceGrammar {
+    param([string] $Spec, [switch] $Settings, [switch] $NoGit)
+
+    # A format, control, or separator character, or a non-breaking space, is refused before any keyword is compared, so a
+    # culture-equal keyword such as default with a soft hyphen is never read as the keyword.
+    if ((-not (Test-BoundaryText $Spec)) -or $Spec.Contains($script:SourceExtraForbidden)) {
+        $badIndex = Find-BoundaryIndex $Spec
+        $held = if ($badIndex -ge 0) { 'the character ' + ('\u{0:X4}' -f [int] $Spec[$badIndex]) } else { 'a non-breaking space' }
+        return (New-SourceFault 'forbidden' " holds $held, which a source may not hold.")
+    }
+    if ((Test-OrdinalEqual $Spec 'default') -or ((Test-OrdinalEqual $Spec '') -and -not $Settings)) { return [pscustomobject]@{ kind = 'default'; code = $null } }
+    if ($Spec.StartsWith('local:', [StringComparison]::Ordinal)) { return (Read-LocalGrammar -Path $Spec.Substring(6) -Settings:$Settings) }
+    $spaceFault = Get-SpecFault $Spec
+    if ($spaceFault) { return (New-SourceFault 'spec' " is refused: $spaceFault. Use owner/repo@ref, https://host/path.git@ref, or local:<absolute path>.") }
+    return (Read-GitGrammar -Spec $Spec -NoGit:$NoGit)
+}
+
+# The local form of the grammar. The -Source form needs an absolute path, which Read-LocalSpec checks. The settings form
+# needs one that is absolute or relative to the workspace: a drive-relative or root-relative path, an empty one, or a
+# relative path with a .. component is unsafe. An absolute path may hold .. and is normalized, as -Source has always done.
+function Read-LocalGrammar {
+    param([string] $Path, [switch] $Settings)
+
+    $textFault = Get-LocalTextFault $Path
+        if ($textFault) { return (New-SourceFault 'local-text' " $textFault") }
+        $absolute = $Path -match '^[A-Za-z]:[\\/]'
+    if ($Settings) {
+        if ([string]::IsNullOrWhiteSpace($Path)) { return (New-SourceFault 'unsafe-local' ' has an unsafe local path.') }
+        if (-not $absolute -and $Path -match '^([A-Za-z]:|[\\/])') { return (New-SourceFault 'unsafe-local' ' has an unsafe local path.') }
+        if (-not $absolute -and $Path -match '(^|[\\/])\.\.([\\/]|$)') { return (New-SourceFault 'unsafe-local' ' has an unsafe local path.') }
+    }
+    return [pscustomobject]@{ kind = 'local'; code = $null; path = $Path; absolute = [bool] $absolute }
+}
+
+# The git form: owner/repo@ref, or https://host/path@ref. The ref is the part after the last @. The owner/repo form leaves
+# the url null, since its remote is built only when the source is used, and that build reads the test seam.
+function Read-GitGrammar {
+    param([string] $Spec, [switch] $NoGit)
+
+    $at = $Spec.LastIndexOf('@')
+    if ($at -lt 1) { return (New-SourceFault 'ref' " needs @ref: the branch, tag, or full commit to install.") }
+    $location = $Spec.Substring(0, $at)
+    $ref = $Spec.Substring($at + 1)
+    $refIsSafe = if ($NoGit) { Test-SafeRefNameSyntax $ref } else { Test-SafeRefName $ref }
+    if (-not $refIsSafe) { return (New-SourceFault 'ref' " has a ref that is not a safe git ref name.") }
+    if ($location -match '^([A-Za-z]:[\\/]|[\\/])') {
+        return (New-SourceFault 'folder-ref' " names a folder with an @ref, which is not a git source: did you mean local:$(ConvertTo-SafeName $location)?")
+    }
+    if ($location -match '^[A-Za-z][A-Za-z0-9+.-]*:') {
+        if (-not (Test-HttpsGitUrl $location)) { return (New-SourceFault 'scheme' ': only https:// URLs with a host and a path are allowed.') }
+        return [pscustomobject]@{ kind = 'git'; code = $null; url = $location; ref = $ref; owner = $null; repo = $null }
+    }
+    if ($location -cmatch '^([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)$') {
+        return [pscustomobject]@{ kind = 'git'; code = $null; url = $null; ref = $ref; owner = $Matches[1]; repo = ($Matches[2] -replace '\.git$', '') }
+    }
+    return (New-SourceFault 'location' ': the location must be owner/repo or an https:// URL.')
+}
+
+# Reads one -Source spec. Empty or default drops the override. The forms are owner/repo@ref, https://host/path@ref, and
+# local:<absolute path>. Anything else is refused with the rule it broke, and the spec is shown escaped and cut.
 function Read-SourceSpec {
     param([string] $Name, [string] $Spec)
 
-    if ($Spec -ceq '' -or $Spec -ceq 'default') { return [pscustomobject]@{ kind = 'default' } }
-    if ($Spec.StartsWith('local:', [StringComparison]::Ordinal)) { return (Read-LocalSpec -Name $Name -Path $Spec.Substring(6)) }
-    $fault = Get-SpecFault $Spec
-    if ($fault) { throw "-Source $Name=$Spec is refused: $fault. Use owner/repo@ref, https://host/path.git@ref, or local:<absolute path>." }
-    return (Read-GitSpec -Name $Name -Spec $Spec)
+    $grammar = Read-SourceGrammar -Spec $Spec
+    if ($null -ne $grammar.code) { throw "-Source $Name=$(ConvertTo-SafeName $Spec)$($grammar.reason)" }
+    if ((Test-OrdinalEqual $grammar.kind 'default')) { return [pscustomobject]@{ kind = 'default' } }
+    if ((Test-OrdinalEqual $grammar.kind 'local')) { return (Read-LocalSpec -Name $Name -Path $grammar.path) }
+    $url = if ($null -ne $grammar.url) { $grammar.url } else { Get-GitHubRemoteUrl -Owner $grammar.owner -Repo $grammar.repo }
+    return [pscustomobject]@{ kind = 'git'; url = $url; ref = $grammar.ref }
 }
 
 # The explicit sources a run names. -Source name=spec and -LayerSource name=path, which is -Source name=local:path.
@@ -558,15 +673,20 @@ function Read-SourceSpec {
 function Read-SourceSpecs {
     param([string[]] $Specs, [string[]] $LayerSpecs, [string[]] $LayerNames)
 
-    $table = @{}
+    $table = [hashtable]::new([StringComparer]::Ordinal)
     foreach ($entry in @($Specs | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
         $name, $spec = $entry -split '=', 2
+        Assert-BoundaryText $name '-Source name'
         if ($null -eq $spec) { throw "-Source expects name=spec, got '$entry'. A comma separates -Source entries, so a path cannot hold one." }
         Add-ExplicitSource -Table $table -Name $name -Spec (Read-SourceSpec -Name $name -Spec $spec) -LayerNames $LayerNames
     }
     foreach ($entry in @($LayerSpecs | ForEach-Object { $_ -split ',' } | Where-Object { $_ })) {
         $name, $path = $entry -split '=', 2
+        Assert-BoundaryText $name '-LayerSource name'
         if (-not (Test-NonEmptyString $path)) { throw "LayerSource expects name=path, got '$entry'." }
+        Assert-BoundaryText $name '-LayerSource name'
+        $grammar = Read-SourceGrammar -Spec "local:$path"
+        if ($null -ne $grammar.code) { throw "-LayerSource $name=$(ConvertTo-SafeName $path)$($grammar.reason)" }
         $full = if ([IO.Path]::IsPathRooted($path)) { $path } else { Join-Path (Get-Location).ProviderPath $path }
         Add-ExplicitSource -Table $table -Name $name -Spec (Read-LocalSpec -Name $name -Path $full) -LayerNames $LayerNames
     }
@@ -576,7 +696,7 @@ function Read-SourceSpecs {
 function Add-ExplicitSource {
     param($Table, [string] $Name, $Spec, [string[]] $LayerNames)
 
-    if ($LayerNames -cnotcontains $Name) { throw "-Source names an unknown layer: $Name. Layers in layers.json: $($LayerNames -join ', ')." }
+    if ((-not (Test-OrdinalIn $Name $LayerNames))) { throw "-Source names an unknown layer: $Name. Layers in layers.json: $($LayerNames -join ', ')." }
     if ($Table.ContainsKey($Name)) { throw "-Source names layer $Name twice." }
     $Table[$Name] = $Spec
 }
@@ -585,7 +705,7 @@ function Add-ExplicitSource {
 function Join-SourceSub {
     param([string] $Root, [string] $Sub)
 
-    if ([string]::IsNullOrEmpty($Sub) -or $Sub -eq '.') { return $Root }
+    if ([string]::IsNullOrEmpty($Sub) -or (Test-OrdinalEqual $Sub '.')) { return $Root }
     return ([IO.Path]::Combine($Root, ($Sub -replace '/', '\')))
 }
 
@@ -688,7 +808,7 @@ function New-GitChoice {
 
     $resolved = $Commit
     if (-not $resolved) { $resolved = if (Test-CommitRef $Ref) { $Ref } else { Find-GitRefCommit -Url $Url -Ref $Ref } }
-    if ($Layer.defaultGit -and $Url -ceq $Layer.defaultUrl -and $resolved -ceq $Layer.defaultCommit) { return (New-DefaultChoice $Layer) }
+    if ($Layer.defaultGit -and (Test-OrdinalEqual $Url $Layer.defaultUrl) -and (Test-OrdinalEqual $resolved $Layer.defaultCommit)) { return (New-DefaultChoice $Layer) }
     return [pscustomobject]@{ kind = 'git'; url = $Url; ref = $Ref; commit = $resolved; path = $null; checkout = $null; override = $true }
 }
 
@@ -697,7 +817,7 @@ function New-LocalChoice {
     param($Layer, [string] $Path)
 
     $full = Get-FullFolderPath $Path
-    if (-not $Layer.defaultGit -and (Get-NormalPath $full) -eq (Get-NormalPath (Join-Path $Workspace ($Layer.path -replace '/', '\')))) {
+    if (-not $Layer.defaultGit -and (Test-OrdinalEqual (Get-NormalPath $full) (Get-NormalPath (Join-Path $Workspace ($Layer.path -replace '/', '\'))))) {
         return (New-DefaultChoice $Layer)
     }
     return [pscustomobject]@{ kind = 'local'; url = $null; ref = $null; commit = $null; path = $full; checkout = $full; override = $true }
@@ -708,12 +828,13 @@ function Resolve-LayerChoice {
     param($Layer, $Explicit, $Recorded, [bool] $Updating)
 
     if ($null -ne $Explicit) {
-        if ($Explicit.kind -eq 'default') { return (New-DefaultChoice $Layer) }
-        if ($Explicit.kind -eq 'local') { return (New-LocalChoice -Layer $Layer -Path $Explicit.path) }
+        if ((Test-OrdinalEqual $Explicit.kind 'default')) { return (New-DefaultChoice $Layer) }
+        if ((Test-OrdinalEqual $Explicit.kind 'unavailable')) { return (New-UnavailableChoice -Path $Explicit.path -Reason $Explicit.reason) }
+        if ((Test-OrdinalEqual $Explicit.kind 'local')) { return (New-LocalChoice -Layer $Layer -Path $Explicit.path) }
         return (New-GitChoice -Layer $Layer -Url $Explicit.url -Ref $Explicit.ref -Commit $null)
     }
     if ($null -ne $Recorded) {
-        if ($Recorded.kind -eq 'local') { return (New-LocalChoice -Layer $Layer -Path $Recorded.path) }
+        if ((Test-OrdinalEqual $Recorded.kind 'local')) { return (New-LocalChoice -Layer $Layer -Path $Recorded.path) }
         # -Update moves a branch or tag to its current commit. A commit stays as recorded.
         $commit = if ($Updating -and -not (Test-CommitRef $Recorded.ref)) { $null } else { $Recorded.commit }
         return (New-GitChoice -Layer $Layer -Url $Recorded.url -Ref $Recorded.ref -Commit $commit)
@@ -723,12 +844,36 @@ function Resolve-LayerChoice {
 
 # Writes a choice into the layer model the rest of the installer reads. A local layer reads its checkout, and
 # records HEAD and the dirty flag of that checkout. A git layer keeps its url, ref, and commit.
+# A choice that cannot be used: a settings declaration whose folder is missing or unsafe, or whose git ref cannot be read. The
+# layer is skipped in every run, and an apply refuses it before any write.
+function New-UnavailableChoice {
+    param([string] $Path, [string] $Reason)
+
+    return [pscustomobject]@{ kind = 'unavailable'; url = $null; ref = $null; commit = $null; path = $Path; checkout = $null; override = $true; reason = $Reason }
+}
+
 function Set-LayerChoice {
-    param($Layer, $Choice)
+    param($Layer, $Choice, [bool] $FromSettings = $false)
 
     $Layer.override = [bool] $Choice.override
     $Layer.recordUrl = $Choice.url
-    if ($Choice.kind -eq 'git') {
+    $Layer.settingsSourced = $FromSettings
+    $Layer.settingsFault = $null
+    if ((Test-OrdinalEqual $Choice.kind 'unavailable')) {
+        $Layer.sourceKind = 'local'
+        $Layer.url = $null
+        $Layer.ref = $null
+        $Layer.commit = $null
+        $Layer.dirty = $null
+        $Layer.unreadable = $Choice.reason
+        $Layer.localPath = $Choice.path
+        $Layer.repoRoot = $null
+        $Layer.root = $null
+        $Layer.folderMissing = $false
+        $Layer.settingsFault = $Choice.reason
+        return
+    }
+    if ((Test-OrdinalEqual $Choice.kind 'git')) {
         $Layer.sourceKind = 'git'
         $Layer.url = $Choice.url
         $Layer.ref = $Choice.ref
@@ -755,17 +900,28 @@ function Set-LayerChoice {
     $Layer.root = if ($Layer.folderMissing -or $Layer.unreadable) { $null } else { Join-SourceSub $Choice.checkout $Layer.sourcePath }
 }
 
-# Resolves every layer's source for this run. Explicit maps names to parsed -Source specs, and Recorded maps names
-# to the override the lock recorded. -Update moves only the selected layers: an unselected layer keeps its recorded
-# commit, so a remote that only it uses is never read.
+# Resolves every layer's source for this run. Explicit maps names to parsed sources, and Recorded maps names to the override
+# the lock recorded. FromSettings names the Explicit entries that came from maxstack.settings.json, not from -Source. -Update
+# moves only the selected layers: an unselected layer keeps its recorded commit, so a remote that only it uses is never read.
 function Set-LayerSources {
-    param([object[]] $Layers, [hashtable] $Explicit, [hashtable] $Recorded, [bool] $Updating, [string[]] $SelectedLayers)
+    param([object[]] $Layers, [hashtable] $Explicit, [hashtable] $Recorded, [bool] $Updating, [string[]] $SelectedLayers, [string[]] $FromSettings = @())
 
     foreach ($layer in $Layers) {
-        $moves = $Updating -and ($SelectedLayers -ccontains $layer.name)
-        $choice = Resolve-LayerChoice -Layer $layer -Explicit $Explicit[$layer.name] -Recorded $Recorded[$layer.name] -Updating $moves
-        Set-LayerChoice -Layer $layer -Choice $choice
+        $moves = $Updating -and ((Test-OrdinalIn $layer.name $SelectedLayers))
+        $fromSettingsFile = (Test-OrdinalIn $layer.name $FromSettings)
+        $choice = Resolve-LayerChoiceOrUnavailable -Layer $layer -Explicit $Explicit[$layer.name] -Recorded $Recorded[$layer.name] -Updating $moves -FromSettings $fromSettingsFile
+        Set-LayerChoice -Layer $layer -Choice $choice -FromSettings $fromSettingsFile
     }
+}
+
+# A settings git declaration whose ref cannot be read is unavailable, not a stop: the layer is skipped, and an apply refuses it.
+# A -Source spec that fails still stops the run, as it always has.
+function Resolve-LayerChoiceOrUnavailable {
+    param($Layer, $Explicit, $Recorded, [bool] $Updating, [bool] $FromSettings)
+
+    if (-not $FromSettings) { return (Resolve-LayerChoice -Layer $Layer -Explicit $Explicit -Recorded $Recorded -Updating $Updating) }
+    try { return (Resolve-LayerChoice -Layer $Layer -Explicit $Explicit -Recorded $Recorded -Updating $Updating) }
+    catch { return (New-UnavailableChoice -Path $null -Reason "cannot be used: its git ref could not be read: $(ConvertTo-SafeName $_.Exception.Message).") }
 }
 
 # The source record the lock keeps for one layer. A git source records its url, ref, and commit. A local source records
@@ -773,7 +929,7 @@ function Set-LayerSources {
 function New-SourceRecord {
     param($Layer)
 
-    if ($Layer.sourceKind -eq 'git') {
+    if ((Test-OrdinalEqual $Layer.sourceKind 'git')) {
         return [pscustomobject]@{ kind = 'git'; url = $Layer.url; ref = $Layer.ref; commit = $Layer.commit; override = $Layer.override }
     }
     return [pscustomobject]@{ kind = 'local'; url = $Layer.recordUrl; ref = $null; commit = $Layer.commit; dirty = $Layer.dirty; override = $Layer.override; path = $Layer.localPath }
@@ -784,11 +940,11 @@ function New-SourceRecord {
 function Get-RecordedOverrides {
     param($Stack)
 
-    $overrides = @{}
-    $invalid = @{}
+    $overrides = [hashtable]::new([StringComparer]::Ordinal)
+    $invalid = [hashtable]::new([StringComparer]::Ordinal)
     foreach ($layer in @($Stack.layers)) {
         $block = Get-Field $layer 'source'
-        if (-not (($block -is [pscustomobject]) -and ((Get-Field $block 'override') -eq $true))) { continue }
+        if (-not (($block -is [pscustomobject]) -and ((Test-IsTrue (Get-Field $block 'override'))))) { continue }
         $fault = Get-RecordedSourceFault $block
         if ($fault) { $invalid[$layer.name] = $fault } else { $overrides[$layer.name] = $block }
     }
@@ -803,12 +959,12 @@ function Get-RecordedSourceFault {
     param($Block)
 
     $kind = Get-Field $Block 'kind'
-    if ($kind -eq 'local') {
+    if ((Test-OrdinalEqual $kind 'local')) {
         $reason = Get-LocalPathFault (Get-Field $Block 'path')
         if ($reason) { return [pscustomobject]@{ field = 'path'; reason = $reason } }
         return $null
     }
-    if ($kind -ne 'git') { return [pscustomobject]@{ field = 'kind'; reason = 'it is neither git nor local.' } }
+    if ((-not (Test-OrdinalEqual $kind 'git'))) { return [pscustomobject]@{ field = 'kind'; reason = 'it is neither git nor local.' } }
     $url = Get-Field $Block 'url'
     # The same two rules a -Source spec passes: its characters and parts (Get-SpecFault), and its url or ref form.
     $httpsUrl = (Test-NonEmptyString $url) -and (Test-HttpsGitUrl $url) -and -not (Get-SpecFault $url)
@@ -832,8 +988,8 @@ function Format-RecordedFault {
 function Write-InvalidRecordedSources {
     param($Invalid, [string[]] $Skip)
 
-    foreach ($name in @($Invalid.Keys | Sort-Object)) {
-        if ($Skip -ccontains $name) { continue }
+    foreach ($name in @(Get-OrdinalSorted @($Invalid.Keys))) {
+        if ((Test-OrdinalIn $name $Skip)) { continue }
         Write-Warning "$(Format-RecordedFault $name $Invalid[$name]) This run ignores the recorded override and uses the layers.json source. Repair it with -Source $name=default -Apply."
         Write-Host "  ${name}: invalid recorded source, ignored for this run"
     }
@@ -845,7 +1001,13 @@ function Get-RecordedSourceOf {
     param($Record)
 
     $block = Get-Field $Record 'source'
-    if ($block -is [pscustomobject]) { return $block }
+    if ($block -is [pscustomobject]) {
+        # A copy with every field, so a missing or invalid field reads as null and no later property access fails.
+        return [pscustomobject]@{
+            kind = Get-Field $block 'kind'; url = Get-Field $block 'url'; ref = Get-Field $block 'ref'; commit = Get-Field $block 'commit'
+            dirty = Get-Field $block 'dirty'; override = Get-Field $block 'override'; path = Get-Field $block 'path'
+        }
+    }
     $local = $null -ne (Get-Field $Record 'path')
     return [pscustomobject]@{
         kind     = $(if ($local) { 'local' } else { 'git' })
@@ -874,24 +1036,26 @@ function Get-SourcePinLines {
 
     $lines = [System.Collections.Generic.List[string]]::new()
     foreach ($entry in $Entries) {
+        if ($entry.settingsFault) { $lines.Add("  $($entry.name): declared source skipped: $(ConvertTo-SafeName ([string] $entry.settingsFault))"); continue }
         $source = $entry.source
-        if ($source.kind -eq 'git') {
-            if ($source.override) { $lines.Add("  $($entry.name): override, git $($source.url) ref $($source.ref) at $($source.commit)") }
+        if ((Test-OrdinalEqual $source.kind 'git')) {
+            if (Test-IsTrue $source.override) { $lines.Add("  $($entry.name): override, git $($source.url) ref $($source.ref) at $($source.commit)") }
             continue
         }
-        $kind = if ($source.override) { 'override, local' } else { 'local, default' }
+        $kind = if (Test-IsTrue $source.override) { 'override, local' } else { 'local, default' }
+        $shown = ConvertTo-SafeName ([string] $source.path)
         if (Test-NonEmptyString $source.path) {
             if (-not (Test-Path -LiteralPath (Get-LocalSourceFolder $source.path) -PathType Container)) {
-                $lines.Add("  $($entry.name): $kind $($source.path): folder missing")
+                $lines.Add("  $($entry.name): $kind ${shown}: folder missing")
                 continue
             }
         }
         if ($entry.unreadable) {
-            $lines.Add("  $($entry.name): $kind $($source.path): unreadable: $($entry.unreadable)")
+            $lines.Add("  $($entry.name): $kind ${shown}: unreadable: $(ConvertTo-SafeName ([string] $entry.unreadable))")
             continue
         }
         $where = if ($null -eq $source.commit) { 'not a git checkout' } else { "HEAD $($source.commit), $(Format-DirtyLabel $source.dirty)" }
-        $lines.Add("  $($entry.name): $kind $($source.path) ($where)")
+        $lines.Add("  $($entry.name): $kind $shown ($where)")
     }
     return $lines.ToArray()
 }
@@ -918,7 +1082,7 @@ function Get-LocalSourceFolder {
 function Get-RecordedUnreadable {
     param($Source)
 
-    if ($Source.kind -ne 'local' -or -not (Test-NonEmptyString $Source.path)) { return $null }
+    if ((-not (Test-OrdinalEqual $Source.kind 'local')) -or -not (Test-NonEmptyString $Source.path)) { return $null }
     try {
         $folder = Get-LocalSourceFolder $Source.path
         if (-not (Test-Path -LiteralPath $folder -PathType Container)) { return $null }
@@ -936,14 +1100,14 @@ function Get-RecordedSourceEntries {
     if ($null -eq $Stack) { return @() }
     return @(@($Stack.layers) | ForEach-Object {
         $source = Get-RecordedSourceOf $_
-        [pscustomobject]@{ name = $_.name; source = $source; unreadable = (Get-RecordedUnreadable $source) }
+        [pscustomobject]@{ name = $_.name; source = $source; unreadable = (Get-RecordedUnreadable $source); settingsFault = $null }
     })
 }
 
 function Get-ResolvedSourceEntries {
     param([object[]] $Layers)
 
-    return @($Layers | ForEach-Object { [pscustomobject]@{ name = $_.name; source = New-SourceRecord $_; unreadable = $_.unreadable } })
+    return @($Layers | ForEach-Object { [pscustomobject]@{ name = $_.name; source = New-SourceRecord $_; unreadable = $_.unreadable; settingsFault = $_.settingsFault } })
 }
 
 # ---- -Update: move branch and tag overrides to their current commit, re-read local sources, and report the change ----
@@ -1009,7 +1173,7 @@ function Get-SourceUpdate {
     param($Layer, $PriorSource)
 
     $oldCommit = Get-Field $PriorSource 'commit'
-    if ($Layer.sourceKind -eq 'local') {
+    if ((Test-OrdinalEqual $Layer.sourceKind 'local')) {
         if ($Layer.folderMissing) { return [pscustomobject]@{ line = "  $($Layer.name): local $($Layer.localPath): folder missing"; changed = $true } }
         if ($Layer.unreadable) { return [pscustomobject]@{ line = "  $($Layer.name): local $($Layer.localPath): unreadable: $($Layer.unreadable)"; changed = $true } }
         $was = Format-DirtyState (Get-Field $PriorSource 'dirty')
@@ -1017,7 +1181,7 @@ function Get-SourceUpdate {
         $head = "HEAD $(Format-Commit $oldCommit) -> $(Format-Commit $Layer.commit)"
         return [pscustomobject]@{
             line    = "  $($Layer.name): local $($Layer.localPath): $head, uncommitted changes $was -> $now"
-            changed = (($oldCommit -cne $Layer.commit) -or ($was -cne $now))
+            changed = (((-not (Test-OrdinalSame $oldCommit $Layer.commit))) -or ((-not (Test-OrdinalEqual $was $now))))
         }
     }
     if (-not $Layer.override) {
@@ -1026,7 +1190,7 @@ function Get-SourceUpdate {
     if (Test-CommitRef $Layer.ref) {
         return [pscustomobject]@{ line = "  $($Layer.name): override pinned to commit $($Layer.commit), not moved"; changed = $false }
     }
-    if ($oldCommit -ceq $Layer.commit) {
+    if ((Test-OrdinalSame $oldCommit $Layer.commit)) {
         return [pscustomobject]@{ line = "  $($Layer.name): $($Layer.ref) is at $($Layer.commit), unchanged"; changed = $false }
     }
     $note = Get-MoveFilesNote -Layer $Layer -OldCommit $oldCommit
@@ -1044,7 +1208,7 @@ function Get-PinHint {
     } catch {
         return "  $($Layer.name): cannot read $($Layer.defaultRef) to check the pin: $($_.Exception.Message)"
     }
-    if ($head -ceq $Layer.defaultCommit) { return $null }
+    if ((Test-OrdinalEqual $head $Layer.defaultCommit)) { return $null }
     return "  $($Layer.name): layers.json pins $($Layer.defaultCommit), and $($Layer.defaultRef) is at $head. -Update never moves a pin. To move it, change source.commit in layers.json (and the matching pin in pstack.lock.json), then run verify-manifests."
 }
 
@@ -1053,7 +1217,7 @@ function Get-PriorLayerRecord {
     param($Stack, [string] $Name)
 
     if ($null -eq $Stack) { return $null }
-    return (@($Stack.layers | Where-Object { $_.name -ceq $Name }) | Select-Object -First 1)
+    return (@($Stack.layers | Where-Object { (Test-OrdinalEqual $_.name $Name) }) | Select-Object -First 1)
 }
 
 # The -Update report: each selected layer's source as it stands and as -Update would resolve it, the pin hints, and each
@@ -1071,7 +1235,7 @@ function Write-UpdateReport {
 
     Write-Host 'Layer sources (-Update):'
     $changes = 0
-    foreach ($layer in @($Layers | Where-Object { $SelectedLayers -ccontains $_.name })) {
+    foreach ($layer in @($Layers | Where-Object { (Test-OrdinalIn $_.name $SelectedLayers) })) {
         $prior = Get-PriorLayerRecord -Stack $PriorStack -Name $layer.name
         $priorSource = $null
         if ($null -ne $prior) { $priorSource = Get-RecordedSourceOf $prior }
@@ -1086,7 +1250,7 @@ function Write-UpdateReport {
         return $changes
     }
     $results = @(Get-OwnershipReport -Recorded $Owned -Plan $Plan -SelectedRuntimes $SelectedRuntimes -NotSelected $NotSelected)
-    $moving = @($results | Where-Object { $_.state -in @('drifted', 'modified', 'missing') })
+    $moving = @($results | Where-Object { (Test-OrdinalIn $_.state @('drifted', 'modified', 'missing')) })
     foreach ($item in $moving) { Write-Host ('  would change {0,-9} {1}' -f $item.state, $item.label) }
     return ($changes + $moving.Count)
 }

@@ -474,6 +474,8 @@ test('a malformed source block is refused, with the rule it breaks', { skip }, (
 // folder and receives the scripts folder, the input folder, and the layer names as arguments.
 const SETTINGS_DRIVER = `param([string] $Scripts, [string] $Folder, [string] $LayerList)
 Set-StrictMode -Version Latest
+. (Join-Path $Scripts 'Install-Ordinal.ps1')
+. (Join-Path $Scripts 'Install-WorkspaceDiscovery.ps1')
 . (Join-Path $Scripts 'Install-LayerSources.ps1')
 . (Join-Path $Scripts 'Install-Settings.ps1')
 $layers = @($LayerList -split ',')
@@ -558,7 +560,84 @@ function settingsDifferentialInputs() {
     ['invalid-utf8', Buffer.from([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d])],
     ['full-valid', '{"$schema":"https://json-schema.org/draft/2020-12/schema","version":1,"os":"auto","runtimes":{"claude":{"cli":"detect"}},"layers":{"pstack":{"source":"default"}},"t3":{"cli":"detect","snapshot":true,"defaults":"leave-alone"}}'],
     ['pi-alone', '{"version":1,"runtimes":{"pi":{}}}'],
+    // The nine culture inputs of the review: a format character in a key or a value that PowerShell's culture rules equated
+    // with the plain name. Both readers refuse each one.
+    ['culture-default-zero-width', '{"version":1,"layers":{"pstack":{"source":"default​"}}}'],
+    ['culture-default-soft-hyphen', '{"version":1,"layers":{"pstack":{"source":"default­"}}}'],
+    ['culture-os-zero-width', '{"version":1,"os":"windows​"}'],
+    ['culture-cli-zero-width', '{"version":1,"runtimes":{"claude":{"cli":"install​"}}}'],
+    ['culture-t3-defaults-soft-hyphen', '{"version":1,"t3":{"defaults":"apply-defaults­"}}'],
+    ['culture-top-level-runtimes', '{"version":1,"runtimes​":{"claude":{}}}'],
+    ['culture-top-level-layers', '{"version":1,"layers​":{"pstack":{}}}'],
+    ['culture-layer-key-zero-width', '{"version":1,"layers":{"pstack​":{}}}'],
+    ['culture-runtime-key-zwj', '{"version":1,"runtimes":{"pi‍":{}}}'],
+    ['culture-t3-key-soft-hyphen', '{"version":1,"t3":{"cli­":"detect"}}'],
+    ...sourceGrammarInputs(),
   ];
+}
+
+// The source grammar, one input per case: each is a settings file whose only content is one layers.pstack.source value. The
+// PowerShell reader and the Python reader must agree on every one. A value is written with JSON.stringify, so a backslash, a
+// control character, or a format character is encoded exactly as the reader will see it.
+function sourceGrammarInputs() {
+  const cases = [
+    ['local-absolute-drive', 'local:C:\\x\\y'],
+    ['local-absolute-dotdot', 'local:C:\\x\\..\\y'],
+    ['local-absolute-slash', 'local:/x/y'],
+    ['local-unc', 'local:\\\\server\\share\\x'],
+    ['local-device-prefix', 'local:\\\\?\\C:\\x'],
+    ['local-relative', 'local:projects/repos/checkout'],
+    ['local-relative-dotdot', 'local:../outside'],
+    ['local-relative-dotdot-middle', 'local:a/../b'],
+    ['local-relative-dotdot-inside-name', 'local:a..b'],
+    ['local-drive-relative', 'local:C:checkout'],
+    ['local-root-relative', 'local:\\checkout'],
+    ['local-dot', 'local:.'],
+    ['local-blank', 'local:   '],
+    ['local-ideographic-space', 'local:\u3000'],
+    ['local-zero-width-space', 'local:\u200b'],
+    ['local-tab-inside', 'local:a\tb'],
+    ['local-lrm-inside', 'local:a\u200eb'],
+    ['local-alm-inside', 'local:a\u061cb'],
+    ['local-isolate-inside', 'local:a\u2066b'],
+    ['local-line-separator', 'local:a\u2028b'],
+    ['local-soft-hyphen', 'local:a\u00adb'],
+    ['local-surrogate-pair', 'local:a\ud83d\ude00'],
+    ['local-upper-prefix', 'LOCAL:checkout'],
+    ['default-with-space', 'default '],
+    ['default-capital', 'Default'],
+    ['git-owner-repo-git-suffix', 'sample/repo.git@main'],
+    ['git-owner-repo-dot-git', 'sample/.git@main'],
+    ['git-https-query', 'https://host/a?b@main'],
+    ['git-https-fragment', 'https://host/a#b@main'],
+    ['git-https-userinfo', 'https://user@host/repo@main'],
+    ['git-http-scheme', 'http://host/repo@main'],
+    ['git-ssh-scheme', 'ssh://git@host/repo@main'],
+    ['git-folder-with-ref', 'C:\\x@main'],
+    ['git-no-ref', 'sample/repo'],
+    ['git-empty-ref', 'sample/repo@'],
+    ['git-ref-lock-suffix', 'sample/repo@feat.lock'],
+    ['git-ref-trailing-dot', 'sample/repo@feat.'],
+    ['git-ref-leading-dash', 'sample/repo@-feat'],
+    ['git-ref-brace', 'sample/repo@a@{b'],
+    ['git-ref-double-slash', 'sample/repo@a//b'],
+    ['git-ref-star', 'sample/repo@a*'],
+    ['git-ref-tilde', 'sample/repo@a~1'],
+    ['git-location-dotdot', 'https://host/a/../b@main'],
+    ['git-sha-ref', 'sample/repo@0123456789abcdef0123456789abcdef01234567'],
+    ['local-unc-forward', 'local://server/share/x'],
+    ['local-device-dot', 'local:\\\\.\\C:\\x'],
+    ['local-device-drive-form', 'local:\\\\?\\C:\\x'],
+    ['local-trailing-dot', 'local:tools/checkout.'],
+    ['local-trailing-space', 'local:tools/checkout '],
+    ['default-zero-width', 'default\u200b'],
+    ['default-soft-hyphen', 'default\u00ad'],
+    ['default-zero-width-joiner', 'default\u200d'],
+    ['git-zero-width-ref', 'sample/repo@feat\u200bx'],
+    ['git-zero-width-location', 'sample/re\u200bpo@main'],
+    ['git-soft-hyphen-location', 'sample/re\u00adpo@main'],
+  ];
+  return cases.map(([name, value]) => [name, JSON.stringify({ version: 1, layers: { pstack: { source: value } } })]);
 }
 
 // The verdict of each input from each reader: ACCEPT or REFUSE. Python exits 0 for accept and 1 for refuse.
@@ -597,6 +676,24 @@ test('the Python reader and the PowerShell reader accept and refuse the same set
   assert.ok(verdicts.has('ACCEPT') && verdicts.has('REFUSE'), 'the differential needs both accepted and refused inputs');
 });
 
+// The inputs the review found accepted, or accepted by one reader only. Each is refused by both readers, not merely agreed on.
+const MUST_REFUSE = [
+  'local-absolute-slash', 'local-unc', 'local-unc-forward', 'local-device-prefix', 'local-device-dot', 'local-device-drive-form',
+  'local-trailing-dot', 'local-trailing-space', 'default-zero-width', 'default-soft-hyphen', 'default-zero-width-joiner',
+  'git-zero-width-ref', 'git-zero-width-location', 'git-soft-hyphen-location',
+  'culture-default-zero-width', 'culture-default-soft-hyphen', 'culture-os-zero-width', 'culture-cli-zero-width',
+  'culture-t3-defaults-soft-hyphen', 'culture-top-level-runtimes', 'culture-top-level-layers', 'culture-layer-key-zero-width',
+  'culture-runtime-key-zwj', 'culture-t3-key-soft-hyphen',
+];
+
+test('the readers refuse each culture and root-relative input the review found, in both readers', { skip: differentialSkip }, () => {
+  const inputs = settingsDifferentialInputs();
+  const { powershell, reader } = runSettingsDifferential(inputs);
+  const notRefused = MUST_REFUSE.filter((name) => powershell.get(name) !== 'REFUSE' || reader.get(name) !== 'REFUSE')
+    .map((name) => `${name}: PowerShell ${powershell.get(name)}, Python ${reader.get(name)}`);
+  assert.deepEqual(notRefused, [], 'a reader accepts an input it must refuse');
+});
+
 // The decision log is read as lines, so a carriage return inside a field or a line with other than six tab-separated fields
 // changes what every reader sees. The verifier refuses both.
 test('the decision log has exactly six tab-separated fields per line and no carriage return', { skip }, () => {
@@ -628,4 +725,10 @@ test('the docs write device prefixes and UNC paths with their two leading backsl
     assert.doesNotMatch(text, singleBackslashPrefix, `${doc} writes a device prefix with one leading backslash`);
     assert.doesNotMatch(text, singleBackslashShare, `${doc} writes a UNC share with one leading backslash`);
   }
+});
+
+// Finding 18: the settings doc states the os and t3 rules once. A repeated paragraph is a second copy that drifts.
+test('the settings doc states the os and t3 rules once', { skip }, () => {
+  const text = readFileSync(join(repoRoot, 'docs', 'features', 'settings.md'), 'utf8');
+  assert.equal(text.split('`os` accepts').length - 1, 1, 'the os and t3 paragraph appears more than once in docs/features/settings.md');
 });
