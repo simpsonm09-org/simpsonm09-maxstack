@@ -14,7 +14,7 @@ The workspace is CLI-first. No MCP server is installed by default. Every service
 
 ## Brokered services
 
-Discord and Postman are reached through the vault wrappers, not by putting a token in the environment. Run `with-vault --role agent <tool> <args>` for an agent, `with-vault --role human <tool> <args>` for the human vault identity, or `with-secrets <tool> <args>` for the human loader path. The wrapper brokers the credential from the self-hosted Infisical Agent Vault, and the proxy attaches it to the request. See [Repository relationships](relationship.md) for the command scheme and the identities.
+Discord and Postman are reached through the vault wrappers, not by putting a token in the environment. Run `with-vault --role agent <tool> <args>` for an agent, `with-vault --role human <tool> <args>` for the human vault identity, or `with-secrets --require <names> <tool> <args>` for the human path, which sets those values in that one command's environment only. The wrapper brokers the credential from the self-hosted Infisical Agent Vault, and the proxy attaches it to the request. See [Repository relationships](relationship.md) for the command scheme and the identities.
 
 ## Verify a server
 
@@ -36,7 +36,7 @@ The live connection state belongs to the OpenCode server that runs the session. 
 
 - The `github`, `postman`, and `context7` MCP servers were removed in favor of their CLIs. Authenticate the CLI once per runtime.
 - GitHub uses `gh`. Run `gh auth status`, then `gh auth login`.
-- Postman uses `postman`. Install with `npm install -g postman-cli`. Reach the cloud through the vault wrapper, `with-vault --role agent postman <args>` for an agent or `with-secrets postman <args>` for the human, so the key is brokered rather than set in the environment. A direct `postman login --with-api-key` is the manual fallback. The key lives in Infisical as `POSTMAN_API_KEY`. See [`../../simpsonm09-dev-setup/docs/secrets.md`](../../simpsonm09-dev-setup/docs/secrets.md).
+- Postman uses `postman`. Install with `npm install -g postman-cli`. Reach the cloud through the vault wrapper, `with-vault --role agent postman <args>` for an agent or `with-vault --role human postman <args>` for the human, so the key is brokered rather than set in the environment. `with-secrets --require POSTMAN_API_KEY postman <args>` is the human alternative, and it does set the key for that one command. A direct `postman login --with-api-key` is the manual fallback. The key lives in Infisical as `POSTMAN_API_KEY`. See [`../../simpsonm09-dev-setup/docs/secrets.md`](../../simpsonm09-dev-setup/docs/secrets.md).
 - Library docs use `npx ctx7`. Anonymous works; `npx ctx7 login` raises the rate limit.
 - If a server is added later and reports `needs_auth`, sign in with `opencode mcp auth <name>`. That is the OAuth flow for a remote server.
 

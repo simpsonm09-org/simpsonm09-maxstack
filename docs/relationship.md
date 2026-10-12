@@ -6,7 +6,7 @@ This document names how the pieces fit together. It covers the repositories that
 
 `maxstack` owns AI composition. It holds the workspace config fragment, the ordered layer manifest, the installer, and the pin on the PStack plugin. It composes the AI layers and does not own any layer it installs.
 
-`simpsonm09-dev-setup` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, the secrets loaders, and the Agent Vault wrappers. It does not own AI composition.
+`simpsonm09-dev-setup` owns the machine and the human tool set. It holds the tools a person installs on a host, the `tools.yaml` manifest, the `with-secrets` wrapper, and the Agent Vault wrappers. It does not own AI composition.
 
 The plugin layers own the skills, the agents, the entries, and the MCP servers. Order matters, and each later layer builds on the one before it.
 
@@ -16,7 +16,7 @@ The plugin layers own the skills, the agents, the entries, and the MCP servers. 
 | `simpsonm09-org-ai-plugin` | general and portable | MCP servers and skills that apply to any person or machine. |
 | `simpsonm09-personal-ai-plugin` | person and machine | MCP servers and skills that name one person and one machine. |
 | `simpsonm09-maxstack` | none | AI composition: the config fragment, the layer manifest, the installer, and the PStack pin. |
-| `simpsonm09-dev-setup` | none | The machine and the human tool set: tool installs, `tools.yaml`, the secrets loaders, and the Agent Vault wrappers. |
+| `simpsonm09-dev-setup` | none | The machine and the human tool set: tool installs, `tools.yaml`, the `with-secrets` wrapper, and the Agent Vault wrappers. |
 
 `layers.json` lists the layers in order. Each layer names the runtimes it installs for: `claude`, `opencode`, `copilot`, and `pi`. `maxstack` reads that order, builds each runtime's folders, merges the config fragments, and installs the agent profiles. A later layer wins where two layers set the same value.
 
@@ -36,7 +36,7 @@ The check is workspace-local, not a CI gate. CI checks out `maxstack` alone, so 
 
 The human and the agent reach a brokered service through a wrapper, never by putting a token in the environment. `simpsonm09-dev-setup` owns the wrappers and the vault setup, and the vault is part of the AI stack an agent runs on.
 
-`with-secrets <tool>` is the human loader path. It loads the secrets a person needs on demand, into that one command only.
+`with-secrets [--offline] [--require NAMES] <tool>` is the human path. Online by default, it reads the store and fails closed, and it puts the values a person's command needs into that one command's environment only. `--offline` uses the local fallback instead.
 
 `with-vault --role human <tool>` and `with-vault --role agent <tool>` are the vault path. A self-hosted Infisical Agent Vault brokers the service credential, and the proxy attaches it to the request, so the tool never holds the token. `--role` is required, so a run is never silently misattributed.
 
@@ -48,7 +48,7 @@ The workspace is the tree rooted at the directory that owns the generated `openc
 
 Every repository beneath that root inherits the agents and the skills, because OpenCode merges the config of each ancestor directory. A session in any repository under the root sees the same skills as a session at the root, and the model is whichever one that session selects.
 
-The `.envrc` at the same root is the secret-loading boundary. The loaders read it when a shell enters the tree.
+Secrets do not load from a `.envrc`, and no shell holds them. A leftover `.envrc` that imports secrets must be removed by hand; `with-secrets` warns when one is in the current directory or a parent.
 
 Do not store an absolute root. The same workspace is `D:\dev\simpsonm09` on Windows and `/mnt/d/dev/simpsonm09` in WSL, so a stored path is wrong in the other runtime. Record what each tool needs relative to the workspace, or read it from an environment variable.
 
