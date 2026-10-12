@@ -50,7 +50,7 @@ jobs:
   test-node:
     if: github.repository_owner == 'simpsonm09-org'
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -61,5 +61,19 @@ jobs:
           persist-credentials: false
       - name: Install pinned tools
         uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - name: Print the runner facts the suite depends on
+        shell: bash
+        run: |
+          git --version
+          node --version
+          pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+          echo "os.tmpdir()=$(node -p "require('os').tmpdir()")"
+          echo "global safe.directory entries:"
+          git config --global --get-all safe.directory || echo "  (none)"
       - name: Run the node test suite
+        # The default temp path is an 8.3 short name; the installer reports the long form, so the tests need a temp folder without one.
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: just test-node

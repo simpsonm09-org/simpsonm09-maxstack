@@ -5231,7 +5231,15 @@ withWorkspace('a tree that names exactly 100 filter drivers is still read', (ctx
   gitRun(checkout, ['commit', '-q', '-m', 'layer']);
   appendFileSync(join(checkout, '.git', 'config'), manyFilters(100));
   // The user's global config may name filters of its own, such as git-lfs, so the count is taken with an empty global config.
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false, env: homeEnv(join(ctx.base, 'empty-home')) });
+  // The guard's budget counts every variable the installer inherits, and a runner's environment is large, so the child gets
+  // only what pwsh and git need. The 100 filter settings are then what the budget measures.
+  const home = join(ctx.base, 'empty-home');
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, '.gitconfig'), '');
+  const inherited = ['SystemRoot', 'windir', 'SystemDrive', 'PATH', 'PATHEXT', 'ComSpec', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA', 'PSModulePath', 'ProgramFiles', 'ProgramData'];
+  const minimal = Object.fromEntries(inherited.filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
+  const env = { ...minimal, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, '.config'), GIT_CONFIG_NOSYSTEM: '1' };
+  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false, env });
   assertOk(audit);
   assert.doesNotMatch(plainOutput(audit), /unreadable/, plainOutput(audit));
   assert.match(plainOutput(audit), /simpsonm09-org-ai-plugin: override, local .*HEAD [0-9a-f]{40}, clean\)/, plainOutput(audit));
@@ -6076,7 +6084,11 @@ withWorkspace('a folder git refuses as owned by another user is unreadable for t
   runGit(checkout, ['init', '-q']);
   runGit(checkout, ['add', '-A']);
   runGit(checkout, ['commit', '-q', '-m', 'layer']);
-  const env = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' };
+  // An empty global and system config, so a safe.directory of the runner's cannot allow the folder. The guard keeps GIT_CONFIG_GLOBAL
+  // but drops GIT_CONFIG_COUNT, so a reset through the count would not reach the guarded git calls.
+  const emptyConfig = join(ctx.base, 'empty.gitconfig');
+  writeFileSync(emptyConfig, '');
+  const env = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' };
   const source = ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`];
 
   const audit = runInstaller(shell, ctx, source, { apply: false, env });
