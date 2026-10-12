@@ -16,12 +16,13 @@ maxstack sets no model. The workspace `opencode.jsonc` has no `model` or `small_
 
 ## Hosts
 
-T3 Code hosts the agent sessions. It runs four providers against the same workspace:
+T3 Code hosts the agent sessions. It runs four plugin providers against the same workspace, and a fifth, Codex, that gets the workspace skills and instructions:
 
 - The OpenCode provider can reuse an already-running `opencode serve` across sessions. OpenCode reads the workspace `opencode.jsonc` and `.opencode` directory from the session directory upward.
 - The Claude provider runs Claude Code with `--plugin-dir` pointing at `<workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
 - The Copilot provider runs `<workspace>\.maxstack\bin\copilot.cmd`, which starts the Copilot CLI with the same plugin folders. See [T3 setup](t3-setup.md#copilot).
 - The Pi provider runs `<workspace>\.maxstack\bin\pi.cmd`, which starts Pi with the agent folder `<workspace>\.pi\agent`. See [T3 setup](t3-setup.md#pi-maxstack).
+- The Codex provider reads the workspace skills and instructions when its launch arguments name the marker `stack.lock.json`. See [T3 setup](t3-setup.md#codex-maxstack).
 
 Ubuntu WSL can also run the OpenCode CLI. It reads the same workspace files under `D:\dev\simpsonm09`, which WSL sees at `/mnt/d/dev/simpsonm09`.
 
@@ -29,7 +30,7 @@ Ubuntu WSL can also run the OpenCode CLI. It reads the same workspace files unde
 
 An optional [`maxstack.settings.json`](features/settings.md) beside `stack.lock.json` can declare runtime and layer selections. Its names add to the recorded selection. Omitted names stay selected until removed with `-Remove`. On a new workspace, a dimension named in the settings file selects exactly those names. `-Remove` warns about each removed name the file still lists, since the next apply selects it again. See [Workspace settings](features/settings.md) for its schema and reserved fields.
 
-The workspace installs only the runtimes and layers it selects. `-Runtimes` names runtimes: `claude`, `opencode`, `copilot`, `pi`, or `all`. `-Layers` names layers by their names in `layers.json`, or `all`. Both take comma-separated values, which `pwsh -File` passes as one token:
+The workspace installs only the runtimes and layers it selects. `-Runtimes` names runtimes: `claude`, `opencode`, `copilot`, `pi`, `codex`, or `all`. `-Layers` names layers by their names in `layers.json`, or `all`. Both take comma-separated values, which `pwsh -File` passes as one token:
 
 ```powershell
 pwsh -File scripts/Install-Workspace.ps1 -Runtimes claude,copilot -Apply
@@ -55,7 +56,8 @@ The rules:
 - An unnamed dimension keeps its recorded value. A new workspace with no settings selection and no flags selects every runtime and every layer, so a plain `-Apply` installs what it did before. A new workspace with `-Runtimes` selects exactly the runtimes named, and every layer unless `-Layers` names some.
 - A layer or runtime that `layers.json` names but the selection leaves out is reported on every apply, audit, and status, with the flag that adds it, for example `-Layers <name>`. `-Status` also lists it as `not selected`. It is not installed until a flag names it.
 - A recorded name that `layers.json` no longer names, such as a layer removed from it, is dropped from the selection with a warning. The next apply removes the folders that layer installed, the same way it removes a layer that stopped installing a runtime.
-- A lock with no `selection` predates the field. It reads as all, and the next apply writes the field.
+- A lock with no `selection` predates the field. It reads as `claude`, `opencode`, `copilot`, and `pi`, with every layer, and the next apply writes the field.
+- `codex` is opt-in. A plain `-Apply`, a new workspace with no runtime named, and a lock with no `selection` select the four runtimes above and not `codex`. Name `codex` with `-Runtimes codex`, in the settings file's `runtimes` map, or with `-Runtimes all`. An install that does not name it prints what it printed before.
 - `copilot` and `pi` need `claude`. Their wrapper or settings name the Claude plugin folders, so selecting either without `claude`, by name or in the recorded selection, is an error.
 - An unknown name on the command line is an error that lists the valid names, and nothing is written.
 - A layer installs only the selected runtimes it declares in `layers.json`. A selected layer that declares none of them is reported and installs nothing.
@@ -66,6 +68,7 @@ What each runtime writes:
 - `opencode`: `opencode.jsonc`, `.opencode\plugins`, and the agent profiles.
 - `copilot`: `.maxstack\bin\copilot.cmd` and `copilot.sh`.
 - `pi`: `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`.
+- `codex`: `.agents\skills\<name>\`, one copy of each skill of each selected layer, in layer order. A skill is a folder with a `SKILL.md` whose frontmatter `name` is the folder name and whose `description` is set. Two layers cannot name a skill the same, even by case, and a skill that sets a `model` is refused. The lock owns each folder. A folder the installer did not write is never overwritten or deleted, and an apply refuses to replace one. Nothing else is written: no config, no `CODEX_HOME`, no `auth.json`, and no model. The installer prints the T3 launch-arguments line when `codex` is selected.
 
 The pinned pstack cache under `.claude\cache` is the source every runtime copies from, so each layer that installs anything writes it, whichever runtime it serves. The lock records each runtime a layer does not install as `enabled: false`. For `copilot` and `pi` the reason is `not selected`.
 
@@ -99,6 +102,10 @@ python scripts/verify-workspace-install.py
 ## Claude Code
 
 The same install also builds `.claude/plugins` at the workspace root: one child folder per Claude plugin. The org and personal folders are junctions to the installed OpenCode copies, and pstack is a copy of its pinned folder in the fork. Without the `opencode` runtime there is no OpenCode copy, so a local folder is a copy of its items instead. Claude Code reads the folder when a session starts, so a new session is enough. A T3 Claude provider instance passes `--plugin-dir <workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
+
+## Codex
+
+With `codex` selected, the installer copies each selected layer's skills into `.agents\skills`. Codex reads the skills, and the workspace `AGENTS.md` when you keep one, only when the T3 Codex instance's launch arguments name the marker `stack.lock.json`. The installer writes no `AGENTS.md`, and `-Status` says so when `codex` is selected. See [T3 setup](t3-setup.md#codex-maxstack) for the instance and what Codex does not receive yet.
 
 ## Copilot CLI
 

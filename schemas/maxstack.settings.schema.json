@@ -11,7 +11,9 @@
     "runtimes": {
       "type": "object",
       "minProperties": 1,
-      "propertyNames": { "enum": ["claude", "copilot", "opencode", "pi"] },
+      "propertyNames": {
+        "enum": ["claude", "codex", "copilot", "opencode", "pi"]
+      },
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,

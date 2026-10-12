@@ -27,7 +27,7 @@ Pins:
 - maxstack pins pstack at commit `f629de81cfc9a2a9fd631cacc7567beee7b5b346` on branch `feat/opencode-runtime` [MS-LAY]. The fork worktree HEAD is the same commit [FORK].
 - The `pstack-claude` checkout at `pstack-claude` is on `main` (60ae9e2), not the pin. Where the two differ, the row says so (see G7).
 
-Installed runtimes: the installer writes four runtimes (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Cursor, Codex and Antigravity have no installer target.
+Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex is a fifth runtime, opt-in, which installs the layers' skills and no plugin (rows 2.1 and 2.2). Cursor and Antigravity have no installer target.
 
 Harness versions named in the sources: Copilot CLI 1.0.93 and 1.0.89 [ORG, PSC-MAP-CP]; OpenCode 2.0.24 and 2.0.26 [MS-T3]; Pi 1.0 [PSC-PI].
 
@@ -73,8 +73,8 @@ Summary grid (status only; the detail below holds the reason and evidence). Gene
 
 | Row | Claude | Copilot | OpenCode | Pi | Cursor | Codex | Antigravity |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Skills load | same | differs | differs | differs | not built yet | not built yet | not built yet |
-| AGENTS.md and CLAUDE.md instructions | differs | differs | differs | differs | unverified | cannot | unverified |
+| Skills load | same | differs | differs | differs | not built yet | differs | not built yet |
+| AGENTS.md and CLAUDE.md instructions | differs | differs | differs | differs | unverified | differs | unverified |
 | Plugin or package install path | same | differs | differs | differs | not built yet | not built yet | not built yet |
 | Subagents | same | differs | differs | differs | not built yet | unverified | unverified |
 | Ask the user a question | same | differs | differs | differs | not built yet | differs | unverified |
@@ -101,7 +101,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 44, cannot 6, 
 - OpenCode: **differs**: IDs are unprefixed (`poteto-mode`). The fork plugin registers `skills/` through `ctx.skill.transform`, so each skill and each `principle-*` loads by ID. A repo skill with the same ID collides (the prefix is what separates them on Claude). Evidence: FORK-OC (index.ts, load.ts), FORK-MAP-OC (Tool actions), RS-AS (Skill rules).
 - Pi: **differs**: bare names; `/skill:<name>` forces one. The `pstack:` prefix is dropped; only agent types keep it. `user-invocable: false` is ignored, so the 23 `principle-*` skills show in completion. Pi also loads `%USERPROFILE%\.agents\skills`, which held 40 skills on this machine. Verified: `get_commands` in rpc lists 68 skills (pstack 58, org 6, personal 4) with no model call. Evidence: PSC-PI (T11, T12, S07a), MS-T3 (Pi known limits, Verified).
 - Cursor: **not built yet**. No Cursor layer or installer target. Upstream pstack for Cursor lives in cursor/plugins, outside this fork. Evidence: MS-LAY, MS-MT (Runtimes), PSC-RM (Links).
-- Codex: **not built yet**. The fork has a `.codex-plugin/plugin.json` that declares `"skills": "./skills/"`. maxstack has no codex runtime key, and nothing has loaded the manifest. Evidence: FORK-CXM, MS-LAY.
+- Codex: **differs**. The opt-in `codex` runtime copies each selected layer's skills into `.agents\skills\<name>`, a byte copy with one lock record per folder. Codex finds a skill by its folder name, and reads it from the project root down to the working directory. The project root is the git root by default, so the workspace skills reach a repository only when the T3 launch arguments name the marker `stack.lock.json`. Verified with codex-cli 0.162.1: `codex debug prompt-input` from a repository under a scratch workspace lists the three installed skills only with the marker. No login, no model call. A live turn is not verified. The `.agents\skills` folder may also be read by other tools; this row does not claim that. Evidence: research-codex-surfaces.md (PROBE-1, PROBE-6, PROBE-15), CODEX-PROBE (this change, `codex debug prompt-input`), scripts/Install-Codex.ps1.
 - Antigravity: **not built yet**. Not in layers.json and no installer support. Research says it reads `.agents/` at the workspace root; the skill load path is not recorded. Evidence: MS-MT (Runtimes; delivery table).
 
 ### 2.2 AGENTS.md and CLAUDE.md instructions
@@ -111,7 +111,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 44, cannot 6, 
 - OpenCode: **differs**: the instruction file is AGENTS.md. Reading CLAUDE.md is not recorded. The sheet is not loaded; only the plugin routing text is added. Evidence: FORK-MAP-OC (Instructions file), FORK-OC (routing.ts).
 - Pi: **differs**: reads AGENTS.md or CLAUDE.md from the working directory and each parent, plus `~/.pi/agent/AGENTS.md`. The installer creates no workspace-root AGENTS.md. Evidence: PSC-PI (H05), MS-T3 (Pi known limits), PSC-MAP-PI (Instructions file).
 - Cursor: **unverified**. The research found no documented reading of a parent AGENTS.md. Cursor's delivery is per repository or user level. Evidence: MS-MT (delivery table).
-- Codex: **cannot**: instructions above the git root are not read. Codex reads AGENTS.md at the project root and `~/.codex/AGENTS.md`; files in a folder above the git root are not read, so a workspace-folder file cannot reach repositories. Evidence: MS-MT (delivery table), PSC-MAP-CX (Instructions file).
+- Codex: **differs**. Codex reads `AGENTS.override.md` or `AGENTS.md` from the project root down to the working directory, capped at 32 KiB, and it does not read `CLAUDE.md`. The project root is the git root by default, so a workspace-root `AGENTS.md` does not reach a repository. With `project_root_markers = ["stack.lock.json"]` in the T3 launch arguments it does, and the probe showed the workspace text, then the repository text. maxstack writes no workspace `AGENTS.md`, so Codex reads one only if the user keeps one there. Evidence: research-codex-surfaces.md (PROBE-1 to PROBE-6, DOC-1), CODEX-PROBE (this change).
 - Antigravity: **unverified**. Research says it reads `.agents/` at the workspace root. Whether it reads AGENTS.md is not recorded, though MS-MT lists AGENTS.md as read by all seven. Evidence: MS-MT (artifact table, delivery table).
 
 ### 2.3 Plugin or package install path
@@ -121,7 +121,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 44, cannot 6, 
 - OpenCode: **differs**: plugins are copied to `.opencode\plugins\<name>`. A nested entry (pstack's `opencode/index.ts`) is named in the `plugin` list of `opencode.jsonc`; a root `index.ts` is discovered. Verified: OpenCode 2.0.26 loads the nested pstack entry from an installed workspace. Evidence: MS-PUB (Entries OpenCode loads), MS-T3 (Verified).
 - Pi: **differs**: packages go in the `packages` list of `.pi\agent\settings.json`; skills folders go in `skills`. The pstack package is the root of the pinned cache, `.claude\cache\pstack`. Verified: rpc lists the skills of the installed packages. Evidence: MS-T3 (Pi, What Pi loads, Verified), MS-PUB (`pi: {}`).
 - Cursor: **not built yet**. No installer support. Evidence: MS-MT (Runtimes), MS-T3 (Not set up).
-- Codex: **not built yet**. No codex runtime key; FORK-CXM declares a manifest but nothing installs it. Evidence: MS-T3 (Not set up), MS-LAY.
+- Codex: **not built yet** for the plugin. The opt-in `codex` runtime installs skills and instructions only. FORK-CXM (`.codex-plugin/plugin.json`) is not installed, and a Codex plugin install lives under `CODEX_HOME`, which maxstack does not write. Evidence: MS-T3 (Codex (maxstack)), MS-LAY, research-codex-surfaces.md (Plugins).
 - Antigravity: **not built yet**. No installer support. Evidence: MS-MT (Runtimes).
 
 ### 2.4 Subagents (agent tool, parallel, worktree isolation)

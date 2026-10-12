@@ -1,6 +1,6 @@
 # T3 setup
 
-T3 can run OpenCode, Claude Code, the Copilot CLI, and Pi against the same workspace. The four harnesses find the plugin layers differently, so each needs its own setup.
+T3 can run OpenCode, Claude Code, the Copilot CLI, and Pi against the same workspace, and Codex receives the workspace's skills and instructions through its own instance. The four plugin harnesses find the plugin layers differently, so each needs its own setup.
 
 ## T3 instances
 
@@ -115,9 +115,35 @@ Pi reads any OpenAI-compatible endpoint from `.pi\agent\models.json`: a provider
 
 If T3 reports that the provider could not start a turn, read the server log for `Model not found: <provider>/<model>`. That message means the picker holds a model that the Pi agent folder does not define, such as a model from an earlier test provider. Pick a model that `models.json` still lists.
 
+## Codex (maxstack)
+
+The `codex` runtime gives OpenAI Codex the workspace's skills and instructions. It is opt-in: select it with `-Runtimes codex` or in `maxstack.settings.json`. The installer copies each selected layer's skills into the workspace's `.agents\skills` folder, and it writes nothing else for Codex.
+
+Set up a Codex provider instance in T3 Code:
+
+1. Add a Codex instance named `Codex (maxstack)`. Leave Binary path, CODEX_HOME path, and Shadow home path at their defaults.
+2. Set Launch arguments to exactly this line:
+
+   ```text
+   -c 'project_root_markers=["stack.lock.json"]'
+   ```
+
+Codex treats the git root of a session as the project root, so a repository under `projects\repos` never sees the workspace's skills or instructions. The marker makes the workspace the project root, so every repository under the workspace sees the workspace's skills and `AGENTS.md`.
+
+`T3CODE_CODEX_LAUNCH_ARGS` replaces the instance's launch arguments when it is set. With it set, the marker is gone and the session sees no workspace skills. The installer prints the launch-arguments line when `codex` is selected.
+
+What Codex receives:
+
+- Skills: each selected layer's skills, as folders under `.agents\skills`. The lock owns each folder.
+- Instructions: the workspace root `AGENTS.md`, if you keep one there. maxstack writes no `AGENTS.md`, and it never overwrites one.
+
+What Codex does not receive yet: the access gate (PreToolUse hooks), MCP servers, custom agents, and hooks. The gate needs one authenticated Codex turn to confirm the hook behaviour before it is built.
+
+Verified: with codex-cli 0.162.1, `codex debug prompt-input` run from a repository under a scratch workspace lists the installed skills, and the workspace `AGENTS.md`, only with the marker. That check needs no login and no model call. A T3 Codex session and a live turn are not verified.
+
 ## Not set up
 
-Cursor, Codex, and Antigravity are not set up for this workspace, because their quota is not available. They have no instance or wrapper here.
+Cursor and Antigravity are not set up for this workspace, because their quota is not available. They have no instance or wrapper here.
 
 ## Checks
 
@@ -155,6 +181,7 @@ Not yet verified: `copilot.sh` on macOS.
 The workspace root is not a git repository. Its `.gitignore` (`D:\dev\simpsonm09\.gitignore`) is defence in depth in case anyone runs `git init` there. It already ignores `.opencode/plugins/`, `opencode.jsonc`, and `stack.lock.json`. Add these lines for the generated runtime folders:
 
 ```gitignore
+.agents/
 .claude/plugins/
 .claude/cache/
 .maxstack/bin/

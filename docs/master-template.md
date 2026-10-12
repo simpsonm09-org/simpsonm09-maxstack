@@ -1,12 +1,12 @@
 # Master template
 
-This document records the design for one maintained source of AI functionality that `maxstack` converts for seven runtimes and installs into a workspace. It is a plan. Nothing here is built yet except the four runtimes the installer already supports.
+This document records the design for one maintained source of AI functionality that `maxstack` converts for seven runtimes and installs into a workspace. It is a plan. Nothing here is built yet except the four runtimes the installer already supports and the opt-in Codex skills and instructions.
 
 ## Goal
 
 Maintain skills, agents, hooks, MCP servers, and instructions once. Install them so that every repository and worktree under a workspace folder, opened by any supported harness, has all of them.
 
-The runtimes are Claude Code, GitHub Copilot CLI, OpenCode, Pi, Antigravity, Cursor, and Codex. The first four install today. Codex, Cursor, and Antigravity have no installer support.
+The runtimes are Claude Code, GitHub Copilot CLI, OpenCode, Pi, Antigravity, Cursor, and Codex. The first four install today. Codex installs skills and instructions as an opt-in runtime. Cursor and Antigravity have no installer support.
 
 ## What the research found
 
@@ -26,7 +26,7 @@ How a workspace folder reaches the repositories beneath it:
 | Runtime | Delivery |
 | --- | --- |
 | Claude Code, Copilot, OpenCode, Pi | A launch wrapper, flag, or environment variable. `CLAUDE.md` and Pi's `AGENTS.md` also walk up from the repository. |
-| Codex | User level or per repository. `CODEX_HOME` relocates the user layer. Files in a folder above the git root are not read. |
+| Codex | User level or per repository. `CODEX_HOME` relocates the user layer. A folder above the git root is not read by default. `project_root_markers = ["stack.lock.json"]` in the launch arguments makes the workspace the project root, so its `AGENTS.md` and `.agents/skills` are read. |
 | Cursor | Per repository or user level. No configuration-directory variable is documented. |
 | Antigravity | Reads `.agents/` at the workspace root. Whether that reaches repositories opened inside the folder is unverified. |
 

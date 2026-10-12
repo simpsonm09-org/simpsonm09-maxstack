@@ -98,7 +98,7 @@ test('the settings seed is valid and schema keys match the PowerShell validator'
 
 test('the manifest verifier rejects settings schema and validator key drift', { skip }, () => {
   const validator = readFileSync(join(repoRoot, 'scripts', 'Install-Settings.ps1'), 'utf8');
-  const altered = validator.replace("'claude', 'copilot', 'opencode', 'pi'", "'claude', 'copilot', 'opencode', 'new-harness'");
+  const altered = validator.replace("'claude', 'codex', 'copilot', 'opencode', 'pi'", "'claude', 'codex', 'copilot', 'opencode', 'new-harness'");
   assert.notEqual(altered, validator, 'the fixture replacement found the validator list');
   const run = runVerifier({ extraFiles: { 'scripts/Install-Settings.ps1': altered } });
   assert.equal(run.status, 1, failureOf(run));
@@ -206,12 +206,12 @@ test('a local layer that declares claude without opencode is refused', { skip },
 test('an unknown runtime name is refused', { skip }, () => {
   const run = runVerifier({
     layers: (manifest) => {
-      manifest.layers[1].runtimes.codex = {};
+      manifest.layers[1].runtimes.gemini = {};
       return manifest;
     },
   });
   assert.equal(run.status, 1, failureOf(run));
-  assert.match(failureOf(run), /unknown runtime 'codex'/);
+  assert.match(failureOf(run), /unknown runtime 'gemini'/);
 });
 
 test('an OpenCode entry at the folder root, other than index.ts, is refused', { skip }, () => {

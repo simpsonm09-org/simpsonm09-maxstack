@@ -14,7 +14,7 @@ param(
     # The Pi CLI to wrap when the workspace has none installed under .maxstack\npm: a command name on PATH, or a
     # path. A match inside .maxstack\bin is never used.
     [string] $PiCommand = 'pi',
-    # Runtimes to add to the recorded selection: claude, opencode, copilot, pi, or all. Comma-separated
+    # Runtimes to add to the recorded selection: claude, opencode, copilot, pi, codex, or all. Comma-separated
     # values are split, because separate tokens do not bind to an array under pwsh -File.
     [Alias('Runtimes')]
     [string[]] $RequestedRuntimes = @(),
@@ -86,6 +86,7 @@ $updating = [bool] $Update
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Install-LayerSources.ps1')
 . (Join-Path $PSScriptRoot 'Install-Settings.ps1')
+. (Join-Path $PSScriptRoot 'Install-Codex.ps1')
 $layersPath = if ($LayersFile) { $LayersFile } else { Join-Path $repoRoot 'layers.json' }
 $workspaceSettingsPath = Join-Path $Workspace 'maxstack.settings.json'
 $baseConfigFile = Join-Path $repoRoot 'workspace\opencode.jsonc'
@@ -109,7 +110,10 @@ $piAgentDir = Join-Path $Workspace '.pi\agent'
 $piSettingsTarget = Join-Path $piAgentDir 'settings.json'
 # The Pi the workspace installs for itself. npm puts its bin here, and the installer looks here before PATH.
 $piLocalBinTarget = Join-Path $Workspace '.maxstack\npm\node_modules\.bin'
-$runtimeNames = @('claude', 'opencode', 'copilot', 'pi')
+# codex is opt-in. A lock with no selection, and a new workspace with no runtime named, select defaultRuntimeNames only, so
+# an existing install is unchanged until codex is named by -Runtimes, the settings file, or all.
+$runtimeNames = @('claude', 'opencode', 'copilot', 'pi', 'codex')
+$defaultRuntimeNames = @('claude', 'opencode', 'copilot', 'pi')
 # The OpenCode port this repository used to pin. Its folder is removed on every apply,
 # so a workspace that still has it ends with the same tree as one that never did.
 $retiredOpenCodeFolders = @('pstack-opencode')
@@ -507,6 +511,9 @@ $runtimeArtifacts = @{
     opencode = @('opencode.jsonc', '.opencode/plugins', '.opencode/agents')
     copilot  = @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh')
     pi       = @('.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh', '.pi/agent/settings.json')
+    # The codex skill folders sit in .agents\skills, which other tools also read, so no top-level path is judged by the
+    # selection. Only the records the lock holds for codex are.
+    codex    = @()
 }
 
 # The names a -Runtimes or -Layers value picks. A value splits on commas, and all picks every name.
@@ -567,7 +574,7 @@ function Assert-SelectionRuntimes {
 # a warning, so the normal stale cleanup removes what it installed. If nothing recorded is still valid,
 # the list is all of them, as for a new lock.
 function Get-RecordedNames {
-    param($Names, [string[]] $Valid, [string] $Kind)
+    param($Names, [string[]] $Valid, [string] $Kind, [string[]] $Fallback = $null)
 
     $list = @($Names)
     if ($list.Count -eq 0 -or @($list | Where-Object { -not (Test-NonEmptyString $_) }).Count -gt 0) {
@@ -578,7 +585,8 @@ function Get-RecordedNames {
         Write-Warning "The recorded selection names the $Kind '$name', which is no longer in layers.json. It is dropped from the selection, and the next apply removes what it installed."
     }
     $known = @($list | Where-Object { (Test-OrdinalIn $_ $Valid) })
-    if ($known.Count -eq 0) { return @(Sort-Utf8 $Valid) }
+    # Nothing recorded is still valid: the list is the fallback, which for runtimes is the default set, not every runtime.
+    if ($known.Count -eq 0) { return @(Sort-Utf8 $(if ($null -ne $Fallback) { $Fallback } else { $Valid })) }
     return @(Sort-Utf8 $known)
 }
 
@@ -589,9 +597,9 @@ function Read-RecordedSelection {
 
     if ($null -eq $Stack) { return $null }
     $recorded = Get-Field $Stack 'selection'
-    if ($null -eq $recorded) { return @{ runtimes = (Sort-Utf8 $runtimeNames); layers = (Sort-Utf8 $LayerNames) } }
+    if ($null -eq $recorded) { return @{ runtimes = (Sort-Utf8 $defaultRuntimeNames); layers = (Sort-Utf8 $LayerNames) } }
     return @{
-        runtimes = (Get-RecordedNames -Names (Get-Field $recorded 'runtimes') -Valid $runtimeNames -Kind 'runtime')
+        runtimes = (Get-RecordedNames -Names (Get-Field $recorded 'runtimes') -Valid $runtimeNames -Kind 'runtime' -Fallback $defaultRuntimeNames)
         layers   = (Get-RecordedNames -Names (Get-Field $recorded 'layers') -Valid $LayerNames -Kind 'layer')
     }
 }
@@ -648,7 +656,7 @@ function Get-UnselectedNotes {
         }
     }
     $declared = @(Get-OrdinalUnique @($AllLayers | ForEach-Object { $_.declared.Keys }))
-    foreach ($runtime in $runtimeNames) {
+    foreach ($runtime in $defaultRuntimeNames) {
         if ((Test-OrdinalIn $runtime $declared) -and (-not (Test-OrdinalIn $runtime $SelectedRuntimes))) {
             $notes.Add([pscustomobject]@{ kind = 'runtime'; name = $runtime; flag = '-Runtimes' })
         }
@@ -665,6 +673,7 @@ function Get-OwnedRuntime {
     if ($Path.StartsWith('.claude/plugins/', [StringComparison]::Ordinal)) { return 'claude' }
     if ((Test-OrdinalIn $Path @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh'))) { return 'copilot' }
     if ($Path.StartsWith('.maxstack/bin/pi.', [StringComparison]::Ordinal) -or $Path.StartsWith('.pi/', [StringComparison]::Ordinal)) { return 'pi' }
+    if ($Path.StartsWith('.agents/skills/', [StringComparison]::Ordinal)) { return 'codex' }
     return $null
 }
 
@@ -1581,7 +1590,8 @@ function Get-OwnedPlan {
         [string] $PiShText,
         $PiSettings,
         [bool] $PiPending,
-        [hashtable] $PiUnknown
+        [hashtable] $PiUnknown,
+        [object[]] $CodexSkills = @()
     )
 
     $records = [System.Collections.Generic.List[object]]::new()
@@ -1654,6 +1664,10 @@ function Get-OwnedPlan {
     if ($PiCmdText) {
         $records.Add((New-OwnedRecord -Path '.maxstack/bin/pi.cmd' -Kind 'file' -Sha256 (Get-TextSha256 $PiCmdText) -Runtime 'pi'))
         $records.Add((New-OwnedRecord -Path '.maxstack/bin/pi.sh' -Kind 'file' -Sha256 (Get-TextSha256 $PiShText) -Runtime 'pi'))
+    }
+
+    foreach ($skill in $CodexSkills) {
+        $records.Add((New-OwnedRecord -Path "$script:CodexSkillFolder/$($skill.name)" -Kind 'dir' -Sha256 $skill.sha256 -Runtime 'codex' -Layers @($skill.layer)))
     }
 
     if ($null -ne $PiSettings) {
@@ -1879,12 +1893,13 @@ function Remove-FolderExtras {
 # The directories an install may create, named relative to the workspace. An apply reads this list
 # before and after its writes, to tell what it created from what was there first.
 function Get-InstallerDirectories {
-    param([object[]] $Layers)
+    param([object[]] $Layers, [switch] $Codex)
 
     $dirs = [System.Collections.Generic.List[string]]::new()
     foreach ($dir in @('.claude', '.claude/plugins', '.claude/cache', '.opencode', '.opencode/plugins', '.opencode/agents', '.maxstack', '.maxstack/bin', '.pi', '.pi/agent')) {
         $dirs.Add($dir)
     }
+    if ($Codex) { $dirs.Add('.agents'); $dirs.Add('.agents/skills') }
     foreach ($layer in $Layers) {
         $dirs.Add(".claude/plugins/$($layer.name)")
         $dirs.Add(".claude/cache/$($layer.name)")
@@ -3093,7 +3108,7 @@ if ($removing) {
     $allNamedLayers = @($settingsLayers + $namedLayers)
     $hasRuntimeNames = $runtimesNamed -or (@($settingsRuntimes).Count -gt 0)
     $hasLayerNames = $layersNamed -or (@($settingsLayers).Count -gt 0)
-    $selectedRuntimes = @(Merge-Selected -Recorded $recordedRuntimes -All $runtimeNames -Named $allNamedRuntimes -HasNames $hasRuntimeNames -Label 'runtimes')
+    $selectedRuntimes = @(Merge-Selected -Recorded $recordedRuntimes -All $defaultRuntimeNames -Named $allNamedRuntimes -HasNames $hasRuntimeNames -Label 'runtimes')
     $selectedLayers = @(Merge-Selected -Recorded $recordedLayers -All $layerNames -Named $allNamedLayers -HasNames $hasLayerNames -Label 'layers')
     Assert-SelectionRuntimes -Runtimes $selectedRuntimes -FromSettings $settingsRuntimes
 }
@@ -3122,6 +3137,7 @@ if (-not $removing) {
     }
 }
 $copilotSelected = (Test-OrdinalIn 'copilot' $selectedRuntimes)
+$codexSelected = (Test-OrdinalIn 'codex' $selectedRuntimes)
 $piSelected = (Test-OrdinalIn 'pi' $selectedRuntimes)
 $openCodeSelected = (Test-OrdinalIn 'opencode' $selectedRuntimes)
 $claudeSelected = (Test-OrdinalIn 'claude' $selectedRuntimes)
@@ -3134,6 +3150,8 @@ foreach ($layer in $allLayers) {
     if (Test-OrdinalIn $layer.name $selectedLayers) {
         foreach ($runtime in $selectedRuntimes) {
             if ($layer.declared.ContainsKey($runtime)) { $active[$runtime] = $layer.declared[$runtime] }
+            # codex reads every selected layer's skills, so it needs no declaration in layers.json.
+            elseif (Test-OrdinalEqual $runtime 'codex') { $active[$runtime] = @{} }
         }
         if ($active.Count -eq 0) { Write-Host "Layer '$($layer.name)' declares none of the selected runtimes, so it installs nothing." }
     }
@@ -3170,7 +3188,7 @@ foreach ($layer in $layers) {
 # Before any write, an apply records what already exists: the directories an install may create, the
 # settings file, and its Pi keys. The ownership record then tells the paths this install created from
 # the paths that were there first, so an uninstall never removes what it did not create.
-$installerDirs = @(Get-InstallerDirectories -Layers $layers)
+$installerDirs = @(Get-InstallerDirectories -Layers $layers -Codex:$codexSelected)
 $existedBefore = @()
 $existedBeforeFiles = @()
 $settingsKeysBefore = @()
@@ -3199,6 +3217,13 @@ if ($Apply) {
 # A git layer's root is its cache folder once the cache is at the pin. Without an apply, a cache that is not at the pin
 # leaves the root null, and what needs the root is then unknown until an apply syncs the cache.
 foreach ($layer in @($layers | Where-Object { $null -ne $_.url })) { $layer.root = Get-LayerRoot $layer }
+
+# codex copies each selected layer's skills from the layer root, so the roots must be known. Its checks run before any write.
+$codexSkills = @()
+if ($codexSelected) {
+    $codexSkills = @(Get-CodexSkills -Layers $layers)
+    if ($Apply) { Assert-CodexSkillTargets -Skills $codexSkills -Owned $priorOwned }
+}
 
 $claudeRecords = @($layers | ForEach-Object { Get-ClaudeRecord $_ } | Where-Object { $null -ne $_ })
 
@@ -3376,7 +3401,8 @@ $plan = @()
 if ($Apply -or $removing -or $updating -or ($Status -and $null -ne $priorOwned)) {
     $plan = Get-OwnedPlan -Document $document -Layers $layers -ClaudeRecords $claudeRecords -OpenCodeLayers $openCodeLayers `
         -OpenCodeSpecs $openCodeSpecs -CopilotCmdText $copilotCmdText -CopilotShText $copilotShText `
-        -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown
+        -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown `
+        -CodexSkills $codexSkills
 }
 
 # The Claude plugin folders, and the OpenCode folders that no unselected layer owns. An unselected
@@ -3402,6 +3428,7 @@ if ($Status) {
         Write-Host ((Format-Selection -Runtimes $selectedRuntimes -Layers $selectedLayers) + $legacyNote)
     }
     Write-SourcePinBlock -Entries (Get-RecordedSourceEntries $priorStack)
+    if ($codexSelected) { Write-CodexNotes }
     if ($null -eq $priorOwned) {
         Write-Host 'no ownership record; run -Apply once to create it'
         if ($Strict) { exit 1 }
@@ -3429,6 +3456,7 @@ if (-not $Apply) {
     Write-Host "Workspace:      $Workspace"
     Write-Host (Format-Selection -Runtimes $selectedRuntimes -Layers $selectedLayers)
     Write-SourcePinBlock -Entries (Get-ResolvedSourceEntries -Layers $allLayers)
+    if ($codexSelected) { Write-CodexNotes }
     foreach ($layer in $layers) {
         $where = if ($layer.root) { $layer.root } elseif ((Test-OrdinalEqual $layer.sourceKind 'local')) { "$($layer.localPath): folder missing" } else { "pinned $($layer.url) at $($layer.commit)" }
         Write-Host ("Layer:          {0} ({1}) at {2}" -f $layer.name, $layer.kind, $where)
@@ -3695,6 +3723,9 @@ if ($piKept) {
     }
 }
 
+# codex's skill folders come after the Pi wrappers, and before the lock records what was written.
+if ($Apply -and $codexSelected) { Write-CodexSkills -Skills $codexSkills -Owned $priorOwned -RemoveStale (-not $removing) }
+
 $claudeByLayer = [hashtable]::new([StringComparer]::Ordinal)
 foreach ($record in $claudeRecords) { $claudeByLayer[$record.layer] = $record }
 # A layer that installs nothing this run is recorded disabled, and a pinned one keeps its pin.
@@ -3884,5 +3915,6 @@ Invoke-StrayReport -Known $knownNow -ConfigSha $stack.configSha256 -SettingsSha 
 Write-LockAtomically -Text ($stack | ConvertTo-Json -Depth 8)
 Write-Host "Wrote $stackTarget"
 
+if ($codexSelected) { Write-CodexNotes }
 Write-Host 'Workspace bundle installed from the layer manifest.'
 Write-Host 'Restart the running OpenCode server, then start a new T3 session to load it: T3 can reuse that server across sessions. Claude Code reads plugins when a session starts. Pi reads its settings when a session starts.'

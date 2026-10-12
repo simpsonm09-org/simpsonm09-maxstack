@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, existsSync, rmSync, mkdirSync, symlinkSync, writeFileSync, cpSync, linkSync } from 'node:fs';
+import { readFileSync, existsSync, rmSync, mkdirSync, renameSync, symlinkSync, writeFileSync, cpSync, linkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, parse as parsePath } from 'node:path';
 import { ALL_RUNTIMES, EXISTING_SHORT_FOLDER, LOCAL_LAYERS, MISSING_COPILOT, ORG_FOLDER, ORG_SOURCE, RLO, SKILL_PATH, ZWSP, assertOk, buildWorkspace, escapedChar, gitRun, githubEnv, installedSkill, isLink, localCheckout, lockPath, lockText, mustApply, plainOutput, problemRows, python, readJson, runInstaller, runStatus, runWorkspaceDiscovery, selectionOf, setLock, shell, short83Available, snapshotTree, sourceOf, testEnvironment, verifyManifestsScript, verifyWorkspaceScript, withWorkspace, withWorkspaceNeeding, workspaceFiles, writeFile, writeLayerStub, writeLayers, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
@@ -496,6 +496,19 @@ withWorkspace('-Runtimes opencode -Layers pstack writes one layer, and a later -
 // The bytes of each output file, as latin1 text so that one character is one byte. Each temporary base
 // folder the test builds is replaced by a placeholder, since the wrappers name absolute paths; no other
 // byte changes. The lock and the git cache are left out, as in workspaceFiles.
+// The org and personal fixtures both ship demo-skill, which codex refuses (two layers, one skill name). An explicit all selects
+// codex, so the all-runtimes comparison renames the personal copy in both workspaces.
+function renameDemoSkill(ctx) {
+  const skills = join(ctx.workspace, LOCAL_LAYERS[1], 'skills');
+  renameSync(join(skills, 'demo-skill'), join(skills, 'personal-demo'));
+  writeFileSync(join(skills, 'personal-demo', 'SKILL.md'), '---\nname: personal-demo\ndescription: fixture\n---\nbody\n');
+}
+
+// codex copies its skills into .agents, which the other runtimes never write, so it is left out of the comparison.
+function withoutCodexFiles(files) {
+  return new Map([...files].filter(([path]) => !path.startsWith('.agents/')));
+}
+
 function portableFiles(ctx) {
   const bases = [ctx.base, ctx.base.replaceAll('\\', '/'), JSON.stringify(ctx.base).slice(1, -1)];
   return new Map([...workspaceFiles(ctx.workspace)].map(([path, bytes]) => {
@@ -505,13 +518,15 @@ function portableFiles(ctx) {
   }));
 }
 
-withWorkspace('-Runtimes all -Layers all writes what a plain apply writes, and records every name', (ctx) => {
+withWorkspace('-Runtimes all -Layers all writes what a plain apply writes plus the codex skills, and records every name', (ctx) => {
+  renameDemoSkill(ctx);
   mustApply(ctx, ['-Runtimes', 'all', '-Layers', 'all']);
-  assert.deepEqual(selectionOf(ctx), { runtimes: ALL_RUNTIMES, layers: ALL_LAYERS });
+  assert.deepEqual(selectionOf(ctx), { runtimes: [...ALL_RUNTIMES, 'codex'].sort(), layers: ALL_LAYERS });
   const plain = buildWorkspace();
   try {
+    renameDemoSkill(plain);
     mustApply(plain);
-    const everything = portableFiles(ctx);
+    const everything = withoutCodexFiles(portableFiles(ctx));
     assert.ok(everything.size > 0);
     assert.deepEqual(everything, portableFiles(plain), 'an output file differs between the explicit all and the plain apply');
   } finally {
@@ -528,9 +543,9 @@ withWorkspace('naming a runtime that is already selected narrows nothing, and sa
 }, {});
 
 withWorkspace('an unknown runtime or layer name fails, lists the valid names, and writes nothing', (ctx) => {
-  const runtime = runInstaller(shell, ctx, ['-Runtimes', 'codex']);
+  const runtime = runInstaller(shell, ctx, ['-Runtimes', 'gemini']);
   assert.notEqual(runtime.status, 0, 'the installer accepted an unknown runtime');
-  assert.match(plainOutput(runtime), /-Runtimes names an unknown name 'codex'\. Valid names: claude, opencode, copilot, pi, or all\./);
+  assert.match(plainOutput(runtime), /-Runtimes names an unknown name 'gemini'\. Valid names: claude, opencode, copilot, pi, codex, or all\./);
   const layer = runInstaller(shell, ctx, ['-Layers', 'nope']);
   assert.notEqual(layer.status, 0, 'the installer accepted an unknown layer');
   assert.match(plainOutput(layer), /-Layers names an unknown name 'nope'\. Valid names: pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin, or all\./);
@@ -579,7 +594,7 @@ withWorkspaceNeeding('python', python, 'the verifiers fail on an unknown, a malf
   const verifyWorkspace = () => spawnSync(python, [verifyWorkspaceScript, '--workspace', ctx.workspace, '--home', home], { windowsHide: true, encoding: 'utf8' });
   const verifyLock = () => spawnSync(python, [verifyManifestsScript, '--lock', lockPath(ctx)], { windowsHide: true, encoding: 'utf8' });
   const cases = [
-    [(lock) => { lock.selection.runtimes = ['claude', 'codex']; }, /names unknown \['codex'\]/],
+    [(lock) => { lock.selection.runtimes = ['claude', 'gemini']; }, /names unknown \['gemini'\]/],
     [(lock) => { lock.selection.runtimes = ['copilot']; }, /selects copilot without claude/],
     [(lock) => { lock.selection = 'claude'; }, /must hold exactly a runtimes list and a layers list/],
   ];
@@ -656,10 +671,10 @@ withWorkspace('a layer removed from layers.json is dropped from the selection wi
 withWorkspace('a runtime removed from the recorded selection is named, dropped with a warning, and the apply runs', (ctx) => {
   mustApply(ctx);
   const lock = readJson(lockPath(ctx));
-  lock.selection.runtimes = ['claude', 'codex'];
+  lock.selection.runtimes = ['claude', 'retired-runtime'];
   writeFileSync(lockPath(ctx), JSON.stringify(lock));
   const run = mustApply(ctx);
-  assert.match(plainOutput(run), /names the runtime 'codex', which is no longer in layers\.json\. It is dropped from the selection/);
+  assert.match(plainOutput(run), /names the runtime 'retired-runtime', which is no longer in layers\.json\. It is dropped from the selection/);
   assert.deepEqual(selectionOf(ctx).runtimes, ['claude']);
 }, {});
 

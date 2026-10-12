@@ -211,7 +211,9 @@ def utf8_order(text: str) -> bytes:
     return text.encode("utf-8")
 
 
-SELECTION_RUNTIMES = ("claude", "opencode", "copilot", "pi")
+SELECTION_RUNTIMES = ("claude", "opencode", "copilot", "pi", "codex")
+# The runtimes a lock with no selection reads as. codex is opt-in, so it is not among them (Install-Workspace.ps1).
+DEFAULT_RUNTIMES = ("claude", "opencode", "copilot", "pi")
 # Each runtime whose wrapper or settings name the Claude plugin folders, which only claude writes.
 NEEDS_CLAUDE = ("copilot", "pi")
 
@@ -220,6 +222,8 @@ def owned_runtime(path: str) -> str | None:
     """The runtime an owned path belongs to. The claude cache is read by every runtime, so it has none."""
     if path.startswith(("opencode.jsonc", ".opencode/")):
         return "opencode"
+    if path.startswith(".agents/skills/"):
+        return "codex"
     if path.startswith(".claude/plugins/"):
         return "claude"
     if path in (".maxstack/bin/copilot.cmd", ".maxstack/bin/copilot.sh"):
@@ -234,11 +238,11 @@ def layer_names(lock: dict) -> list[str]:
 
 
 def selected(lock: dict) -> tuple[set[str], set[str]]:
-    """The runtimes and layers the lock selects. A lock with no selection reads as all of them, and so
-    does a malformed one, because check_selection reports the malformation."""
+    """The runtimes and layers the lock selects. A lock with no selection reads as the default runtimes and all
+    the layers, and so does a malformed one, because check_selection reports the malformation."""
     selection = lock.get("selection")
     if "selection" not in lock or not _well_formed_selection(selection):
-        return set(SELECTION_RUNTIMES), set(layer_names(lock))
+        return set(DEFAULT_RUNTIMES), set(layer_names(lock))
     return set(selection["runtimes"]), set(selection["layers"])
 
 
