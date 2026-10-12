@@ -99,6 +99,22 @@ Verified: with the generated `pi.cmd` and the pinned pstack commit in a temporar
 
 Not verified: the `piSimpsonm09` instance in a T3 session, any model turn, a login, an org gate decision under a real Pi session (the rpc probe lists no commands for the gate), and `pi.sh` run with the real Pi CLI. On macOS, nothing in this section has been run.
 
+### Check Pi without a model
+
+Run `just verify-pi` (or `node scripts/verify-pi-harness.mjs`). It starts the workspace's Pi in RPC mode, the mode T3 uses, against a stub model server on `127.0.0.1` and a scratch agent folder. It needs no model, GPU, or download, and it takes seconds. It asserts that Pi starts and exits 0, that a turn reaches the stub, that one installed skill from each Pi layer (pstack, org, personal) is in the system prompt, that the org gate denies a launcher call, that the denied command does not run, that the denial reaches the model as a tool result, and that the Pi agent folder and the wrapper folder did not change. It exits 0 only when every check passes, and names each failing check otherwise.
+
+It writes nothing to the workspace. Its files live in a scratch folder under the temp directory, which it removes on every exit path. It reads the Pi settings and the wrapper, and it never reads an auth file.
+
+It does not prove a real model's answer, the `piSimpsonm09` T3 session, a login, the other runtimes, or the gate's decision on any command except the launcher call.
+
+The wrapper cannot take another agent folder, so the check reads the Pi binary the wrapper names and starts it with the wrapper's variables, changed as follows. The agent folder is scratch, not `.pi\agent`. The home folder is scratch, so `~\.pi` and `~\.agents` are not read. The environment is an allow-list, where the wrapper inherits everything. `PI_OFFLINE` and `PI_TELEMETRY` are set. The arguments add `--no-session` and select the stub with `--provider` and `--model`.
+
+### Check Pi with a real local model
+
+Pi reads any OpenAI-compatible endpoint from `.pi\agent\models.json`: a provider with its `baseUrl`, `"api": "openai-completions"`, and the model ids the server serves. The workspace file already has a provider for a local llama.cpp server, `llama-local`. maxstack sets no model. Pick one in the T3 model picker. The optional llama.cpp note in `simpsonm09-dev-setup` covers starting that server, and the note is being added separately. Any local server that speaks the OpenAI chat API works the same way, not only llama.cpp.
+
+If T3 reports that the provider could not start a turn, read the server log for `Model not found: <provider>/<model>`. That message means the picker holds a model that the Pi agent folder does not define, such as a model from an earlier test provider. Pick a model that `models.json` still lists.
+
 ## Not set up
 
 Cursor, Codex, and Antigravity are not set up for this workspace, because their quota is not available. They have no instance or wrapper here.
