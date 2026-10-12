@@ -7,6 +7,10 @@ python := if os_family() == "windows" { "python" } else { "python3" }
 default:
     @just --list
 
+# Install the pinned tools.
+install:
+    mise install
+
 # Run every linter over changed files.
 lint:
     mise exec -- flint run
@@ -35,10 +39,21 @@ validate:
 validate-online:
     {{python}} scripts/verify-manifests.py --online
 
-# Run the node test suite under scripts/. Node 21 or later expands the glob on every shell. The installer
-# tests need PowerShell 7 and git; a test whose program is missing is reported as skipped.
+# Four test files run at once, the width of the CI runner, so a local run and the CI job schedule the same way.
+
+# Run the node test suite under scripts/. The installer tests need PowerShell 7 and git; a missing program skips its test.
 test-node:
-    node --test scripts/*.test.mjs
+    node --test --test-concurrency=4 scripts/*.test.mjs
+
+# The installer suite stays in test-node, because it drives Install-Workspace.ps1 under PowerShell 7.
+
+# Run the checks that need no Windows: the manifest verifier and the Node tests that run on any OS.
+test:
+    {{python}} scripts/verify-manifests.py
+    node --test scripts/ordinal-guard.test.mjs scripts/generate-layers.test.mjs scripts/verify-manifests.test.mjs scripts/verify-pi-harness.test.mjs
+
+# Run the lint, test, and AI-slop gates.
+verify: lint test aislop
 
 # Run the same checks CI runs.
 check: lint validate

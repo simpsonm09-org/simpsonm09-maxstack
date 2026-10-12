@@ -15,24 +15,24 @@ concurrency:
 jobs:
   lint:
     if: github.repository_owner == 'simpsonm09-org'
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@0e109459b8e2064af225051fd3195ebaa70f2625 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@a9bbf9e582c0117df8cdebd50c7dc5239c472c92 # repo-standard, pinned commit
   aislop:
     if: github.repository_owner == 'simpsonm09-org'
     permissions:
       contents: read
       security-events: write
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@0e109459b8e2064af225051fd3195ebaa70f2625 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@a9bbf9e582c0117df8cdebd50c7dc5239c472c92 # repo-standard, pinned commit
   security:
     if: github.repository_owner == 'simpsonm09-org'
     permissions:
       contents: read
       security-events: write
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@0e109459b8e2064af225051fd3195ebaa70f2625 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@a9bbf9e582c0117df8cdebd50c7dc5239c472c92 # repo-standard, pinned commit
   standard:
     if: github.repository_owner == 'simpsonm09-org'
     permissions:
       contents: read
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@0e109459b8e2064af225051fd3195ebaa70f2625 # repo-standard main
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@a9bbf9e582c0117df8cdebd50c7dc5239c472c92 # repo-standard, pinned commit
 
   test:
     if: github.repository_owner == 'simpsonm09-org'
@@ -50,7 +50,8 @@ jobs:
   test-node:
     if: github.repository_owner == 'simpsonm09-org'
     runs-on: windows-latest
-    timeout-minutes: 90
+    # Expected about 20 to 25 minutes: the installer suite is six Install-Workspace.*.test.mjs files, run four at a time.
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:

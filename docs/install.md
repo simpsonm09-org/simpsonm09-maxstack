@@ -122,6 +122,8 @@ pwsh -File scripts/Install-Workspace.ps1
 
 `-Apply` makes the changes. Each runtime is written in this order: the config, the OpenCode folders and agent profiles, the Claude folders, then the Copilot wrappers. A git source is fetched before anything is written, so a commit the fork cannot supply stops the run with the workspace unchanged.
 
+Audit and `-Status` answer different questions, so they can disagree on one folder. `-Status` compares the disk and the record with what an apply would write, so a layer whose source changed shows as `drifted`; audit compares an OpenCode folder only with the entry and plugin path the last apply recorded, so it prints `matches` for that folder even after its source has changed. Use `-Status` to see a source change.
+
 A layer that stops naming a runtime leaves its folder behind. `-Apply` removes an OpenCode folder that no layer names only when the previous `stack.lock.json` recorded it, so the installer made it. It also removes the folder of the retired `pstack-opencode` port on every apply. Any other unnamed folder is reported as stale and kept. The same cleanup applies to `.claude\plugins`: `-Apply` removes a child that no layer declares, and audit reports it as stale.
 
 ## Layer sources
