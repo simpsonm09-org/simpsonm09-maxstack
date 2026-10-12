@@ -95,7 +95,7 @@ test('environment wins over cwd marker, script layout, and legacy', { skip: !she
   resolveCase({ envWorkspace: env, cwd, scriptRoot: join(layout, 'projects/repos/repo/scripts'), legacy }, env, 'MAXSTACK_WORKSPACE');
 }));
 
-test('nearest cwd marker wins and accepts a linked marker as a read-only marker', { skip: !shell }, (t) => withRoot((root) => {
+test('a marker that is a symbolic link is not read, and the walk goes on to the next marker', { skip: !shell }, (t) => withRoot((root) => {
   const outer = directory(root, 'outer');
   marker(outer);
   const nearest = directory(outer, 'child');
@@ -112,7 +112,7 @@ test('nearest cwd marker wins and accepts a linked marker as a read-only marker'
   }
   const layout = marker(directory(root, 'layout'));
   const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ cwd: directory(nearest, 'nested'), scriptRoot: join(layout, 'projects/worktrees/repo/scripts'), legacy }, nearest, 'cwd marker maxstack.settings.json');
+  resolveCase({ cwd: directory(nearest, 'nested'), scriptRoot: join(layout, 'projects/worktrees/repo/scripts'), legacy }, outer, 'cwd marker stack.lock.json');
 }));
 
 test('script layout resolves exact repos and worktrees segments', { skip: !shell }, () => withRoot((root) => {
