@@ -24,7 +24,7 @@ The installer lists the PStack entry in the workspace `opencode.jsonc`, as `./.o
 
 ### Models
 
-OpenCode runs on free models: the free OpenCode Zen models (`opencode/*`) and the zero-priced OpenRouter models. OpenCode Go is retired, so an `opencode-go/*` model no longer works. Which providers are connected, and any default model, live in the person's own OpenCode config under the user profile. maxstack does not write them: it sets no model for OpenCode or Claude, and the workspace `opencode.jsonc` holds no `model` and no `providers`. Pick a model in the T3 model picker. Free models are offered for a limited time, so a model id in a doc is an example and not a pin.
+OpenCode uses the providers you have connected in OpenCode itself, with `opencode auth` and its global config under your user profile. maxstack sets no model and no provider, and the workspace `opencode.jsonc` holds neither a `model` nor a `providers` entry. Pick a model in the T3 model picker. While an OpenCode Console OAuth login is stored, OpenCode lists only its own `opencode` and `opencode-go` providers and hides third-party providers, even when their keys are configured; connecting a provider with its own API key instead lets both appear (measured on OpenCode 2.0.27).
 
 ## Claude Code
 
