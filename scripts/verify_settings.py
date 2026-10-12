@@ -280,14 +280,24 @@ def check_settings_files(root: Path, failures: list[str]) -> None:
     _check_schema(schema, _validator_constants(validator), validator, failures)
 
 
+def _ascii_line(text: str) -> str:
+    """The message as printable ASCII: every other character is written as an escape, so a console in any code page can show it."""
+    return "".join(
+        character
+        if " " <= character <= "~"
+        else ("\\u%04X" % ord(character) if ord(character) <= 0xFFFF else "\\U%08X" % ord(character))
+        for character in text
+    )
+
+
 def _main(argv: list[str]) -> int:
     if len(argv) != 3 or argv[1] != "--document":
-        print("usage: verify_settings.py --document PATH", file=sys.stderr)
+        print(_ascii_line("usage: verify_settings.py --document PATH"), file=sys.stderr)
         return 2
     try:
         read_settings_document(Path(argv[2]).read_bytes(), layer_names(REPO_ROOT))
     except SettingsRefusal as error:
-        print(f"REFUSE: maxstack.settings.json {error}")
+        print(_ascii_line(f"REFUSE: maxstack.settings.json {error}"))
         return 1
     print("ACCEPT")
     return 0

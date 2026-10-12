@@ -60,7 +60,7 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
 
 $sources = @(($sourcesRaw | ConvertFrom-Json) | ForEach-Object { Get-NormalPath $_.path })
 foreach ($expected in @((Join-Path $Workspace 'opencode.jsonc'), (Join-Path $Workspace '.opencode'))) {
-    if ((Get-NormalPath $expected) -notin $sources) {
+    if (-not (Test-OrdinalIn (Get-NormalPath $expected) $sources)) {
         $failures += "OpenCode does not read $expected from the workspace"
     }
 }

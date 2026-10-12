@@ -14,6 +14,7 @@ import {
   closeSync,
   cpSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -568,6 +569,25 @@ withMainCommit('no-settings steps match upstream main for old locks with string 
   }
 }, {});
 
+withMainCommit('a no-settings local -Source override matches upstream main in output and tree, for apply and status', (ctx) => {
+  const mainInstaller = exportMainInstaller(ctx.base);
+  const layersFile = writeLayers(ctx);
+  const checkout = join(ctx.workspace, 'source-checkout');
+  cpSync(ctx.fixture.dir, checkout, { recursive: true });
+  const sourceArgs = ['-Source', `pstack=local:${checkout}`];
+  const comparedRuns = (installerPath) => {
+    clearInstallOutputs(ctx.workspace);
+    return [[sourceArgs, true], [['-Status'], false]].map(([args, apply]) => {
+      const run = runInstaller(shell, ctx, args, { apply, layersFile, installerPath });
+      const stdout = installerPath === installer ? stripDiscoveryLine(run.stdout, ctx.workspace) : run.stdout;
+      return { args, status: run.status, stdout, tree: workspaceState(ctx) };
+    });
+  };
+  const baseline = comparedRuns(mainInstaller);
+  assert.equal(baseline[0].status, 0, 'the upstream main apply failed, so the comparison is empty');
+  assert.deepEqual(comparedRuns(installer), baseline);
+}, {});
+
 withWorkspace('invalid settings are rejected before guarded git starts for settings, flag, or recorded refs', (ctx) => {
   mustApply(ctx);
   const lockPath = join(ctx.workspace, 'stack.lock.json');
@@ -716,12 +736,13 @@ withWorkspace('settings accept a UTF-8 BOM and reject invalid keys, values, and 
   assertOk(bom);
   assert.match(bom.stdout, /Settings: maxstack\.settings\.json is present/);
 
+  cpSync(ctx.fixture.dir, join(ctx.workspace, 'sample-layer'), { recursive: true });
   writeWorkspaceSettings(ctx, {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     version: 1,
     os: 'auto',
     runtimes: { claude: { cli: 'detect' } },
-    layers: { pstack: { source: 'sample-org/sample-layer@main' } },
+    layers: { pstack: { source: 'local:sample-layer' } },
     t3: { cli: 'detect', snapshot: true, defaults: 'leave-alone' },
   });
   assertOk(runInstaller(shell, ctx, [], { apply: false }));
@@ -793,15 +814,16 @@ withWorkspace('a layer source is recorded but not applied, so each one gets a no
     layers: { pstack: { source: 'default' }, 'simpsonm09-personal-ai-plugin': { source: 'local:projects/repos/simpsonm09-personal-ai-plugin' } },
   });
   const applied = mustApply(ctx);
-  assert.match(applied.stdout, /^Settings: layers\.pstack\.source is recorded but not applied in this release\.\r?$/m);
-  assert.match(applied.stdout, /^Settings: layers\.simpsonm09-personal-ai-plugin\.source is recorded but not applied in this release\.\r?$/m);
+  assert.doesNotMatch(applied.stdout, /layers\.[a-z-]+\.source/, 'an apply does not report a declared source that matches the lock');
   const status = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
   assert.equal(status.status, 0, plainOutput(status));
-  assert.match(status.stdout, /^Settings: layers\.pstack\.source is recorded but not applied/m);
+  assert.match(status.stdout, /^Settings: layers\.simpsonm09-personal-ai-plugin\.source is declared; a read-only run uses the recorded source, and only an apply uses the declaration\.\r?$/m);
+  assert.doesNotMatch(status.stdout, /layers\.pstack\.source is declared/, 'a default source is not reported as declared');
+  assert.doesNotMatch(status.stdout, /recorded but not applied/);
 
   writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {} }, layers: { pstack: {} } });
   const withoutSource = runInstaller(shell, ctx, ['-Status'], { apply: false });
-  assert.doesNotMatch(withoutSource.stdout, /is recorded but not applied/);
+  assert.doesNotMatch(withoutSource.stdout, /layers\.[a-z-]+\.source/);
 }, {});
 
 withWorkspace('a layer source with a DEL, a C1 control, a bidi control, or NBSP is refused, and other text is not', (ctx) => {
@@ -810,7 +832,7 @@ withWorkspace('a layer source with a DEL, a C1 control, a bidi control, or NBSP 
     writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source } } });
     const run = runInstaller(shell, ctx, [], { apply: false });
     assert.notEqual(run.status, 0, JSON.stringify(source));
-    assert.match(plainOutput(run), /layers\.pstack\.source must be a non-empty source string/, JSON.stringify(source));
+    assert.match(plainOutput(run), /layers\.pstack\.source .*holds (?:the character \\u[0-9A-F]{4}|a non-breaking space)/, JSON.stringify(source));
   }
   writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:caf\u00e9' } } });
   assertOk(runInstaller(shell, ctx, [], { apply: false }));
@@ -984,7 +1006,10 @@ withWorkspace('a layer source is shaped by owner/repo, https, local, or default,
     writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source } } });
     const run = runInstaller(shell, ctx, [], { apply: false, env: { ...testEnvironment(), GIT_TRACE: trace } });
     assert.notEqual(run.status, 0, source);
-    assert.match(plainOutput(run), /not a supported source|unsafe local path|must be a non-empty source string/, source);
+    const message = source === 'local:' ? /layers\.pstack\.source has an unsafe local path/
+      : source === 'local:   ' ? /layers\.pstack\.source has a folder name with a trailing dot or space/
+        : /layers\.pstack\.source is not a supported source/;
+    assert.match(plainOutput(run), message, source);
     assert.equal(existsSync(trace), false, `${source}: git started before the source was refused`);
   }
 }, {});
@@ -1025,7 +1050,7 @@ withWorkspace('settings diagnostics escape property names and never print contro
   writeFileSync(join(ctx.workspace, 'maxstack.settings.json'), JSON.stringify({ version: 1, [key]: 'private-value' }));
   const run = runInstaller(shell, ctx, [], { apply: false });
   assert.notEqual(run.status, 0);
-  assert.match(plainOutput(run), /unknown key/);
+  assert.match(plainOutput(run), /holds the character \\u001B/, plainOutput(run));
   // PowerShell's error view writes SGR colour codes even when piped, so they are stripped before the raw-escape check.
   const escapeCharacter = String.fromCharCode(27);
   // biome-ignore lint/suspicious/noControlCharactersInRegex: the escape byte is the ANSI colour code being removed
@@ -1034,16 +1059,21 @@ withWorkspace('settings diagnostics escape property names and never print contro
   assert.ok(text.includes('\\u001B'), 'the escape byte is not shown in its escaped form');
   assert.doesNotMatch(text, /^FAKE-INJECTED/m, 'the key printed FAKE-INJECTED as its own line');
 
-  const longKey = 'unknown-key-'.repeat(12);
+  // A name longer than 260 characters is cut with an ellipsis, so the whole key never reaches the output.
+  const longKey = 'unknown-key-'.repeat(30);
   writeFileSync(join(ctx.workspace, 'maxstack.settings.json'), JSON.stringify({ version: 1, [longKey]: true }));
   const longName = runInstaller(shell, ctx, [], { apply: false });
   assert.notEqual(longName.status, 0);
+  assert.match(plainOutput(longName), /unknown key/, plainOutput(longName));
   assert.doesNotMatch(plainOutput(longName), new RegExp(longKey));
 
   writeWorkspaceSettings(ctx, { version: 1, os: `bad\nFAKE-ENUM` });
   const enumRun = runInstaller(shell, ctx, [], { apply: false });
   assert.notEqual(enumRun.status, 0);
-  assert.doesNotMatch(plainOutput(enumRun), /FAKE-ENUM/);
+  // The value is shown on one line with its newline escaped. The raw text must be absent, and the escaped text present.
+  const enumText = `${enumRun.stdout}${enumRun.stderr}`;
+  assert.ok(enumText.includes('bad\\u000AFAKE-ENUM'), 'the value is not shown in its escaped form');
+  assert.ok(!enumText.includes('bad\nFAKE-ENUM'), 'the raw value reached the output');
 }, {});
 
 withWorkspace('a status reports invalid settings while still reporting its lock', (ctx) => {
@@ -1126,6 +1156,1030 @@ withWorkspace('settings hashes ignore whitespace and object key order', (ctx) =>
   assert.equal(status.status, 0, `${status.stdout}\n${status.stderr}`);
   assert.doesNotMatch(plainOutput(status), /changed since the last apply/);
   assert.equal(readJson(join(ctx.workspace, 'stack.lock.json')).settings.sha256, before);
+}, {});
+
+withWorkspace('settings layer sources are overridden by flags, retained when omitted, and reset by default', (ctx) => {
+  const first = join(ctx.workspace, 'source-one');
+  const second = join(ctx.workspace, 'source-two');
+  cpSync(ctx.fixture.dir, first, { recursive: true });
+  cpSync(ctx.fixture.dir, second, { recursive: true });
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:source-one' } } });
+  const settingsApply = runInstaller(shell, ctx);
+  assertOk(settingsApply);
+  let lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.equal(lock.layers.find((layer) => layer.name === 'pstack').source.path, first);
+  const matchingStatus = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assertOk(matchingStatus);
+  assert.doesNotMatch(plainOutput(matchingStatus), /layers\.pstack\.source differs/);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:source-two' } } });
+  const changedStatus = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assertOk(changedStatus);
+  assert.match(plainOutput(changedStatus), /layers\.pstack\.source differs from its recorded override/);
+
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: {} } });
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assertOk(status);
+  assert.match(plainOutput(status), /Settings: layers\.pstack has no source in maxstack\.settings\.json; its recorded override is kept\./);
+  assert.equal(readJson(join(ctx.workspace, 'stack.lock.json')).layers.find((layer) => layer.name === 'pstack').source.path, first);
+  const retained = runInstaller(shell, ctx);
+  assertOk(retained);
+  assert.equal(readJson(join(ctx.workspace, 'stack.lock.json')).layers.find((layer) => layer.name === 'pstack').source.path, first);
+
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:source-two' } } });
+  const settingsWins = runInstaller(shell, ctx);
+  assertOk(settingsWins);
+  assert.equal(readJson(join(ctx.workspace, 'stack.lock.json')).layers.find((layer) => layer.name === 'pstack').source.path, second);
+
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:source-one' } } });
+  const flagWins = runInstaller(shell, ctx, ['-Source', `pstack=local:${second}`]);
+  assertOk(flagWins);
+  lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.equal(lock.layers.find((layer) => layer.name === 'pstack').source.path, second);
+
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'default' } } });
+  const reset = runInstaller(shell, ctx);
+  assertOk(reset);
+  lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.equal(lock.layers.find((layer) => layer.name === 'pstack').source.override, false);
+}, {});
+
+withWorkspace('-InitSettings prints a migrated seed and writes it only with -Apply', (ctx) => {
+  const applied = runInstaller(shell, ctx);
+  assertOk(applied);
+  const beforeLock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  const beforeLockText = readFileSync(join(ctx.workspace, 'stack.lock.json'), 'utf8');
+  const dryRun = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assertOk(dryRun);
+  const expected = {
+    version: 1,
+    runtimes: Object.fromEntries(beforeLock.selection.runtimes.map((name) => [name, {}])),
+    layers: Object.fromEntries(beforeLock.selection.layers.map((name) => [name, {}])),
+  };
+  assert.match(plainOutput(dryRun), /derived settings file/);
+  assert.deepEqual(JSON.parse(dryRun.stdout.slice(dryRun.stdout.indexOf('{'))), expected);
+  assert.equal(existsSync(join(ctx.workspace, 'maxstack.settings.json')), false);
+  const write = runInstaller(shell, ctx, ['-InitSettings', '-Apply'], { apply: false });
+  assertOk(write);
+  assert.deepEqual(readJson(join(ctx.workspace, 'maxstack.settings.json')), expected);
+  const lockAfter = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.deepEqual(lockAfter.selection, beforeLock.selection);
+  assert.deepEqual(lockAfter.owned, beforeLock.owned);
+  assert.equal(readFileSync(join(ctx.workspace, 'stack.lock.json'), 'utf8'), beforeLockText);
+  const existing = runInstaller(shell, ctx, ['-InitSettings', '-Apply'], { apply: false });
+  assert.notEqual(existing.status, 0, 'seeding overwrote an existing file');
+  rmSync(join(ctx.workspace, 'maxstack.settings.json'));
+  mkdirSync(join(ctx.workspace, 'maxstack.settings.json'));
+  const directory = runInstaller(shell, ctx, ['-InitSettings', '-Apply'], { apply: false });
+  assert.notEqual(directory.status, 0, 'seeding accepted a destination directory');
+  assert.match(plainOutput(directory), /is a directory/i);
+  rmSync(join(ctx.workspace, 'maxstack.settings.json'), { recursive: true });
+  const target = join(ctx.base, 'settings-link-target');
+  mkdirSync(target);
+  symlinkSync(target, join(ctx.workspace, 'maxstack.settings.json'), 'junction');
+  const link = runInstaller(shell, ctx, ['-InitSettings', '-Apply'], { apply: false });
+  assert.notEqual(link.status, 0, 'seeding accepted a destination link');
+  assert.match(plainOutput(link), /symbolic link or junction/i);
+  rmSync(join(ctx.workspace, 'maxstack.settings.json'), { recursive: true, force: true });
+  const fileTarget = join(ctx.base, 'settings-file-link-target');
+  writeFileSync(fileTarget, '{}');
+  try {
+    symlinkSync(fileTarget, join(ctx.workspace, 'maxstack.settings.json'), 'file');
+    const readOnlyLink = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+    assert.notEqual(readOnlyLink.status, 0, 'a dry seed accepted a destination file link');
+    assert.match(plainOutput(readOnlyLink), /symbolic link or junction/i);
+  } catch (error) {
+    if (error.code !== 'EPERM') throw error;
+  }
+}, {});
+
+withWorkspace('-InitSettings converts recorded git and in-workspace local overrides', (ctx) => {
+  const applied = runInstaller(shell, ctx);
+  assertOk(applied);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const lock = readJson(lockPath);
+  const pstack = lock.layers.find((layer) => layer.name === 'pstack');
+  pstack.source = { kind: 'git', url: 'https://github.com/example-org/example-repo.git', ref: 'feature/settings', commit: ctx.fixture.commit, override: true };
+  const localPath = join(ctx.workspace, 'seed-checkout');
+  cpSync(ctx.fixture.dir, localPath, { recursive: true });
+  const org = lock.layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin');
+  org.source = { kind: 'local', url: null, ref: null, commit: ctx.fixture.commit, dirty: false, override: true, path: localPath };
+  const personal = lock.layers.find((layer) => layer.name === 'simpsonm09-personal-ai-plugin');
+  personal.source = { kind: 'git', url: 'https://git.example.invalid/team/example-layer.git', ref: 'v2', commit: ctx.fixture.commit, override: true };
+  writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+
+  const trace = join(ctx.base, 'init-settings-git.trace');
+  const seed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false, env: { ...testEnvironment(), GIT_TRACE: trace } });
+  assertOk(seed);
+  assert.equal(existsSync(trace), false, 'seeding invoked Git to resolve the recorded branch');
+  const value = JSON.parse(seed.stdout.slice(seed.stdout.indexOf('{')));
+  assert.equal(value.layers.pstack.source, 'example-org/example-repo@feature/settings');
+  assert.equal(value.layers['simpsonm09-org-ai-plugin'].source, 'local:seed-checkout');
+  assert.equal(value.layers['simpsonm09-personal-ai-plugin'].source, 'https://git.example.invalid/team/example-layer.git@v2');
+  assert.equal(existsSync(join(ctx.workspace, 'maxstack.settings.json')), false);
+
+  org.source.path = join(ctx.base, 'outside-seed-checkout');
+  mkdirSync(org.source.path);
+  writeFileSync(lockPath, JSON.stringify(lock, null, 2));
+  const absoluteSeed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assertOk(absoluteSeed);
+  const absoluteValue = JSON.parse(absoluteSeed.stdout.slice(absoluteSeed.stdout.indexOf('{')));
+  assert.equal(absoluteValue.layers['simpsonm09-org-ai-plugin'].source, `local:${org.source.path}`);
+  assert.match(plainOutput(absoluteSeed), /machine path/i);
+}, {});
+
+withWorkspace('read-only modes report and skip a missing local settings source, while apply refuses it', (ctx) => {
+  const baseline = runInstaller(shell, ctx);
+  assertOk(baseline);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const before = readFileSync(lockPath, 'utf8');
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:missing-source' } } });
+
+  const audit = runInstaller(shell, ctx, [], { apply: false });
+  assertOk(audit);
+  assert.match(plainOutput(audit), /pstack: declared source skipped/);
+  assert.doesNotMatch(plainOutput(audit), /pstack: override, local/i, 'the skipped layer is listed as an override in use');
+  assert.match(plainOutput(audit), /folder missing|no folder/i);
+  assert.match(plainOutput(audit), /layers\.pstack\.source resolves to no folder at .*missing-source\. This run skips layer pstack and has no fallback\./);
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assertOk(status);
+  assert.match(plainOutput(status), /layers\.pstack\.source resolves to no folder at .*missing-source\. This run skips layer pstack and has no fallback\./);
+  const update = runInstaller(shell, ctx, ['-Update', '-Check'], { apply: false });
+  assertOk(update);
+  assert.match(plainOutput(update), /layers\.pstack\.source resolves to no folder at .*missing-source\. This run skips layer pstack/);
+  assert.equal(readFileSync(lockPath, 'utf8'), before);
+
+  const treeBefore = snapshotTree(ctx.workspace);
+  const apply = runInstaller(shell, ctx);
+  assert.notEqual(apply.status, 0);
+  assert.match(plainOutput(apply), /maxstack\.settings\.json: layers\.pstack\.source resolves to no folder at .*missing-source\. Fix it there, or repair with: pwsh -File scripts\/Install-Workspace\.ps1 -Source pstack=default -Apply/);
+  assert.equal(readFileSync(lockPath, 'utf8'), before);
+  assert.deepEqual(snapshotTree(ctx.workspace), treeBefore, 'a refused apply changed the workspace');
+}, {});
+
+withWorkspace('read-only modes report and skip an unreadable local settings source, while apply refuses it', (ctx) => {
+  const baseline = runInstaller(shell, ctx);
+  assertOk(baseline);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const lockBefore = readFileSync(lockPath, 'utf8');
+  const source = join(ctx.workspace, 'bad-source');
+  cpSync(ctx.fixture.dir, source, { recursive: true });
+  writeFileSync(join(source, '.git', 'config'), '[core\ninvalid config\n');
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:bad-source' } } });
+
+  for (const args of [[], ['-Status'], ['-Update', '-Check']]) {
+    const run = runInstaller(shell, ctx, args, { apply: false });
+    assertOk(run);
+    assert.match(plainOutput(run), /layers\.pstack\.source cannot be read at .*bad-source: .*This run skips layer pstack/i, args.join(' ') || 'audit');
+  }
+
+  const apply = runInstaller(shell, ctx);
+  assert.notEqual(apply.status, 0);
+  assert.match(plainOutput(apply), /maxstack\.settings\.json: layers\.pstack\.source cannot be read at .*bad-source/i);
+  assert.equal(readFileSync(lockPath, 'utf8'), lockBefore, 'apply changed the lock before refusing the source');
+}, {});
+
+withWorkspace('settings local sources reject controls and traversal before any Git starts', (ctx) => {
+  const trace = join(ctx.base, 'settings-source-git.trace');
+  const invalidSources = [
+    ['local:../sentinel', /unsafe local path/],
+    [`local:bad${String.fromCharCode(127)}path`, /holds the character \\u007F/],
+    ['https://host/repo.git@invalid ref', /non-empty source string|supported source/],
+    ['local:C:relative', /unsafe local path/],
+    ['local:\\rooted', /unsafe local path/],
+  ];
+  for (const [source, message] of invalidSources) {
+    writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source } } });
+    const run = runInstaller(shell, ctx, [], { apply: false, env: { ...testEnvironment(), GIT_TRACE: trace } });
+    assert.notEqual(run.status, 0, source);
+    assert.match(plainOutput(run), message, source);
+    assert.equal(existsSync(trace), false, 'Git started before the settings source was refused');
+  }
+}, {});
+
+withWorkspace('a settings source that links outside the workspace is skipped by a read-only run and refused by apply', (ctx) => {
+  mustApply(ctx);
+  const outside = join(ctx.base, 'outside-source');
+  const link = join(ctx.workspace, 'linked-source');
+  mkdirSync(outside);
+  symlinkSync(outside, link, 'junction');
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:linked-source' } } });
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assertOk(status);
+  assert.match(plainOutput(status), /layers\.pstack\.source local path resolves outside the workspace through a link, which cannot be a layer source\. This run skips layer pstack/);
+  const apply = runInstaller(shell, ctx);
+  assert.notEqual(apply.status, 0);
+  assert.match(plainOutput(apply), /resolves outside the workspace through a link/);
+  assert.equal(existsSync(join(outside, 'plugins', 'pstack')), false);
+}, {});
+
+// The review findings. Each test names the finding it covers. The characters are written as escapes so this file holds no raw
+// format character: ZWSP is U+200B, ZWJ is U+200D, SHY is U+00AD, and RLO is U+202E.
+const ZWSP = '\u200b';
+const ZWJ = '\u200d';
+const SHY = '\u00ad';
+const RLO = '\u202e';
+const escapedChar = (char) => `\\u${char.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+const verifySettingsScript = join(repoRoot, 'scripts', 'verify_settings.py');
+const psFile = (name) => join(repoRoot, 'scripts', name).replaceAll("'", "''");
+const lockText = (ctx) => readFileSync(lockPath(ctx), 'utf8');
+
+// A checkout the -Source flag can name: a stub layer folder under the temp base, initialised as a git repository.
+function localCheckout(ctx, name, layer = 'simpsonm09-org-ai-plugin') {
+  const checkout = join(ctx.base, name);
+  writeLayerStub(checkout, { claudePlugin: layer });
+  gitRun(checkout, ['init', '-q']);
+  gitRun(checkout, ['add', '-A']);
+  gitRun(checkout, ['commit', '-q', '-m', 'layer']);
+  return checkout;
+}
+
+// Finding 1: a runtime key with a zero width joiner is refused by its escaped name, and a fresh workspace stays empty.
+withWorkspace('finding 1: a runtime key with a zero width joiner is refused by its escaped name, and nothing is written', (ctx) => {
+  writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {}, [`pi${ZWJ}`]: {} } });
+  const run = runInstaller(shell, ctx);
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /runtimes key 'pi\\u200D' holds the character \\u200D/);
+  assert.doesNotMatch(plainOutput(run), new RegExp(ZWJ));
+  assert.equal(existsSync(lockPath(ctx)), false, 'a refused settings file wrote a lock');
+  assert.equal(existsSync(join(ctx.workspace, '.maxstack')), false, 'a refused settings file wrote the wrappers');
+}, {});
+
+// Finding 1: a layer key with a zero width space is refused with and without a source.
+withWorkspace('finding 1: a layer key with a zero width space is refused with and without a source, and nothing is written', (ctx) => {
+  const layer = `pstack${ZWSP}`;
+  for (const entry of [{}, { source: 'local:ext-b-in-ws' }]) {
+    writeWorkspaceSettings(ctx, { version: 1, layers: { [layer]: entry } });
+    const run = runInstaller(shell, ctx);
+    assert.notEqual(run.status, 0, plainOutput(run));
+    assert.match(plainOutput(run), /layers key 'pstack\\u200B' holds the character \\u200B/);
+  }
+  assert.equal(existsSync(lockPath(ctx)), false, 'a refused layer key wrote a lock');
+}, {});
+
+// Finding 1: a lock edited to a runtime with a zero width joiner is refused by apply and by status, and the lock is unchanged.
+withWorkspace('finding 1: a lock edited to a runtime with a zero width joiner is refused, and the lock is unchanged', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  lock.selection.runtimes = ['claude', `pi${ZWJ}`];
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const before = lockText(ctx);
+  const treeBefore = snapshotTree(ctx.workspace);
+  for (const args of [[], ['-Status']]) {
+    const run = runInstaller(shell, ctx, args, { apply: args.length === 0 });
+    assert.notEqual(run.status, 0, `${args.join(' ') || 'apply'}: ${plainOutput(run)}`);
+    assert.match(plainOutput(run), /stack\.lock\.json.*holds the character \\u200D/, args.join(' ') || 'apply');
+    assert.doesNotMatch(plainOutput(run), new RegExp(ZWJ));
+  }
+  assert.equal(lockText(ctx), before, 'a refused lock changed the lock');
+  assert.deepEqual(snapshotTree(ctx.workspace), treeBefore, 'a refused lock changed the workspace');
+}, {});
+
+// Finding 6: a -Source name with a zero width space is refused, and the recorded override it would have replaced is kept.
+withWorkspace('finding 6: a -Source name with a zero width space is refused, and the recorded override is kept', (ctx) => {
+  const extA = localCheckout(ctx, 'ext-a');
+  const extB = localCheckout(ctx, 'ext-b');
+  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${extA}`]);
+  const before = lockText(ctx);
+  for (const flag of ['-Source', '-LayerSource']) {
+    const value = flag === '-Source' ? `simpsonm09-org-ai-plugin${ZWSP}=local:${extB}` : `simpsonm09-org-ai-plugin${ZWSP}=${extB}`;
+    const run = runInstaller(shell, ctx, [flag, value]);
+    assert.notEqual(run.status, 0, `${flag}: ${plainOutput(run)}`);
+    assert.match(plainOutput(run), /-(?:Layer)?Source name 'simpsonm09-org-ai-plugin\\u200B' holds the character \\u200B/, flag);
+    assert.equal(lockText(ctx), before, `${flag} changed the lock`);
+  }
+}, {});
+
+// Finding 7: default with a soft hyphen or a zero width space is refused by flag and by settings, and the override is kept.
+withWorkspace('finding 7: default with a soft hyphen or a zero width space is refused by flag and by settings, and the override is kept', (ctx) => {
+  const extA = localCheckout(ctx, 'ext-a');
+  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${extA}`]);
+  const before = lockText(ctx);
+  for (const value of [`default${SHY}`, `default${ZWSP}`]) {
+    const flagRun = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=${value}`]);
+    assert.notEqual(flagRun.status, 0, `flag ${escapedChar(value.slice(7))}: ${plainOutput(flagRun)}`);
+    assert.match(plainOutput(flagRun), /holds the character \\u00AD|holds the character \\u200B/);
+    writeWorkspaceSettings(ctx, { version: 1, layers: { 'simpsonm09-org-ai-plugin': { source: value } } });
+    const settingsRun = runInstaller(shell, ctx);
+    assert.notEqual(settingsRun.status, 0, `settings: ${plainOutput(settingsRun)}`);
+    assert.match(plainOutput(settingsRun), /layers\.simpsonm09-org-ai-plugin\.source .*holds the character \\u00AD|layers\.simpsonm09-org-ai-plugin\.source .*holds the character \\u200B/);
+    assert.equal(lockText(ctx), before, `${value} dropped the recorded override`);
+  }
+}, {});
+
+// Finding 4: a root-relative local path with one leading slash is refused by the settings reader, and by -Source.
+withWorkspace('finding 4: a root-relative local path with one leading slash is refused by settings and -Source', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:/x/y' } } });
+  const settingsRun = runInstaller(shell, ctx, [], { apply: false });
+  assert.notEqual(settingsRun.status, 0, plainOutput(settingsRun));
+  assert.match(plainOutput(settingsRun), /layers\.pstack\.source has an unsafe local path/);
+  writeWorkspaceSettings(ctx, { version: 1 });
+  const flagRun = runInstaller(shell, ctx, ['-Source', 'pstack=local:/x/y'], { apply: false });
+  assert.notEqual(flagRun.status, 0, plainOutput(flagRun));
+  assert.match(plainOutput(flagRun), /needs an absolute path/);
+}, {});
+
+// Finding 5: UNC and device-namespace text is refused by its text, in settings and in -Source and -LayerSource.
+withWorkspace('finding 5: UNC and device-namespace local paths are refused by their text, in settings and in -Source', (ctx) => {
+  mustApply(ctx);
+  const forms = ['\\\\server\\share\\x', '//server/share/x', '\\\\?\\C:\\x', '\\\\.\\C:\\x'];
+  for (const form of forms) {
+    writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: `local:${form}` } } });
+    const run = runInstaller(shell, ctx, [], { apply: false });
+    assert.notEqual(run.status, 0, `${form}: ${plainOutput(run)}`);
+    assert.match(plainOutput(run), /UNC or device path/, form);
+    writeWorkspaceSettings(ctx, { version: 1 });
+    const flag = runInstaller(shell, ctx, ['-Source', `pstack=local:${form}`], { apply: false });
+    assert.notEqual(flag.status, 0, `-Source ${form}: ${plainOutput(flag)}`);
+    assert.match(plainOutput(flag), /UNC or device path/, `-Source ${form}`);
+    const layerFlag = runInstaller(shell, ctx, ['-LayerSource', `pstack=${form}`], { apply: false });
+    assert.notEqual(layerFlag.status, 0, `-LayerSource ${form}: ${plainOutput(layerFlag)}`);
+    assert.match(plainOutput(layerFlag), /UNC or device path/, `-LayerSource ${form}`);
+  }
+}, {});
+
+// Finding 5: the refusal comes before any lookup. A lookup replaced by a probe would print its marker, so the refusal must be
+// the first thing a UNC or device path meets.
+withWorkspace('finding 5: a UNC or device path is refused by text before the local path lookup runs', (ctx) => {
+  const script = String.raw`$ErrorActionPreference = 'Stop'
+. '${psFile('Install-WorkspaceDiscovery.ps1')}'
+. '${psFile('Install-Ordinal.ps1')}'
+. '${psFile('Install-LayerSources.ps1')}'
+. '${psFile('Install-Settings.ps1')}'
+$Workspace = '${ctx.workspace.replaceAll("'", "''")}'
+function Get-LocalPathFault { 'LOOKUP-REACHED' }
+foreach ($spec in @('local:\\server\share\x', 'local:\\\\?\\C:\x')) {
+  try { $null = Read-SourceSpec pstack $spec; "NO-REFUSAL $spec" } catch { "REFUSED=$($_.Exception.Message)" }
+}
+try { $null = Read-SourceSpecs -Specs @() -LayerSpecs @('pstack=\\server\share\x') -LayerNames @('pstack'); 'NO-REFUSAL layer' } catch { "LAYER=$($_.Exception.Message)" }
+`;
+  const file = join(ctx.base, 'unc-order.ps1');
+  writeFileSync(file, script);
+  const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-File', file], { windowsHide: true, encoding: 'utf8', env: testEnvironment() });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.doesNotMatch(run.stdout, /LOOKUP-REACHED|NO-REFUSAL/, run.stdout);
+  assert.match(run.stdout, /REFUSED=.*UNC or device path/);
+  assert.match(run.stdout, /LAYER=.*UNC or device path/);
+}, {});
+
+// Finding 2: a read-only audit, a -Status, and -Update -Check contact no remote for a declared git source, while an apply does.
+withWorkspace('finding 2: an audit, a -Status, and an -Update -Check start no ls-remote for a declared git source', (ctx) => {
+  mustApply(ctx);
+  const seam = join(ctx.base, 'seam');
+  const bare = join(seam, 'example', 'fixture.git');
+  mkdirSync(bare, { recursive: true });
+  gitRun(bare, ['init', '-q', '--bare']);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'example/fixture@main' } } });
+  const trace = join(ctx.base, 'remote-trace.txt');
+  const env = { ...testEnvironment(), MAXSTACK_TEST_GITHUB_ROOT: seam, GIT_TRACE: trace };
+  for (const args of [[], ['-Status'], ['-Update', '-Check']]) {
+    const run = runInstaller(shell, ctx, args, { apply: false, env });
+    assert.ok(run.status === 0 || run.status === 1, `${args.join(' ') || 'audit'}: ${plainOutput(run)}`);
+    const traced = existsSync(trace) ? readFileSync(trace, 'utf8') : '';
+    // The declared remote is the one under the seam. -Update -Check still reads the layers.json pin for its hint, which is a
+    // pin and not a declared source, so only the declared remote is asserted for it.
+    assert.doesNotMatch(traced, /ls-remote[^\n]*example[\\/]fixture\.git/, `${args.join(' ') || 'audit'} contacted the declared remote`);
+    rmSync(trace, { force: true });
+  }
+  const apply = runInstaller(shell, ctx, [], { apply: true, env });
+  assert.match(readFileSync(trace, 'utf8'), /ls-remote[^\n]*example[\\/]fixture\.git/, `the spy did not see the apply: ${plainOutput(apply)}`);
+}, {});
+
+// Finding 3: a dry -Remove and a dry -Uninstall report an unavailable declared source and skip its layer, with no fallback.
+withWorkspace('finding 3: a dry -Remove reports an unavailable declared source and skips its layer, with no fallback', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:nope' } } });
+  const skipLine = /Settings: layers\.pstack\.source resolves to no folder at .*nope\. This run skips layer pstack and has no fallback\./;
+  const remove = runInstaller(shell, ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin'], { apply: false });
+  assertOk(remove, plainOutput(remove));
+  assert.match(plainOutput(remove), skipLine, `dry -Remove: ${plainOutput(remove)}`);
+}, {});
+
+// Item N7: a dry -Uninstall removes what the lock recorded, so it names no skipped layer, and it says that it does not read the file.
+withWorkspace('finding 3: a dry -Uninstall names no skipped layer, since it does not use a declared source, and says so', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:nope' } } });
+  const uninstall = runInstaller(shell, ctx, ['-Uninstall'], { apply: false });
+  assertOk(uninstall, plainOutput(uninstall));
+  assert.doesNotMatch(plainOutput(uninstall), /skips layer pstack/, `dry -Uninstall: ${plainOutput(uninstall)}`);
+  assert.match(plainOutput(uninstall), /Settings: -Uninstall does not read maxstack\.settings\.json; it removes what the lock recorded\./, plainOutput(uninstall));
+}, {});
+
+// Finding 3 contract: a real -Uninstall never reads the settings file, so an unreadable one does not stop it, and a dry
+// -Uninstall with an unreadable file still succeeds.
+withWorkspace('finding 3: -Uninstall never needs the settings file to succeed, dry or real', (ctx) => {
+  mustApply(ctx);
+  writeFileSync(join(ctx.workspace, 'maxstack.settings.json'), '{"version": 1,}');
+  const dry = runInstaller(shell, ctx, ['-Uninstall'], { apply: false });
+  assertOk(dry, plainOutput(dry));
+  const real = runInstaller(shell, ctx, ['-Uninstall'], { apply: true });
+  assertOk(real, plainOutput(real));
+  assert.equal(existsSync(lockPath(ctx)), false, 'the real uninstall kept the lock');
+}, {});
+
+// Findings 9 and 10: a malformed lock source or selection is a named error for -Status, and -InitSettings names a missing selection.
+withWorkspace('findings 9 and 10: a malformed lock source, selection, or InitSettings selection is a named error, not a raw one', (ctx) => {
+  mustApply(ctx);
+  const good = readJson(lockPath(ctx));
+  const cases = [
+    ['a layer source with no kind', (lock) => { lock.layers[0].source = {}; }, ['-Status'], /stack\.lock\.json/],
+    ['a selection with no runtimes', (lock) => { delete lock.selection.runtimes; }, ['-Status'], /runtime/],
+    ['an InitSettings selection with no runtimes', (lock) => { delete lock.selection.runtimes; }, ['-InitSettings'], /-InitSettings needs a valid recorded runtimes selection/],
+  ];
+  for (const [label, mutate, args, message] of cases) {
+    const lock = structuredClone(good);
+    mutate(lock);
+    writeFileSync(lockPath(ctx), JSON.stringify(lock));
+    const run = runInstaller(shell, ctx, args, { apply: false });
+    assert.notEqual(run.status, 0, `${label}: ${plainOutput(run)}`);
+    assert.match(plainOutput(run), message, label);
+    assert.doesNotMatch(plainOutput(run), /The property '|cannot be found on this object|at <ScriptBlock>/, label);
+  }
+}, {});
+
+// Finding 11: an InitSettings seed refuses a recorded layer whose lock name holds a zero width space.
+withWorkspace('finding 11: -InitSettings refuses a lock layer record named with a zero width space, and prints no seed', (ctx) => {
+  const extA = localCheckout(ctx, 'ext-a');
+  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${extA}`]);
+  const lock = readJson(lockPath(ctx));
+  const record = lock.layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin');
+  record.name = `simpsonm09-org-ai-plugin${ZWSP}`;
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const run = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /holds the character \\u200B/);
+  assert.doesNotMatch(plainOutput(run), /"simpsonm09-org-ai-plugin": \{/, 'the seed printed the layer');
+}, {});
+
+// Finding 14: a lock key in the wrong case is refused by -InitSettings and by apply, and the lock is unchanged.
+withWorkspace('finding 14: a lock key in the wrong case is refused by -InitSettings and by apply, and the lock is unchanged', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  const renamed = Object.fromEntries(Object.entries(lock).map(([key, value]) => [key === 'ownedSchema' ? 'OwnedSchema' : key, value]));
+  writeFileSync(lockPath(ctx), JSON.stringify(renamed));
+  const before = lockText(ctx);
+  const treeBefore = snapshotTree(ctx.workspace);
+  const init = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(init.status, 0, plainOutput(init));
+  assert.match(plainOutput(init), /key 'OwnedSchema' must be spelled ownedSchema/);
+  const apply = runInstaller(shell, ctx);
+  assert.notEqual(apply.status, 0, plainOutput(apply));
+  assert.match(plainOutput(apply), /key 'OwnedSchema' must be spelled ownedSchema/);
+  assert.equal(lockText(ctx), before, 'a lock in the wrong case was rewritten');
+  assert.deepEqual(snapshotTree(ctx.workspace), treeBefore);
+}, {});
+
+// Finding 12: -InitSettings checks a recorded local path by its text, so a path through a junction is seeded as written.
+withWorkspace('finding 12: -InitSettings checks a recorded local path by its text, with no link resolution', (ctx) => {
+  mustApply(ctx);
+  const link = join(ctx.workspace, 'linked-ws');
+  symlinkSync(ctx.workspace, link, 'junction');
+  const lock = readJson(lockPath(ctx));
+  const record = lock.layers.find((layer) => layer.name === 'pstack');
+  record.source = { kind: 'local', url: null, ref: null, commit: null, dirty: null, override: true, path: link };
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const run = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assertOk(run, plainOutput(run));
+  assert.match(run.stdout, /"source": "local:linked-ws"/);
+}, {});
+
+// Finding 13: every printed name escapes a control, a bidi, and a zero width character, in each position a run can reach.
+withWorkspace('finding 13: a name with a control, bidi, or zero width character is printed escaped in every position', (ctx) => {
+  mustApply(ctx);
+  const positions = [
+    ['top-level key', (char) => ({ version: 1, [`x${char}`]: 1 })],
+    ['runtimes key', (char) => ({ version: 1, runtimes: { [`claude${char}`]: {} } })],
+    ['layers key', (char) => ({ version: 1, layers: { [`pstack${char}`]: {} } })],
+    ['t3 key', (char) => ({ version: 1, t3: { [`cli${char}`]: 'detect' } })],
+    ['runtime cli value', (char) => ({ version: 1, runtimes: { claude: { cli: `detect${char}` } } })],
+    ['os value', (char) => ({ version: 1, os: `auto${char}` })],
+    ['layer source value', (char) => ({ version: 1, layers: { pstack: { source: `default${char}` } } })],
+  ];
+  for (const char of [ZWSP, RLO, '\u0007']) {
+    for (const [label, build] of positions) {
+      writeWorkspaceSettings(ctx, build(char));
+      const run = runInstaller(shell, ctx, [], { apply: false });
+      const text = `${run.stdout}${run.stderr}`;
+      assert.notEqual(run.status, 0, `${label} ${escapedChar(char)}: ${plainOutput(run)}`);
+      assert.ok(!text.includes(char), `${label} ${escapedChar(char)} printed the raw character`);
+      assert.ok(text.includes(escapedChar(char)), `${label} ${escapedChar(char)} printed no escape: ${plainOutput(run)}`);
+    }
+    for (const [flag, value] of [['-Source', `pstack${char}=default`], ['-LayerSource', `pstack${char}=${join(ctx.base, 'missing-layer')}`]]) {
+      rmSync(join(ctx.workspace, 'maxstack.settings.json'), { force: true });
+      const run = runInstaller(shell, ctx, [flag, value], { apply: false });
+      const text = `${run.stdout}${run.stderr}`;
+      assert.notEqual(run.status, 0, `${flag} ${escapedChar(char)}: ${plainOutput(run)}`);
+      assert.ok(!text.includes(char), `${flag} ${escapedChar(char)} printed the raw character`);
+      assert.ok(text.includes(escapedChar(char)), `${flag} ${escapedChar(char)} printed no escape: ${plainOutput(run)}`);
+    }
+  }
+}, {});
+
+// Finding 15: an absolute maxstack checkout is refused as a source, by settings and by -Source.
+withWorkspace('finding 15: an absolute maxstack checkout is refused as a source, by settings and by -Source', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: `local:${repoRoot}` } } });
+  const settingsRun = runInstaller(shell, ctx, [], { apply: false });
+  assertOk(settingsRun, plainOutput(settingsRun));
+  assert.match(plainOutput(settingsRun), /local path is a maxstack checkout/);
+  writeWorkspaceSettings(ctx, { version: 1 });
+  const flag = runInstaller(shell, ctx, ['-Source', `pstack=local:${repoRoot}`], { apply: false });
+  assert.notEqual(flag.status, 0, plainOutput(flag));
+  assert.match(plainOutput(flag), /maxstack checkout/);
+}, {});
+
+// Finding 15: an 8.3 short name and a trailing dot or space in a source folder are refused, the way -Workspace refuses an 8.3 name.
+withWorkspace('finding 15: an 8.3 short name, and a trailing dot or space in a source folder, are refused', (ctx) => {
+  mustApply(ctx);
+  for (const source of ['local:SAMPLE~1', 'local:tools/checkout.', 'local:tools/checkout ']) {
+    writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source } } });
+    const run = runInstaller(shell, ctx, [], { apply: true });
+    assert.notEqual(run.status, 0, `${source}: ${plainOutput(run)}`);
+    assert.match(plainOutput(run), source === 'local:SAMPLE~1' ? /layers\.pstack\.source local path has an 8\.3 short name/ : /layers\.pstack\.source has a folder name with a trailing dot or space/, `${source}: ${plainOutput(run)}`);
+  }
+  for (const folder of ['tools\\checkout.', 'SAMPLE~1']) {
+    writeWorkspaceSettings(ctx, { version: 1 });
+    const flag = runInstaller(shell, ctx, ['-Source', `pstack=local:${join(ctx.workspace, folder)}`], { apply: false });
+    assert.notEqual(flag.status, 0, `-Source ${folder}: ${plainOutput(flag)}`);
+    assert.match(plainOutput(flag), folder === 'SAMPLE~1' ? /-Source pstack=local:.* has an 8\.3 short name/ : /has a folder name with a trailing dot or space/, `-Source ${folder}`);
+  }
+}, {});
+
+// Finding 16: a read-only status with an unavailable declared source marks that layer's files skipped, not drifted.
+withWorkspace("finding 16: -Status marks a skipped layer's files skipped, not drifted, and -Strict does not fail on them", (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {}, opencode: {}, copilot: {}, pi: {} }, layers: { pstack: { source: 'local:nope' }, 'simpsonm09-org-ai-plugin': {}, 'simpsonm09-personal-ai-plugin': {} } });
+  const status = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
+  assert.equal(status.status, 0, plainOutput(status));
+  const rows = statusRows(status).filter((row) => /pstack/.test(row.label));
+  assert.ok(rows.some((row) => row.state === 'skipped'), `no skipped row for pstack: ${plainOutput(status)}`);
+  assert.deepEqual(rows.filter((row) => row.state === 'drifted'), [], 'a skipped layer is reported as drifted');
+}, {});
+
+// Finding 17: the verifier prints a zero width name on a cp1252 console as an escape, with no traceback.
+withWorkspaceNeeding('python', python, 'finding 17: the reader prints a zero width name on a cp1252 console as an escape, with no traceback', (ctx) => {
+  const file = join(ctx.base, 'zero-width.json');
+  writeFileSync(file, JSON.stringify({ version: 1, [`runtimes${ZWSP}`]: {} }));
+  const run = spawnSync(python, [verifySettingsScript, '--document', file], {
+    windowsHide: true, encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'cp1252', PYTHONDONTWRITEBYTECODE: '1' },
+  });
+  assert.equal(run.status, 1, `${run.stdout}\n${run.stderr}`);
+  assert.doesNotMatch(`${run.stdout}${run.stderr}`, /Traceback|UnicodeEncodeError/);
+  assert.match(run.stdout, /\\u200B/);
+}, {});
+
+// Mutant S05: a settings file over the 64 KiB limit is refused, whatever its content, and the message names the limit.
+withWorkspace('the settings reader refuses a valid file of 100 KiB, and the message names the 64 KiB limit', (ctx) => {
+  const prefix = '{"version":1,"$schema":"';
+  const suffix = '"}';
+  writeFileSync(join(ctx.workspace, 'maxstack.settings.json'), `${prefix}${'a'.repeat(100 * 1024 - prefix.length - suffix.length)}${suffix}`);
+  const run = runInstaller(shell, ctx, [], { apply: false });
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /larger than the 65536 byte limit/);
+}, {});
+
+// Mutant I02: -InitSettings -Apply refuses an existing file by name, with the refusal message and not only the exit status.
+withWorkspace('-InitSettings -Apply refuses an existing settings file by its message, and changes nothing', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1 });
+  const before = readFileSync(join(ctx.workspace, 'maxstack.settings.json'), 'utf8');
+  const run = runInstaller(shell, ctx, ['-InitSettings'], { apply: true });
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /-InitSettings refuses to overwrite existing .*maxstack\.settings\.json/);
+  assert.equal(readFileSync(join(ctx.workspace, 'maxstack.settings.json'), 'utf8'), before);
+}, {});
+
+// Survivors of the mutation run: each test fails on the mutant its name gives.
+withWorkspace('a settings source whose folder cannot be listed is unavailable in a read-only run, and refused by apply', (ctx) => {
+  mustApply(ctx);
+  const locked = join(ctx.base, 'locked-source');
+  mkdirSync(locked);
+  writeFileSync(join(locked, 'index.ts'), 'export default {};\n');
+  const user = process.env.USERNAME;
+  assert.ok(user, 'USERNAME is needed to deny the folder to this user');
+  const deny = spawnSync('icacls', [locked, '/deny', `${user}:(RX)`], { windowsHide: true, encoding: 'utf8' });
+  assert.equal(deny.status, 0, `icacls could not deny the folder: ${deny.stdout}${deny.stderr}`);
+  try {
+    writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: `local:${locked}` } } });
+    const audit = runInstaller(shell, ctx, [], { apply: false });
+    assertOk(audit, plainOutput(audit));
+    assert.match(plainOutput(audit), /layers\.pstack\.source cannot be read at .*: the folder could not be listed\. This run skips layer pstack/);
+    const apply = runInstaller(shell, ctx);
+    assert.notEqual(apply.status, 0, plainOutput(apply));
+  } finally {
+    spawnSync('icacls', [locked, '/remove:d', user], { windowsHide: true, encoding: 'utf8' });
+  }
+}, {});
+
+withWorkspace('a settings source at a drive root is unavailable in a read-only run, and refused by apply', (ctx) => {
+  mustApply(ctx);
+  const root = parsePath(tmpdir()).root;
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: `local:${root}` } } });
+  const audit = runInstaller(shell, ctx, [], { apply: false });
+  assertOk(audit, plainOutput(audit));
+  assert.match(plainOutput(audit), /layers\.pstack\.source local path is a drive or share root, which cannot be a layer source\. This run skips layer pstack/);
+  const apply = runInstaller(shell, ctx);
+  assert.notEqual(apply.status, 0, plainOutput(apply));
+}, {});
+
+withWorkspace('-InitSettings refuses a recorded git source with a url that is not https, and one whose repository the seed cannot write', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  const record = lock.layers.find((layer) => layer.name === 'pstack');
+  record.source = { kind: 'git', url: 'http://example.invalid/owner/repo.git', ref: 'main', commit: 'a'.repeat(40), dirty: null, override: true, path: null };
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const insecure = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(insecure.status, 0, plainOutput(insecure));
+  assert.match(plainOutput(insecure), /cannot migrate the recorded git source for 'pstack' because its URL, ref, or commit is invalid/);
+  record.source = { kind: 'git', url: 'https://github.com/owner/repo+x.git', ref: 'main', commit: 'a'.repeat(40), dirty: null, override: true, path: null };
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const unwritable = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(unwritable.status, 0, plainOutput(unwritable));
+  assert.match(plainOutput(unwritable), /cannot represent the recorded source of layer 'pstack' as a settings source/);
+}, {});
+
+withWorkspace('-InitSettings refuses a recorded local path that is a drive root, by its text', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  const record = lock.layers.find((layer) => layer.name === 'pstack');
+  record.source = { kind: 'local', url: null, ref: null, commit: null, dirty: null, override: true, path: parsePath(tmpdir()).root };
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const run = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /cannot migrate the recorded local source for 'pstack': is a drive or share root/);
+}, {});
+
+withWorkspace('a recorded selection that names only runtimes and layers layers.json no longer has falls back to every name', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  lock.selection = { runtimes: ['retired-runtime'], layers: ['retired-layer'] };
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assertOk(status, plainOutput(status));
+  assert.match(plainOutput(status), /Selection: runtimes claude, copilot, opencode, pi; layers pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin/);
+  // A plain apply after that lock writes every name, so the retired names are not kept in the selection.
+  const apply = runInstaller(shell, ctx, []);
+  assertOk(apply, plainOutput(apply));
+  assert.deepEqual(readJson(lockPath(ctx)).selection.runtimes, ['claude', 'copilot', 'opencode', 'pi']);
+  assert.deepEqual(readJson(lockPath(ctx)).selection.layers, ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']);
+}, {});
+
+withWorkspace('settings resolution refuses a traversal and reads an external recorded path without touching it', (ctx) => {
+  const layerSources = join(repoRoot, 'scripts', 'Install-LayerSources.ps1').replaceAll("'", "''");
+  const settings = join(repoRoot, 'scripts', 'Install-Settings.ps1').replaceAll("'", "''");
+  const discovery = join(repoRoot, 'scripts', 'Install-WorkspaceDiscovery.ps1').replaceAll("'", "''");
+  const ordinal = join(repoRoot, 'scripts', 'Install-Ordinal.ps1').replaceAll("'", "''");
+  const ws = ctx.workspace.replaceAll("'", "''");
+  const external = join(ctx.base, 'external-checkout');
+  const script = `$ErrorActionPreference = 'Stop'; . '${ordinal}'; . '${discovery}'; . '${layerSources}'; . '${settings}';$Workspace = '${ws}'; ` +
+    `$traversal = Get-SettingsLocalSource -Name pstack -Path '../outside' -Absolute $false -WorkspaceRoot '${ws}' -RepoRoot 'C:\\nowhere-maxstack'; ` +
+    `"TRAVERSAL=$($traversal.reason)"; "UNREADABLE=$(Test-SettingsLocalReadable -Path '${ws}\\missing-for-probe')"; ` +
+    `"EXTERNAL=$(ConvertTo-InitSettingsSpec -Name pstack -Source ([pscustomobject]@{ kind = 'local'; path = '${external.replaceAll("'", "''")}' }) -WorkspaceRoot '${ws}')"`;
+  const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, encoding: 'utf8', env: testEnvironment() });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.match(run.stdout, /TRAVERSAL=local path resolves outside the workspace through a link/);
+  assert.match(run.stdout, /UNREADABLE=False/);
+  assert.ok(run.stdout.includes(`EXTERNAL=local:${external}`), run.stdout);
+  assert.equal(existsSync(external), false, 'the resolver created the external folder');
+}, {});
+
+withWorkspace('settings and -Source share one source grammar, and -Source still needs an absolute local path', (ctx) => {
+  const layerSources = join(repoRoot, 'scripts', 'Install-LayerSources.ps1').replaceAll("'", "''");
+  const settings = join(repoRoot, 'scripts', 'Install-Settings.ps1').replaceAll("'", "''");
+  const discovery = join(repoRoot, 'scripts', 'Install-WorkspaceDiscovery.ps1').replaceAll("'", "''");
+  const ordinal = join(repoRoot, 'scripts', 'Install-Ordinal.ps1').replaceAll("'", "''");
+  const ws = ctx.workspace.replaceAll("'", "''");
+  const script = `$ErrorActionPreference = 'Stop'; . '${ordinal}'; . '${discovery}'; . '${layerSources}'; . '${settings}';$Workspace = '${ws}'; ` +
+    `function Invoke-GitGuarded { param($Arguments, $Dir, $AllFilterScopes) [pscustomobject]@{ code = 0; unreadable = $null; stdout = @() } }; ` +
+    `$pairs = @(@('feat(ready)', 'pstack/repo@feat(ready)'), @('url&segment', 'https://host/url&segment.git@main')); ` +
+    `foreach ($pair in $pairs) { try { Assert-SettingsSource pstack $pair[1]; $settingsOk = $true } catch { $settingsOk = $false }; try { $null = Read-SourceSpec pstack $pair[1]; $sharedOk = $true } catch { $sharedOk = $false }; "PAIR=$($pair[0]);SETTINGS=$settingsOk;SHARED=$sharedOk" }; ` +
+    `try { $null = Read-SourceSpec pstack 'local:relative/checkout'; 'RELATIVE=accepted' } catch { "RELATIVE=$($_.Exception.Message)" }; ` +
+    `$local = Get-SettingsLayerSource -Name pstack -Spec 'local:file&name' -WorkspaceRoot '${ws}' -RepoRoot 'C:\\nowhere-maxstack'; "LOCAL=$($local.kind)"`;
+  const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, encoding: 'utf8', env: testEnvironment() });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.match(run.stdout, /PAIR=feat\(ready\);SETTINGS=True;SHARED=True/);
+  assert.match(run.stdout, /PAIR=url&segment;SETTINGS=True;SHARED=True/);
+  assert.match(run.stdout, /RELATIVE=-Source pstack=local:relative\/checkout needs an absolute path/);
+  assert.match(run.stdout, /LOCAL=unavailable/);
+}, {});
+
+withWorkspace('settings relative local sources reject protected output paths before reading them', (ctx) => {
+  mustApply(ctx);
+  for (const source of ['local:.maxstack', 'local:.claude', 'local:.opencode', 'local:.pi']) {
+    writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source } } });
+    const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+    assertOk(status, plainOutput(status));
+    assert.match(plainOutput(status), /layers\.pstack\.source local path is inside \.[a-z]+, which the installer writes, so it cannot be a layer source\. This run skips layer pstack/, source);
+    const before = snapshotTree(ctx.workspace);
+    const apply = runInstaller(shell, ctx);
+    assert.notEqual(apply.status, 0, source);
+    assert.match(plainOutput(apply), /local path is inside (?:\.maxstack|\.claude|\.opencode|\.pi), which the installer writes/i, source);
+    assert.deepEqual(snapshotTree(ctx.workspace), before, `${source} changed the workspace`);
+  }
+}, {});
+
+withWorkspace('a settings relative source may not name the workspace, a maxstack checkout, or a link into a protected output', (ctx) => {
+  mustApply(ctx);
+  const checkout = join(ctx.workspace, 'tools', 'fake-checkout');
+  mkdirSync(join(checkout, 'scripts'), { recursive: true });
+  writeFileSync(join(checkout, 'layers.json'), '{"layers":[]}');
+  writeFileSync(join(checkout, 'scripts', 'Install-Workspace.ps1'), '# fake checkout\n');
+  mkdirSync(join(ctx.workspace, '.claude', 'plugins'), { recursive: true });
+  symlinkSync(join(ctx.workspace, '.claude', 'plugins'), join(ctx.workspace, 'linked-claude'), 'junction');
+  const cases = [
+    ['local:.', /local path is the workspace itself/],
+    ['local:tools/fake-checkout', /local path is a maxstack checkout/],
+    ['local:linked-claude', /local path is inside \.claude, which the installer writes/],
+  ];
+  for (const [source, message] of cases) {
+    writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source } } });
+    const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+    assertOk(status, plainOutput(status));
+    assert.match(plainOutput(status), message, source);
+    const apply = runInstaller(shell, ctx);
+    assert.notEqual(apply.status, 0, source);
+    assert.match(plainOutput(apply), message, source);
+  }
+}, {});
+
+withWorkspace('a settings source that is a junction in the workspace is recorded by the name the user wrote', (ctx) => {
+  mustApply(ctx);
+  const real = join(ctx.workspace, 'real-checkout');
+  cpSync(ctx.fixture.dir, real, { recursive: true });
+  symlinkSync(real, join(ctx.workspace, 'linked-checkout'), 'junction');
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:linked-checkout' } } });
+  const applied = mustApply(ctx);
+  const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  const pstack = lock.layers.find((layer) => layer.name === 'pstack');
+  assert.equal(pstack.source.path, join(ctx.workspace, 'linked-checkout'));
+  assert.doesNotMatch(plainOutput(applied), /real-checkout/);
+}, {});
+
+withWorkspace('a settings path with a format character is shown as an escape, and a long one is cut at 260 characters', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:zero\u200bwidth-missing' } } });
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assertOk(status);
+  const text = plainOutput(status);
+  assert.ok(text.includes('zero\\u200Bwidth-missing'), text);
+  assert.ok(!text.includes('\u200b'), 'a format character reached the output raw');
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: `local:${'a'.repeat(300)}` } } });
+  const long = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assertOk(long);
+  assert.match(plainOutput(long), /layers\.pstack\.source resolves to no folder at .*\.\.\./);
+  assert.ok(!plainOutput(long).includes('a'.repeat(261)), 'a long value was not cut');
+}, {});
+
+withWorkspace('a settings git ref that cannot be read is unavailable in an audit and refused by apply, with no fallback', (ctx) => {
+  mustApply(ctx);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const lockBefore = readFileSync(lockPath, 'utf8');
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'sample/nope@main' } } });
+  const env = githubEnv(ctx);
+  const audit = runInstaller(shell, ctx, [], { apply: false, env });
+  // A read-only audit reads no git ref, so it cannot find one unreadable: it names the declaration and uses the recorded source.
+  assertOk(audit, plainOutput(audit));
+  assert.doesNotMatch(plainOutput(audit), /could not be read/);
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false, env });
+  assertOk(status, plainOutput(status));
+  assert.match(plainOutput(status), /layers\.pstack\.source is declared; a read-only run uses the recorded source/);
+  const apply = runInstaller(shell, ctx, [], { env });
+  assert.notEqual(apply.status, 0);
+  assert.match(plainOutput(apply), /maxstack\.settings\.json: layers\.pstack\.source cannot be used: its git ref could not be read/);
+  assert.equal(readFileSync(lockPath, 'utf8'), lockBefore);
+}, {});
+
+withWorkspace('-Status reports a declared git source without resolving its ref', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'sample/nope@main' } } });
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false, env: githubEnv(ctx) });
+  assertOk(status, plainOutput(status));
+  assert.match(plainOutput(status), /layers\.pstack\.source is declared; a read-only run uses the recorded source, and only an apply uses the declaration\./);
+  assert.doesNotMatch(plainOutput(status), /could not be read/);
+}, {});
+
+withWorkspace('-InitSettings refuses a lock with no ownedSchema, and never overwrites a settings file made by a hard link', (ctx) => {
+  mustApply(ctx);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const lock = readJson(lockPath);
+  delete lock.ownedSchema;
+  writeFileSync(lockPath, JSON.stringify(lock));
+  const trace = join(ctx.base, 'init-no-schema.trace');
+  const noSchema = runInstaller(shell, ctx, ['-InitSettings'], { apply: false, env: { ...githubEnv(ctx), GIT_TRACE: trace } });
+  assert.notEqual(noSchema.status, 0);
+  assert.match(plainOutput(noSchema), /ownedSchema 1 or 2/);
+  assert.equal(existsSync(trace), false, 'a refused seed started Git');
+  writeFileSync(lockPath, JSON.stringify({ ...lock, ownedSchema: 2 }));
+
+  const other = join(ctx.base, 'other-settings.json');
+  writeFileSync(other, '{"version":1}');
+  linkSync(other, join(ctx.workspace, 'maxstack.settings.json'));
+  const dry = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assertOk(dry);
+  assert.match(plainOutput(dry), /exists, so -Apply would refuse to overwrite it/);
+  const write = runInstaller(shell, ctx, ['-InitSettings', '-Apply'], { apply: false });
+  assert.notEqual(write.status, 0);
+  assert.equal(readFileSync(other, 'utf8'), '{"version":1}', 'the hard-linked file was overwritten');
+}, {});
+
+withWorkspace('-InitSettings refuses a stack.lock.json that is a junction, and reads nothing through it', (ctx) => {
+  mustApply(ctx);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const lockBackup = readFileSync(lockPath, 'utf8');
+  rmSync(lockPath);
+  const elsewhere = join(ctx.base, 'elsewhere-lock-folder');
+  mkdirSync(elsewhere);
+  writeFileSync(join(elsewhere, 'stack.lock.json'), lockBackup);
+  symlinkSync(elsewhere, lockPath, 'junction');
+  const trace = join(ctx.base, 'init-linked-lock.trace');
+  const seed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false, env: { ...githubEnv(ctx), GIT_TRACE: trace } });
+  assert.notEqual(seed.status, 0);
+  assert.match(plainOutput(seed), /stack\.lock\.json: it is a symbolic link or junction/);
+  assert.equal(existsSync(join(ctx.workspace, 'maxstack.settings.json')), false);
+  assert.equal(existsSync(trace), false, 'a refused seed started Git');
+}, {});
+
+withWorkspace('-InitSettings seeds the migration fixture selection exactly: four runtimes and three layers', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.deepEqual([...lock.selection.runtimes].sort(), ['claude', 'copilot', 'opencode', 'pi']);
+  assert.deepEqual([...lock.selection.layers].sort(), ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']);
+  const seed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assertOk(seed);
+  const value = JSON.parse(seed.stdout.slice(seed.stdout.indexOf('{')));
+  assert.deepEqual(value, {
+    version: 1,
+    runtimes: { claude: {}, copilot: {}, opencode: {}, pi: {} },
+    layers: { pstack: {}, 'simpsonm09-org-ai-plugin': {}, 'simpsonm09-personal-ai-plugin': {} },
+  });
+}, {});
+
+withWorkspace('a format character in a recorded path is refused by -Source and by -InitSettings, with the escape shown', (ctx) => {
+  mustApply(ctx);
+  const folder = join(ctx.workspace, 'seed\u200bcheckout');
+  cpSync(ctx.fixture.dir, folder, { recursive: true });
+  const flag = runInstaller(shell, ctx, ['-Source', `pstack=local:${folder}`], { apply: false });
+  assert.notEqual(flag.status, 0, plainOutput(flag));
+  assert.match(plainOutput(flag), /holds the character \\u200B/);
+  assert.ok(!plainOutput(flag).includes('\u200b'), 'a format character reached the output raw');
+  const lock = readJson(lockPath(ctx));
+  const record = lock.layers.find((layer) => layer.name === 'pstack');
+  record.source = { kind: 'local', url: null, ref: null, commit: null, dirty: null, override: true, path: folder };
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const seed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(seed.status, 0, plainOutput(seed));
+  assert.match(plainOutput(seed), /stack\.lock\.json.*holds the character \\u200B/);
+  assert.ok(!seed.stdout.includes('\u200b'), 'a format character reached the seed raw');
+}, {});
+
+withWorkspace('settings source drift compares Git refs and URL paths with ordinal case', (ctx) => {
+  mustApply(ctx);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const lock = readJson(lockPath);
+  lock.layers.find((layer) => layer.name === 'pstack').source = {
+    kind: 'git', url: 'https://host/Repo.git', ref: 'feat/Ready', commit: ctx.fixture.commit, override: true,
+  };
+  writeFileSync(lockPath, JSON.stringify(lock));
+  for (const [source, differs] of [
+    ['https://host/Repo.git@feat/Ready', false],
+    ['https://host/repo.git@feat/Ready', true],
+    ['https://host/Repo.git@feat/ready', true],
+  ]) {
+    writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source } } });
+    const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+    assertOk(status, plainOutput(status));
+    assert.equal(/layers\.pstack\.source differs from its recorded override/.test(plainOutput(status)), differs, source);
+  }
+}, {});
+
+withWorkspace('-InitSettings refuses malformed or invalid lock selection data without writes or Git', (ctx) => {
+  mustApply(ctx);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const original = readFileSync(lockPath, 'utf8');
+  const lock = readJson(lockPath);
+  const badLocks = [
+    ['duplicate key', original.replace('{', '{"ownedSchema":2,')],
+    ['unknown runtime', JSON.stringify({ ...lock, selection: { ...lock.selection, runtimes: ['fake-runtime'] } })],
+    ['unknown layer', JSON.stringify({ ...lock, selection: { ...lock.selection, layers: ['fake-layer'] } })],
+    ['unknown selection field', JSON.stringify({ ...lock, selection: { ...lock.selection, extra: true } })],
+    ['wrong selection type', JSON.stringify({ ...lock, selection: { ...lock.selection, runtimes: 'claude' } })],
+    ['unsupported numeric owned schema', JSON.stringify({ ...lock, ownedSchema: 3 })],
+    ['unsupported string owned schema', JSON.stringify({ ...lock, ownedSchema: '2' })],
+    ['malformed layer record type', JSON.stringify({ ...lock, layers: [null, ...lock.layers.slice(1)] })],
+    ['duplicate layer record', JSON.stringify({ ...lock, layers: [lock.layers[0], ...lock.layers] })],
+    ['unknown layer record', JSON.stringify({ ...lock, layers: [{ ...lock.layers[0], name: 'not-a-layer' }, ...lock.layers.slice(1)] })],
+    ['non-string source record', JSON.stringify({ ...lock, layers: [{ ...lock.layers[0], source: 4 }, ...lock.layers.slice(1)] })],
+    ['non-object source record', JSON.stringify({ ...lock, layers: [{ ...lock.layers[0], source: true }, ...lock.layers.slice(1)] })],
+    ['non-boolean source override', JSON.stringify({ ...lock, layers: [{ ...lock.layers[0], source: { kind: 'git', override: 'true' } }, ...lock.layers.slice(1)] })],
+    ['deep JSON', `${'{"x":'.repeat(40)}0${'}'.repeat(40)}`],
+    ['oversize JSON', `{"padding":"${'x'.repeat(65540)}"}`],
+    ['invalid UTF-8', Buffer.concat([Buffer.from('{"selection":'), Buffer.from([0xc3, 0x28]), Buffer.from('}')])],
+  ];
+  const trace = join(ctx.base, 'init-invalid-lock-git.trace');
+  for (const [name, value] of badLocks) {
+    writeFileSync(lockPath, value);
+    const run = runInstaller(shell, ctx, ['-InitSettings'], { apply: false, env: { ...testEnvironment(), GIT_TRACE: trace } });
+    assert.notEqual(run.status, 0, name);
+    assert.equal(existsSync(join(ctx.workspace, 'maxstack.settings.json')), false, name);
+    assert.equal(existsSync(trace), false, `${name} invoked Git`);
+  }
+  writeFileSync(lockPath, original);
+}, {});
+
+withWorkspace('no settings keeps only the documented Settings none line with a recorded local override', (ctx) => {
+  const checkout = join(ctx.workspace, 'source-checkout');
+  cpSync(ctx.fixture.dir, checkout, { recursive: true });
+  mustApply(ctx, ['-Source', `pstack=local:${checkout}`]);
+  const applied = runInstaller(shell, ctx);
+  assertOk(applied, plainOutput(applied));
+  assert.deepEqual(plainOutput(applied).split(/\r?\n/).filter((line) => line.startsWith('Settings:')), []);
+}, {});
+
+withWorkspace('-InitSettings reads old locks whose layer sources are legacy strings', (ctx) => {
+  const baseline = runInstaller(shell, ctx);
+  assertOk(baseline);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const lock = readJson(lockPath);
+  for (const layer of lock.layers) layer.source = 'legacy-source-string';
+  for (const schema of [1, 2]) {
+    lock.ownedSchema = schema;
+    writeFileSync(lockPath, JSON.stringify(lock));
+    const seed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+    assertOk(seed);
+    const value = JSON.parse(seed.stdout.slice(seed.stdout.indexOf('{')));
+    assert.deepEqual(Object.keys(value.layers).sort(), lock.selection.layers.slice().sort());
+    assert.ok(Object.values(value.layers).every((layer) => !Object.hasOwn(layer, 'source')));
+  }
+}, {});
+
+withWorkspace('-InitSettings local source seed reapplies in a fresh workspace with equivalent override records', (ctx) => {
+  const pstackOverride = join(ctx.workspace, 'pstack-override');
+  const orgOverride = join(ctx.workspace, 'org-override');
+  cpSync(ctx.fixture.dir, pstackOverride, { recursive: true });
+  cpSync(join(ctx.workspace, LOCAL_LAYERS[0]), orgOverride, { recursive: true });
+  const firstApply = runInstaller(shell, ctx, ['-Source', `pstack=local:${pstackOverride},simpsonm09-org-ai-plugin=local:${orgOverride}`]);
+  assertOk(firstApply);
+  const firstLock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  const seedRun = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assertOk(seedRun);
+  const seed = JSON.parse(seedRun.stdout.slice(seedRun.stdout.indexOf('{')));
+  assert.equal(seed.layers.pstack.source, 'local:pstack-override');
+  assert.equal(seed.layers['simpsonm09-org-ai-plugin'].source, 'local:org-override');
+
+  const fresh = buildWorkspace();
+  try {
+    cpSync(pstackOverride, join(fresh.workspace, 'pstack-override'), { recursive: true });
+    cpSync(orgOverride, join(fresh.workspace, 'org-override'), { recursive: true });
+    writeWorkspaceSettings(fresh, seed);
+    const secondApply = runInstaller(shell, fresh);
+    assertOk(secondApply);
+    const secondLock = readJson(join(fresh.workspace, 'stack.lock.json'));
+    assert.deepEqual(secondLock.selection, firstLock.selection);
+    for (const name of ['pstack', 'simpsonm09-org-ai-plugin']) {
+      const oldSource = firstLock.layers.find((layer) => layer.name === name).source;
+      const newSource = secondLock.layers.find((layer) => layer.name === name).source;
+      assert.equal(newSource.kind, oldSource.kind);
+      assert.equal(newSource.override, oldSource.override);
+      assert.equal(newSource.commit, oldSource.commit);
+    }
+  } finally { rmSync(fresh.base, { recursive: true, force: true }); }
+}, {});
+
+withWorkspace('-InitSettings refuses an absent lock and malformed recorded overrides before writing', (ctx) => {
+  const missing = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(missing.status, 0);
+  assert.match(plainOutput(missing), /needs .*stack\.lock\.json/i);
+  assert.equal(existsSync(join(ctx.workspace, 'maxstack.settings.json')), false);
+
+  const applied = runInstaller(shell, ctx);
+  assertOk(applied);
+  const lockPath = join(ctx.workspace, 'stack.lock.json');
+  const lock = readJson(lockPath);
+  lock.layers.find((layer) => layer.name === 'pstack').source = { kind: 'other', override: true };
+  writeFileSync(lockPath, JSON.stringify(lock));
+  const trace = join(ctx.base, 'invalid-init-source-git.trace');
+  const invalid = runInstaller(shell, ctx, ['-InitSettings'], { apply: false, env: { ...testEnvironment(), GIT_TRACE: trace } });
+  assert.notEqual(invalid.status, 0);
+  assert.match(plainOutput(invalid), /recorded source.*kind is invalid/i);
+  assert.equal(existsSync(trace), false, 'invalid recorded source shape started Git');
+  assert.equal(existsSync(join(ctx.workspace, 'maxstack.settings.json')), false);
+
+  const validGitOverride = { kind: 'git', url: 'https://example.invalid/team/layer.git', ref: 'main', commit: ctx.fixture.commit, override: true };
+  for (const [field, mutate] of [
+    ['url', (source) => { source.url = 'ext::sh -c touch x'; }],
+    ['ref', (source) => { source.ref = '--upload-pack=touch x'; }],
+    ['commit', (source) => { source.commit = 'not-a-commit'; }],
+  ]) {
+    const candidate = readJson(lockPath);
+    candidate.layers.find((layer) => layer.name === 'pstack').source = structuredClone(validGitOverride);
+    mutate(candidate.layers.find((layer) => layer.name === 'pstack').source);
+    writeFileSync(lockPath, JSON.stringify(candidate));
+    const bad = runInstaller(shell, ctx, ['-InitSettings'], { apply: false, env: { ...testEnvironment(), GIT_TRACE: trace } });
+    assert.notEqual(bad.status, 0, field);
+    assert.match(plainOutput(bad), /recorded git source.*URL, ref, or commit is invalid/i, field);
+    assert.equal(existsSync(trace), false, `${field} validation invoked Git`);
+    assert.equal(existsSync(join(ctx.workspace, 'maxstack.settings.json')), false, `${field} validation wrote settings`);
+  }
 }, {});
 
 withWorkspace('remove ignores an invalid settings file and keeps the locked selection rules', (ctx) => {
@@ -2059,6 +3113,7 @@ function wrapperTargetHarness(cases) {
     .map(([path, windows]) => `  [pscustomobject]@{ path = '${path.replaceAll("'", "''")}'; windows = ${windows ? '$true' : '$false'} }`)
     .join(',\n');
   return `param([string] $Installer)
+. (Join-Path (Split-Path -Parent $Installer) 'Install-Ordinal.ps1')
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Installer, [ref] $tokens, [ref] $errors)
@@ -2177,7 +3232,7 @@ function runStatus(ctx, extra = []) {
 function statusRows(run) {
   return run.stdout
     .split(/\r?\n/)
-    .map((line) => /^(matching|drifted|modified|missing|untracked)\s+(.+)$/.exec(line))
+    .map((line) => /^(matching|drifted|modified|missing|untracked|skipped)\s+(.+)$/.exec(line))
     .filter(Boolean)
     .map(([, state, label]) => ({ state, label: label.trim() }));
 }
@@ -4790,9 +5845,16 @@ withWorkspace('a git override the lock holds with a bad url, ref, or commit is i
     mutate(sourceBlockIn(lock, 'pstack'));
     setLock(ctx, lock);
     const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
-    assertOk(status);
-    assert.match(plainOutput(status), new RegExp(`layer 'pstack' has an invalid ${field}`), plainOutput(status));
-    assert.match(status.stdout, /pstack: invalid recorded source, ignored for this run/, status.stdout);
+    const recorded = Object.values(sourceBlockIn(lock, 'pstack')).filter((value) => typeof value === 'string');
+    if (recorded.some((value) => [...value].some((character) => character.charCodeAt(0) < 32))) {
+      // A control character in a recorded value is refused at the lock boundary, so the lock is not read at all.
+      assert.notEqual(status.status, 0, plainOutput(status));
+      assert.match(plainOutput(status), /stack\.lock\.json.*holds the character \\u000A/, plainOutput(status));
+    } else {
+      assertOk(status);
+      assert.match(plainOutput(status), new RegExp(`layer 'pstack' has an invalid ${field}`), plainOutput(status));
+      assert.match(status.stdout, /pstack: invalid recorded source, ignored for this run/, status.stdout);
+    }
   }
   const lock = structuredClone(good);
   sourceBlockIn(lock, 'pstack').url = 'ext::sh -c touch x';
@@ -4803,6 +5865,21 @@ withWorkspace('a git override the lock holds with a bad url, ref, or commit is i
   assert.match(plainOutput(apply), /layer 'pstack' has an invalid url/, plainOutput(apply));
   assert.match(plainOutput(apply), /-Source pstack=default -Apply/, plainOutput(apply));
   assert.deepEqual(snapshotTree(ctx.workspace), before, 'a refused lock changed the install');
+}, {});
+
+withWorkspace('a valid settings source replaces a malformed recorded source before apply', (ctx) => {
+  servedFeature(ctx);
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  const lock = readJson(lockPath(ctx));
+  sourceBlockIn(lock, 'pstack').url = 'ext::sh -c touch x';
+  setLock(ctx, lock);
+  const source = join(ctx.workspace, 'settings-source');
+  cpSync(ctx.fixture.dir, source, { recursive: true });
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:settings-source' } } });
+  const apply = runInstaller(shell, ctx);
+  assertOk(apply, plainOutput(apply));
+  assert.equal(sourceOf(ctx, 'pstack').source.kind, 'local');
+  assert.equal(sourceOf(ctx, 'pstack').source.path, source);
 }, {});
 
 withWorkspace('a local override the lock holds with a relative path is ignored by -Status, and a plain apply refuses it', (ctx) => {
@@ -4947,7 +6024,7 @@ withWorkspace('a local source that contains the workspace is refused, since the 
   assert.match(plainOutput(run), /is an ancestor of the workspace/, run.stdout);
 }, {});
 
-withWorkspace('a local source reached through a junction, or named with a long-path prefix, is compared by the folder it names', (ctx) => {
+withWorkspace('a local source reached through a junction is compared by the folder it names, and refused as inside .claude', (ctx) => {
   const toClaude = join(ctx.base, 'to-claude');
   mkdirSync(join(ctx.workspace, '.claude'), { recursive: true });
   symlinkSync(join(ctx.workspace, '.claude'), toClaude, 'junction');
@@ -4955,9 +6032,12 @@ withWorkspace('a local source reached through a junction, or named with a long-p
   assert.notEqual(viaJunction.status, 0, 'a junction into .claude was accepted');
   assert.match(plainOutput(viaJunction), /is inside \.claude/, viaJunction.stdout);
 
+}, {});
+
+withWorkspace('a device prefix in a -Source path is refused by its text, and is not compared by the folder it names', (ctx) => {
   const prefixed = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:\\\\?\\${ctx.workspace}`], { apply: false });
   assert.notEqual(prefixed.status, 0, 'a long-path prefix hid the workspace');
-  assert.match(plainOutput(prefixed), /is the workspace itself/, prefixed.stdout);
+  assert.match(plainOutput(prefixed), /UNC or device path/, prefixed.stdout);
 }, {});
 
 withWorkspace('a comma inside a -Source path is refused with the reason, since a comma separates entries', (ctx) => {
@@ -5021,7 +6101,7 @@ withWorkspace('a drive root or a share root is refused as a local source, with t
 
   const share = runInstaller(shell, ctx, ['-Source', 'simpsonm09-org-ai-plugin=local://server/share'], { apply: false });
   assert.notEqual(share.status, 0, 'a share root was accepted as a layer source');
-  assert.match(plainOutput(share), /is a drive or share root, which cannot be a layer source/, share.stdout);
+  assert.match(plainOutput(share), /UNC or device path/, share.stdout);
 }, {});
 
 // Round 2, D: a clean filter that .git/config names is a program too. An audit of a local tree must run none of it.
@@ -5902,7 +6982,8 @@ withWorkspace('an apply whose npm scan cannot read a scoped folder still writes 
 withWorkspace('a long-path UNC share is refused as a share root, not read as a folder under the current directory', (ctx) => {
   const run = runInstaller(shell, ctx, ['-Source', 'simpsonm09-org-ai-plugin=local:\\\\?\\UNC\\server\\share'], { apply: false });
   assert.notEqual(run.status, 0, 'a long-path UNC share was accepted as a layer source');
-  assert.match(plainOutput(run), /is a drive or share root, which cannot be a layer source/, run.stdout);
+  // A device prefix is refused by its text, before any path is read, so the UNC share is not reached.
+  assert.match(plainOutput(run), /UNC or device path/, run.stdout);
 }, {});
 
 // A SHA-256 repository reads its HEAD and its dirty state like a SHA-1 one: the status names no SHA-1 object.
@@ -6201,6 +7282,7 @@ withWorkspace('the legacy workspace fallback warns before command validation and
   assert.notEqual(replaced, source, 'the isolated script no longer has the legacy workspace parameter');
   writeFileSync(join(copyScripts, 'Install-Workspace.ps1'), replaced);
   cpSync(join(repoRoot, 'scripts', 'Install-WorkspaceDiscovery.ps1'), join(copyScripts, 'Install-WorkspaceDiscovery.ps1'));
+  cpSync(join(repoRoot, 'scripts', 'Install-Ordinal.ps1'), join(copyScripts, 'Install-Ordinal.ps1'));
 
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.toUpperCase() === 'MAXSTACK_WORKSPACE') delete env[key];
@@ -6241,3 +7323,162 @@ withMainCommit('a workspace reached through a junction keeps the given path in t
   assert.equal(newLock.workspace, 'linkname', 'the lock must record the leaf name the user gave');
   assert.equal(newLock.workspace, mainLock.workspace, 'upstream main records the same workspace name');
 }, {});
+
+// Review items N1 to N10 of c2d0d54. Each test names the item it covers, and each fails before its fix.
+// The 8.3 name of an existing folder, as the filesystem reports it, or null when the folder cannot be read.
+const shortPathOf = (path) => {
+  const script = `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${path.replaceAll("'", "''")}').ShortPath`;
+  const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, encoding: 'utf8' });
+  return run.status === 0 ? run.stdout.trim() : null;
+};
+// Whether this volume generates 8.3 names for a new folder. A volume with generation off skips the 8.3 tests with that reason.
+const EXISTING_LONG_FOLDER = process.env.ProgramFiles ?? 'C:\\Program Files';
+const EXISTING_SHORT_FOLDER = shortPathOf(EXISTING_LONG_FOLDER);
+const short83Available = Boolean(EXISTING_SHORT_FOLDER) && EXISTING_SHORT_FOLDER !== EXISTING_LONG_FOLDER && /~\d/.test(EXISTING_SHORT_FOLDER.split(/[\\/]/).pop());
+
+// N1: -LayerSource refuses a path that holds a format or bidi character, as -Source refuses one, and records nothing.
+withWorkspace('item N1: a -LayerSource path with a format or bidi character is refused as -Source refuses it, and nothing is recorded', (ctx) => {
+  for (const char of [ZWSP, RLO]) {
+    const folder = join(ctx.base, `layer${char}folder`);
+    mkdirSync(folder);
+    const run = runInstaller(shell, ctx, ['-LayerSource', `pstack=${folder}`]);
+    assert.notEqual(run.status, 0, plainOutput(run));
+    assert.match(plainOutput(run), /-LayerSource pstack=.* holds the character /, plainOutput(run));
+    assert.ok(!plainOutput(run).includes(char), `${escapedChar(char)} reached the output raw`);
+    assert.equal(existsSync(lockPath(ctx)), false, 'a refused -LayerSource wrote a lock');
+  }
+}, {});
+
+// N2: an unowned folder whose name differs from a retired folder by a zero width space is kept.
+withWorkspace('item N2: an unowned folder named like a retired one, with a zero width space, is kept by apply', (ctx) => {
+  mustApply(ctx);
+  const folder = join(ctx.workspace, '.opencode', 'plugins', `pstack-opencode${ZWSP}`);
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'user.txt'), 'mine\n');
+  mustApply(ctx);
+  assert.ok(existsSync(join(folder, 'user.txt')), 'an apply deleted a folder the installer does not own');
+}, {});
+
+// N3: a junction whose target folder differs from the workspace by a zero width space is outside the workspace, so its target
+// is not touched by a removal.
+withWorkspace('item N3: a junction in an excluded folder, to a sibling named like the workspace with a zero width space, is outside the workspace, so its owned folder is refused', (ctx) => {
+  mustApply(ctx);
+  const sibling = join(ctx.base, `simpsonm09${ZWSP}`);
+  mkdirSync(sibling);
+  writeFileSync(join(sibling, 'keep.txt'), 'outside\n');
+  const modules = join(ctx.workspace, '.opencode', 'plugins', 'pstack', 'node_modules');
+  mkdirSync(modules, { recursive: true });
+  symlinkSync(sibling, join(modules, 'escape-link'), 'junction');
+  const plan = runInstaller(shell, ctx, ['-Uninstall'], { apply: false });
+  assertOk(plan, plainOutput(plan));
+  assert.doesNotMatch(plainOutput(plan), /DELETE \.opencode\/plugins\/pstack /, 'the plan deletes an owned folder that holds a link to outside the workspace');
+  assert.match(plainOutput(plan), /SKIP \.opencode\/plugins\/pstack /, plainOutput(plan));
+  const uninstall = runInstaller(shell, ctx, ['-Uninstall'], { apply: true });
+  assert.ok(existsSync(join(sibling, 'keep.txt')), 'a removal reached the sibling folder through the junction');
+}, {});
+
+// N4: flag names refuse a format character, and match case-insensitively for ASCII letters only, so a ligature that spells a name is unknown.
+withWorkspace('item N4: -Runtimes and -Layers refuse a format character in a name, and a ligature that spells a layer is unknown', (ctx) => {
+  mustApply(ctx);
+  const cases = [
+    ['-Runtimes', `pi${ZWSP}`, /-Runtimes name 'pi\\u200B' holds the character \\u200B/],
+    ['-Layers', `pstack${ZWSP}`, /-Layers name 'pstack\\u200B' holds the character \\u200B/],
+    ['-Layers', 'p\uFB06ack', /-Layers names an unknown name/],
+  ];
+  for (const [flag, value, message] of cases) {
+    const run = runInstaller(shell, ctx, [flag, value], { apply: false });
+    assert.notEqual(run.status, 0, `${flag} ${JSON.stringify(value)}: ${plainOutput(run)}`);
+    assert.match(plainOutput(run), message, flag);
+  }
+  assertOk(runInstaller(shell, ctx, ['-Layers', 'PSTACK'], { apply: false }), 'an ASCII case variant is still accepted');
+}, {});
+
+// N5: an existing folder reached by its real 8.3 short name is refused by a settings source and by -Source, before normalisation.
+withWorkspaceNeeding('8.3 short names', short83Available, 'item N5: an existing folder reached by its 8.3 short name is refused by settings and by -Source', (ctx) => {
+  mustApply(ctx);
+  const short = EXISTING_SHORT_FOLDER;
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: `local:${short}` } } });
+  const audit = runInstaller(shell, ctx, [], { apply: false });
+  assertOk(audit, plainOutput(audit));
+  assert.match(plainOutput(audit), /layers\.pstack\.source local path has an 8\.3 short name.*This run skips layer pstack and has no fallback\./, plainOutput(audit));
+  const apply = runInstaller(shell, ctx);
+  assert.notEqual(apply.status, 0, plainOutput(apply));
+  assert.match(plainOutput(apply), /layers\.pstack\.source local path has an 8\.3 short name/, plainOutput(apply));
+  writeWorkspaceSettings(ctx, { version: 1 });
+  const flag = runInstaller(shell, ctx, ['-Source', `pstack=local:${short}`], { apply: false });
+  assert.notEqual(flag.status, 0, plainOutput(flag));
+  assert.match(plainOutput(flag), /-Source pstack=local:C:\\PROGRA~1 has an 8\.3 short name/, plainOutput(flag));
+}, {});
+
+// N10: -InitSettings refuses a recorded 8.3 path, so it never writes a seed that apply then refuses. A long path round-trips.
+withWorkspaceNeeding('8.3 short names', short83Available, 'item N10: -InitSettings refuses a recorded 8.3 path, and a long recorded path round-trips through apply', (ctx) => {
+  mustApply(ctx);
+  // The pstack fixture repository, under the temp base: a long folder name that the layer's plugins/pstack path is read from.
+  const long = ctx.fixture.dir;
+  const short = EXISTING_SHORT_FOLDER;
+  const lock = readJson(lockPath(ctx));
+  const record = lock.layers.find((layer) => layer.name === 'pstack');
+  record.source = { kind: 'local', url: null, ref: null, commit: null, dirty: null, override: true, path: short };
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const refused = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(refused.status, 0, plainOutput(refused));
+  assert.match(plainOutput(refused), /cannot migrate the recorded local source for 'pstack': .*8\.3 short name/, plainOutput(refused));
+  record.source.path = long;
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const seed = runInstaller(shell, ctx, ['-InitSettings', '-Apply'], { apply: false });
+  assertOk(seed, plainOutput(seed));
+  const applied = runInstaller(shell, ctx, [], { apply: true });
+  assertOk(applied, plainOutput(applied));
+}, {});
+
+// N6: a read-only audit names a valid declared source, and an unavailable one is not listed as an override in the pin block.
+withWorkspace('item N6: an audit names a valid declared source, and an unavailable one is listed as skipped, not as an override', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'example/fixture@main' } } });
+  const valid = runInstaller(shell, ctx, [], { apply: false });
+  assertOk(valid, plainOutput(valid));
+  assert.match(plainOutput(valid), /layers\.pstack\.source is declared; a read-only run uses the recorded source/, plainOutput(valid));
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:nope' } } });
+  const unavailable = runInstaller(shell, ctx, [], { apply: false });
+  assertOk(unavailable, plainOutput(unavailable));
+  assert.doesNotMatch(plainOutput(unavailable), /pstack: override, local .*nope/, 'the skipped layer is listed as an override in use');
+  assert.match(plainOutput(unavailable), /pstack: declared source skipped/, plainOutput(unavailable));
+}, {});
+
+// N7: -Uninstall does not read the settings file, so a dry run names no skipped layer and says the declaration is not used.
+withWorkspace('item N7: a dry -Uninstall names no skipped layer, since it does not use the declared sources and says so', (ctx) => {
+  mustApply(ctx);
+  writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:nope' } } });
+  const dry = runInstaller(shell, ctx, ['-Uninstall'], { apply: false });
+  assertOk(dry, plainOutput(dry));
+  assert.doesNotMatch(plainOutput(dry), /skips layer pstack/, 'the dry run names a skipped layer its plan removes anyway');
+  assert.match(plainOutput(dry), /Settings: -Uninstall does not read maxstack\.settings\.json; it removes what the lock recorded\./, plainOutput(dry));
+}, {});
+
+// N9: a nested lock key in the wrong case is refused, as the top-level key is.
+withWorkspace('item N9: a nested lock key in the wrong case is refused, as a top-level key is', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  const record = lock.layers.find((layer) => layer.name === 'pstack');
+  assert.ok(Object.prototype.hasOwnProperty.call(record, 'claude'), 'the layer record has no claude key to rename');
+  record.Claude = record.claude;
+  delete record.claude;
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const before = readFileSync(lockPath(ctx), 'utf8');
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assert.notEqual(status.status, 0, plainOutput(status));
+  assert.match(plainOutput(status), /stack\.lock\.json\.layers\[\] key 'Claude' must be spelled claude/, plainOutput(status));
+  assert.equal(readFileSync(lockPath(ctx), 'utf8'), before, 'a refused lock was rewritten');
+}, {});
+
+// N8: a lock override that is the string "true" is not a boolean, so it is not an override.
+withWorkspace('item N8: a lock override that is the string "true", not a boolean, is not read as an override', (ctx) => {
+  mustApply(ctx);
+  const lock = readJson(lockPath(ctx));
+  const record = lock.layers.find((layer) => layer.name === 'pstack');
+  record.source = { kind: 'git', url: 'https://github.com/simpsonm09/pstack-claude.git', ref: 'main', commit: 'a'.repeat(40), dirty: null, override: 'true' };
+  writeFileSync(lockPath(ctx), JSON.stringify(lock));
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assert.doesNotMatch(plainOutput(status), /pstack: override, git/, plainOutput(status));
+}, {});
+

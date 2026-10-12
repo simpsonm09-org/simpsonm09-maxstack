@@ -1,84 +1,29 @@
 # platforms: windows
 #requires -Version 7.0
 Set-StrictMode -Version Latest
+# The ordinal helpers, which every comparison here uses. A driver that loads this file alone still has them.
+. (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
 
-# The marker files that name a workspace, in the order a folder is checked.
-$script:MaxstackMarkerNames = @('maxstack.settings.json', 'stack.lock.json')
-
-# Control characters: C0, DEL, and the C1 range. A user value holding one is refused.
-function Test-MaxstackControlCharacter {
-    param([char] $Character)
-
-    $code = [int] $Character
-    return ($code -lt 32) -or ($code -ge 127 -and $code -le 159)
-}
-
-# A character that can reorder or split a line in a terminal: the bidi overrides and isolates, and the line and paragraph
-# separators. A user value holding one is refused.
-function Test-MaxstackLineBreakingCharacter {
-    param([char] $Character)
-
-    $code = [int] $Character
-    return ($code -ge 0x202a -and $code -le 0x202e) -or ($code -ge 0x2066 -and $code -le 0x2069) -or $code -eq 0x2028 -or $code -eq 0x2029
-}
-
-# A character shown as an escape in every message: a control character, any Format character (a zero width space or
-# joiner, a byte order mark), a line or paragraph separator, and a surrogate that is not part of a pair.
-function Test-MaxstackEscapedCharacter {
-    param([char] $Character, [bool] $Paired)
-
-    if (Test-MaxstackControlCharacter $Character) { return $true }
-    if (-not $Paired -and [char]::IsSurrogate($Character)) { return $true }
-    $category = [Globalization.CharUnicodeInfo]::GetUnicodeCategory($Character)
-    return $category -in @([Globalization.UnicodeCategory]::Format, [Globalization.UnicodeCategory]::LineSeparator, [Globalization.UnicodeCategory]::ParagraphSeparator)
-}
-
-# The text an error or the resolved line shows: every escaped character as \uXXXX, and at most 260 characters, with an
-# ellipsis when cut. A surrogate pair is kept whole.
-function Get-MaxstackSafePathDisplay {
-    param([string] $Path)
-
-    $display = [Text.StringBuilder]::new()
-    for ($index = 0; $index -lt $Path.Length; $index++) {
-        $character = $Path[$index]
-        $paired = [char]::IsHighSurrogate($character) -and ($index + 1 -lt $Path.Length) -and [char]::IsLowSurrogate($Path[$index + 1])
-        if ($paired) {
-            [void] $display.Append($character).Append($Path[$index + 1])
-            $index++
-        }
-        elseif (Test-MaxstackEscapedCharacter $character $false) {
-            [void] $display.Append(('\u{0:X4}' -f [int] $character))
-        }
-        else {
-            [void] $display.Append($character)
-        }
-    }
-    $text = $display.ToString()
-    if ($text.Length -le 260) { return $text }
-    $cut = if ([char]::IsHighSurrogate($text[259])) { 259 } else { 260 }
-    return $text.Substring(0, $cut) + '...'
-}
-
-# Refuses a user value holding a control character or a line-breaking character, or an unpaired surrogate. A Format
-# character other than those is shown as an escape and accepted.
+# A user value is refused by its text when it holds a control, a format character, a line or paragraph separator, or an
+# unpaired surrogate. A value of the boundary kind names the character that failed, shown escaped.
 function Assert-MaxstackPathHasNoControlCharacters {
     param([string] $Path, [string] $Name)
 
-    for ($index = 0; $index -lt $Path.Length; $index++) {
-        $character = $Path[$index]
-        $paired = [char]::IsHighSurrogate($character) -and ($index + 1 -lt $Path.Length) -and [char]::IsLowSurrogate($Path[$index + 1])
-        if ($paired) {
-            $index++
-            continue
-        }
-        if (Test-MaxstackControlCharacter $character) {
-            throw "$Name path contains control characters: $(Get-MaxstackSafePathDisplay $Path)"
-        }
-        if ((Test-MaxstackLineBreakingCharacter $character) -or [char]::IsSurrogate($character)) {
-            throw "$Name path contains a character that reorders or splits a line: $(Get-MaxstackSafePathDisplay $Path). Give a plain path."
-        }
-    }
+    $index = Find-BoundaryIndex $Path
+    if ($index -lt 0) { return }
+    $character = $Path[$index]
+    $shown = ConvertTo-SafeName $Path
+    if ([char]::IsSurrogate($character)) { throw "$Name path contains a character that reorders or splits a line: $shown. Give a plain path." }
+    $category = [Globalization.CharUnicodeInfo]::GetUnicodeCategory($character)
+    if ($category -eq [Globalization.UnicodeCategory]::Control) { throw "$Name path contains control characters: $shown" }
+    $code = [int] $character
+    $bidi = (($code -ge 0x202A) -and ($code -le 0x202E)) -or (($code -ge 0x2066) -and ($code -le 0x2069))
+    if (($category -eq [Globalization.UnicodeCategory]::Format) -and -not $bidi) { throw "$Name path contains a format character, which a path may not hold: $shown. Give a plain path." }
+    throw "$Name path contains a character that reorders or splits a line: $shown. Give a plain path."
 }
+
+# The marker files that name a workspace, in the order a folder is checked.
+$script:MaxstackMarkerNames = @('maxstack.settings.json', 'stack.lock.json')
 
 # Refuses a path by its text before any filesystem call. A device prefix and a UNC path would reach the network or a
 # device, and an 8.3 short name would name the workspace by a name the lock does not record.
@@ -86,7 +31,7 @@ function Assert-MaxstackPathText {
     param([string] $Path, [string] $Name)
 
     Assert-MaxstackPathHasNoControlCharacters $Path $Name
-    $safePath = Get-MaxstackSafePathDisplay $Path
+    $safePath = ConvertTo-SafeName $Path
     if ($Path -match '^[\\/]{2}[?.][\\/]') {
         throw "$Name path uses a device prefix (\\?\ or \\.\): $safePath. Give a drive path."
     }
@@ -102,7 +47,7 @@ function Test-MaxstackShortNameSegment {
 
     if ($Segment -cnotmatch '^[^~]{1,6}~\d+(\.[^.]{0,3})?$') { return $false }
     if (-not (Test-Path -LiteralPath $Parent -PathType Container)) { return $true }
-    $literal = @(Get-ChildItem -LiteralPath $Parent -Force | Where-Object { $_.Name -ceq $Segment })
+    $literal = @(Get-ChildItem -LiteralPath $Parent -Force | Where-Object { (Test-OrdinalEqual $_.Name $Segment) })
     return $literal.Count -eq 0
 }
 
@@ -112,11 +57,11 @@ function Assert-MaxstackShortNames {
 
     $prefix = ''
     foreach ($segment in ($FullPath -split '[\\/]')) {
-        if ($segment -eq '') { continue }
-        if ($prefix -ne '' -and (Test-MaxstackShortNameSegment $prefix $segment)) {
-            throw "$Name path has an 8.3 short name ($(Get-MaxstackSafePathDisplay $segment)): $(Get-MaxstackSafePathDisplay $FullPath). Give the long path."
+        if ((Test-OrdinalEqual $segment '')) { continue }
+        if ((-not (Test-OrdinalEqual $prefix '')) -and (Test-MaxstackShortNameSegment $prefix $segment)) {
+            throw "$Name path has an 8.3 short name ($(ConvertTo-SafeName $segment)): $(ConvertTo-SafeName $FullPath). Give the long path."
         }
-        $prefix = if ($prefix -eq '') { "$segment\" } else { "$prefix$segment\" }
+        $prefix = if ((Test-OrdinalEqual $prefix '')) { "$segment\" } else { "$prefix$segment\" }
     }
 }
 
@@ -125,9 +70,9 @@ function Assert-MaxstackShortNames {
 function Test-MaxstackInternalLocation {
     param([string] $Path)
 
-    $segments = @($Path -split '[\\/]' | Where-Object { $_ -ne '' })
+    $segments = @($Path -split '[\\/]' | Where-Object { (-not (Test-OrdinalEqual $_ '')) })
     for ($index = 0; $index -lt $segments.Count; $index++) {
-        if ($segments[$index] -ieq '.git') { return $true }
+        if (Test-OrdinalEqualIgnoreCase $segments[$index] '.git') { return $true }
         if ($index + 1 -lt $segments.Count -and (Test-MaxstackSegmentPair $segments[$index] $segments[$index + 1])) { return $true }
     }
     return $false
@@ -136,8 +81,8 @@ function Test-MaxstackInternalLocation {
 function Test-MaxstackSegmentPair {
     param([string] $First, [string] $Second)
 
-    if ($First -ieq '.claude' -and $Second -ieq 'cache') { return $true }
-    return $First -ieq 'projects' -and ($Second -ieq 'repos' -or $Second -ieq 'worktrees')
+    if ((Test-OrdinalEqualIgnoreCase $First '.claude') -and (Test-OrdinalEqualIgnoreCase $Second 'cache')) { return $true }
+    return (Test-OrdinalEqualIgnoreCase $First 'projects') -and ((Test-OrdinalEqualIgnoreCase $Second 'repos') -or (Test-OrdinalEqualIgnoreCase $Second 'worktrees'))
 }
 
 # The folder that holds the running scripts folder: the maxstack checkout this installer belongs to.
@@ -158,7 +103,7 @@ function Test-MaxstackUnder {
     if ([string]::IsNullOrEmpty($Root)) { return $false }
     $trimmedRoot = [IO.Path]::TrimEndingDirectorySeparator($Root)
     $trimmedPath = [IO.Path]::TrimEndingDirectorySeparator($Path)
-    return ($trimmedPath -ieq $trimmedRoot) -or $trimmedPath.StartsWith("$trimmedRoot\", [StringComparison]::OrdinalIgnoreCase)
+    return (Test-OrdinalEqualIgnoreCase $trimmedPath $trimmedRoot) -or $trimmedPath.StartsWith("$trimmedRoot\", [StringComparison]::OrdinalIgnoreCase)
 }
 
 # A maxstack checkout holds the layer manifest and this installer. Its own workspace folder is named workspace.
@@ -166,8 +111,9 @@ function Test-MaxstackCheckout {
     param([string] $Folder)
 
     if ([string]::IsNullOrEmpty($Folder)) { return $false }
-    return (Test-Path -LiteralPath (Join-Path $Folder 'layers.json') -PathType Leaf) -and
-        (Test-Path -LiteralPath (Join-Path $Folder 'scripts\Install-Workspace.ps1') -PathType Leaf)
+    # [IO.Path]::Combine, not Join-Path: Join-Path raises an error on a drive that is not present, and a missing drive is not a checkout.
+    return (Test-Path -LiteralPath ([IO.Path]::Combine($Folder, 'layers.json')) -PathType Leaf) -and
+        (Test-Path -LiteralPath ([IO.Path]::Combine($Folder, 'scripts', 'Install-Workspace.ps1')) -PathType Leaf)
 }
 
 # A folder that is the running checkout or lies under it, a maxstack checkout, or the workspace folder of one. None of
@@ -180,7 +126,7 @@ function Test-MaxstackCheckoutLocation {
     if (Test-MaxstackCheckout $trimmed) { return $true }
     $leaf = [IO.Path]::GetFileName($trimmed)
     $parent = [IO.Path]::GetDirectoryName($trimmed)
-    return ($leaf -ieq 'workspace') -and (Test-MaxstackCheckout $parent)
+    return (Test-OrdinalEqualIgnoreCase $leaf 'workspace') -and (Test-MaxstackCheckout $parent)
 }
 
 # The folder a path finally names: a junction or a symbolic link is followed, so the workspace is the folder it holds.
@@ -197,7 +143,7 @@ function ConvertTo-MaxstackFullPath {
     param([string] $Path, [string] $Name, [string] $CurrentDirectory)
 
     Assert-MaxstackPathText $Path $Name
-    $safePath = Get-MaxstackSafePathDisplay $Path
+    $safePath = ConvertTo-SafeName $Path
     if ([IO.Path]::IsPathRooted($Path) -and -not [IO.Path]::IsPathFullyQualified($Path)) {
         # C:ws resolves against the process location of drive C, and \ws against the drive of the process location.
         $kind = if ($Path -match '^[A-Za-z]:') { 'drive-relative' } else { 'root-relative' }
@@ -220,7 +166,7 @@ function Assert-MaxstackWorkspaceTarget {
     param([string] $Path, [string] $Source, [string] $RepoRoot)
 
     Assert-MaxstackPathText $Path $Source
-    $safePath = Get-MaxstackSafePathDisplay $Path
+    $safePath = ConvertTo-SafeName $Path
     $missing = "$Source target does not exist or is not a directory: $safePath"
     if (Test-MaxstackDriveRoot $Path) { throw "$Source target is a drive root, not a workspace: $safePath. Give a folder under it." }
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw $missing }
@@ -233,7 +179,7 @@ function Assert-MaxstackWorkspaceTarget {
     if (-not (Test-Path -LiteralPath $final -PathType Container)) { throw $missing }
     if (Test-MaxstackDriveRoot $final) { throw "$Source target is a drive root, not a workspace: $safePath. Give a folder under it." }
     if (Test-MaxstackInternalLocation $final) {
-        throw "$Source target is inside a git directory, a layer checkout, or a layer cache: $(Get-MaxstackSafePathDisplay $final)"
+        throw "$Source target is inside a git directory, a layer checkout, or a layer cache: $(ConvertTo-SafeName $final)"
     }
     Assert-MaxstackPathText $final $Source
     if ((Test-MaxstackCheckoutLocation $Path $RepoRoot) -or (Test-MaxstackCheckoutLocation $final $RepoRoot)) {
@@ -250,7 +196,7 @@ function Assert-MaxstackWorkspaceTarget {
 function Get-MaxstackWalkStart {
     param([string] $CurrentDirectory)
 
-    if ((Get-Location).Provider.Name -cne 'FileSystem') { return $null }
+    if (-not (Test-OrdinalEqual ((Get-Location).Provider.Name) 'FileSystem')) { return $null }
     if ($CurrentDirectory -match '^[\\/]{2}') { return $null }
     try {
         $full = [IO.Path]::GetFullPath($CurrentDirectory)
@@ -268,7 +214,7 @@ function Get-MaxstackCurrentDirectory {
 
     $start = Get-MaxstackWalkStart $CurrentDirectory
     if ($null -eq $start) {
-        throw "$Name path is relative, and the current directory cannot resolve it: $(Get-MaxstackSafePathDisplay $CurrentDirectory)"
+        throw "$Name path is relative, and the current directory cannot resolve it: $(ConvertTo-SafeName $CurrentDirectory)"
     }
     return $start
 }
@@ -299,7 +245,7 @@ function Test-MaxstackDriveRoot {
     param([string] $Path)
 
     $root = [IO.Path]::GetPathRoot($Path)
-    return [IO.Path]::TrimEndingDirectorySeparator($Path) -ieq [IO.Path]::TrimEndingDirectorySeparator($root)
+    return Test-OrdinalEqualIgnoreCase ([IO.Path]::TrimEndingDirectorySeparator($Path)) ([IO.Path]::TrimEndingDirectorySeparator($root))
 }
 
 # The nearest folder from the current directory upward that holds a marker file. A marker must be a file, so a directory
@@ -330,7 +276,7 @@ function Find-MaxstackCwdMarker {
 function Test-MaxstackDirectoryNamed {
     param($Directory, [string] $Name)
 
-    return ($null -ne $Directory) -and ($Directory.Name -ieq $Name)
+    return ($null -ne $Directory) -and (Test-OrdinalEqualIgnoreCase $Directory.Name $Name)
 }
 
 # The workspace a script's own location names: <workspace>\projects\repos\<repo>\scripts or <workspace>\projects\worktrees\<repo>\scripts.
@@ -340,13 +286,13 @@ function Get-MaxstackScriptLayoutWorkspace {
 
     Assert-MaxstackPathHasNoControlCharacters $ScriptRoot 'Script root'
     try { $fullScriptRoot = [IO.Path]::GetFullPath($ScriptRoot) }
-    catch { throw "Script root is invalid: $(Get-MaxstackSafePathDisplay $ScriptRoot)" }
+    catch { throw "Script root is invalid: $(ConvertTo-SafeName $ScriptRoot)" }
     $scriptDirectory = [IO.DirectoryInfo]::new($fullScriptRoot)
     if (-not (Test-MaxstackDirectoryNamed $scriptDirectory 'scripts')) { return $null }
     $repo = $scriptDirectory.Parent
     $layout = $null
     if ($null -ne $repo) { $layout = $repo.Parent }
-    if ($null -eq $layout -or ($layout.Name -ine 'repos' -and $layout.Name -ine 'worktrees')) { return $null }
+    if ($null -eq $layout -or ((-not (Test-OrdinalEqualIgnoreCase $layout.Name 'repos')) -and (-not (Test-OrdinalEqualIgnoreCase $layout.Name 'worktrees')))) { return $null }
     $projects = $layout.Parent
     if (-not (Test-MaxstackDirectoryNamed $projects 'projects')) { return $null }
     $workspace = $projects.Parent
@@ -369,8 +315,8 @@ function Get-MaxstackLayoutNote {
 
     $layout = Get-MaxstackScriptLayoutWorkspace $ScriptRoot $RepoRoot
     if ($null -eq $layout -or -not (Test-Path -LiteralPath $layout -PathType Container)) { return $null }
-    if ($layout -ieq $Target) { return $null }
-    return "script layout names $(Get-MaxstackSafePathDisplay $layout); using $Origin $(Get-MaxstackSafePathDisplay $Target)"
+    if (Test-OrdinalEqualIgnoreCase $layout $Target) { return $null }
+    return "script layout names $(ConvertTo-SafeName $layout); using $Origin $(ConvertTo-SafeName $Target)"
 }
 
 # Discovery order: -Workspace, MAXSTACK_WORKSPACE, the nearest marker from the current directory upward, the script's own

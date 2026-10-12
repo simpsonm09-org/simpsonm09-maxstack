@@ -580,7 +580,8 @@ test('the installer prints the resolved line first and the layout note once, as 
 // The display of a string built from UTF-16 code units, through the helper's escape function. A lone surrogate cannot pass
 // through the UTF-8 channel of the other tests, so the units are built inside the child shell.
 function displayOf(codeUnits) {
-  const command = `[Console]::OutputEncoding = [Text.Encoding]::UTF8; . '${helper.replaceAll("'", "''")}'; $s = -join ([char[]]@(${codeUnits.join(',')})); Get-MaxstackSafePathDisplay $s`;
+  const ordinal = join(dirname(helper), 'Install-Ordinal.ps1');
+  const command = `[Console]::OutputEncoding = [Text.Encoding]::UTF8; . '${ordinal.replaceAll("'", "''")}'; . '${helper.replaceAll("'", "''")}'; $s = -join ([char[]]@(${codeUnits.join(',')})); ConvertTo-SafeName $s`;
   const run = spawnSync(shell, ['-NoProfile', '-Command', command], { windowsHide: true, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   return run.stdout.replace(/\r?\n$/, '');
@@ -599,21 +600,21 @@ test('a bidi override, an isolate, or a line separator in a user-supplied path i
   }
 }));
 
-test('a zero width joiner is accepted in a folder name, and shown as an escape in an error', { skip: !shell }, () => withRoot((root) => {
-  const emoji = marker(directory(root, `family${String.fromCharCode(0x200d)}folder`));
-  resolveCase({ explicitSpecified: true, explicitValue: emoji, cwd: root }, emoji, '-Workspace');
+test('a zero width joiner in a user-supplied path is refused by its text, and shown as an escape in the error', { skip: !shell }, () => withRoot((root) => {
   const missing = join(root, `miss${String.fromCharCode(0x200d)}ing`);
+  assertRefused({ explicitSpecified: true, explicitValue: missing, cwd: root }, /-Workspace path contains a format character/, 'U+200D');
   const run = invoke({ explicitSpecified: true, explicitValue: missing, cwd: root });
-  assert.equal(run.status, 23, run.stderr);
   assert.ok(run.stderr.includes('\\u200D'), run.stderr);
   assert.equal(run.stderr.includes(String.fromCharCode(0x200d)), false, 'the raw joiner reached stderr');
 }));
 
-test('the installer shows a zero width space in its Workspace line as an escape', { skip: !shell }, () => withRoot((root) => {
-  const withSpace = marker(directory(root, `a${String.fromCharCode(0x200b)}b`));
+test('the installer refuses a zero width space in its -Workspace value, and shows it as an escape', { skip: !shell }, () => withRoot((root) => {
+  const withSpace = join(root, `a${String.fromCharCode(0x200b)}b`);
+  mkdirSync(withSpace);
   const run = runInstallerAudit(root, { cwd: root, workspaceArgs: ['-Workspace', withSpace] });
-  const first = run.stdout.split(/\r?\n/)[0];
-  assert.equal(first, `Workspace: ${withSpace.replaceAll(String.fromCharCode(0x200b), '\\u200B')} (from -Workspace)`, run.stdout + run.stderr);
+  assert.notEqual(run.status, 0, run.stdout + run.stderr);
+  assert.ok(run.stderr.includes('\\u200B'), run.stderr);
+  assert.equal(run.stdout.includes(String.fromCharCode(0x200b)) || run.stderr.includes(String.fromCharCode(0x200b)), false, 'the raw space reached the output');
 }));
 
 test('a display longer than 260 characters is cut and marked with an ellipsis', { skip: !shell }, () => withRoot((root) => {
