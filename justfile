@@ -35,6 +35,11 @@ validate:
 validate-online:
     {{python}} scripts/verify-manifests.py --online
 
+# Run the node test suite under scripts/. Node 21 or later expands the glob on every shell. The installer
+# tests need PowerShell 7 and git; a test whose program is missing is reported as skipped.
+test-node:
+    node --test scripts/*.test.mjs
+
 # Run the same checks CI runs.
 check: lint validate
 
