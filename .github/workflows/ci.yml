@@ -44,3 +44,36 @@ jobs:
           persist-credentials: false
       - name: Validate the workspace manifests
         run: python3 scripts/verify-manifests.py
+
+  # The installer tests run on Windows: they drive Install-Workspace.ps1 under PowerShell 7 and
+  # Windows paths. fetch-depth 0 keeps the upstream main commit that a test compares with.
+  test-node:
+    if: github.repository_owner == 'simpsonm09-org'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned tools
+        uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+      - name: Print the runner facts the suite depends on
+        shell: bash
+        run: |
+          git --version
+          node --version
+          pwsh --version
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+          echo "os.tmpdir()=$(node -p "require('os').tmpdir()")"
+          echo "global safe.directory entries:"
+          git config --global --get-all safe.directory || echo "  (none)"
+      - name: Run the node test suite
+        # The default temp path is an 8.3 short name; the installer reports the long form, so the tests need a temp folder without one.
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: just test-node
