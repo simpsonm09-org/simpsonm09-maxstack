@@ -1246,7 +1246,7 @@ withWorkspace('-InitSettings prints a migrated seed and writes it only with -App
     symlinkSync(fileTarget, join(ctx.workspace, 'maxstack.settings.json'), 'file');
     const readOnlyLink = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
     assert.notEqual(readOnlyLink.status, 0, 'a dry seed accepted a destination file link');
-    assert.match(plainOutput(readOnlyLink), /destination is a link/i);
+    assert.match(plainOutput(readOnlyLink), /symbolic link or junction/i);
   } catch (error) {
     if (error.code !== 'EPERM') throw error;
   }
