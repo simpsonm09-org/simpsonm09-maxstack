@@ -274,7 +274,7 @@ withWorkspace('settings accept a UTF-8 BOM and reject invalid keys, values, and 
     [{ version: 1, runtime: {} }, /unknown key 'runtime'/],
     [{ version: 2 }, /needs "version": 1/],
     [{ version: 1, os: 'android' }, /os has an unsupported value/],
-    [{ version: 1, runtimes: { codex: {} } }, /unknown key 'codex'/],
+    [{ version: 1, runtimes: { gemini: {} } }, /unknown key 'gemini'/],
     [{ version: 1, runtimes: {} }, /runtimes names no runtime/],
     [{ version: 1, runtimes: [] }, /runtimes must be an object/],
     [{ version: 1, runtimes: { pi: {} } }, /needs claude/],

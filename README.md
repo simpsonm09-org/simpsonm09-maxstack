@@ -1,6 +1,6 @@
 # maxstack
 
-Personal AI tooling for OpenCode, Claude Code, GitHub Copilot CLI, and Pi, run from T3 Code. It coordinates the workspace config and the installer, and it pins the PStack plugin. maxstack sets no model: you pick the model in the harness.
+Personal AI tooling for OpenCode, Claude Code, GitHub Copilot CLI, and Pi, run from T3 Code, and for OpenAI Codex, which gets the workspace skills and instructions (opt-in). It coordinates the workspace config and the installer, and it pins the PStack plugin. maxstack sets no model: you pick the model in the harness.
 
 The original lives in `simpsonm09-org/simpsonm09-maxstack`; work happens on the personal fork. See [`repo-standard`](https://github.com/simpsonm09-org/simpsonm09-repo-standard).
 
@@ -14,8 +14,9 @@ PStack comes from one source: the `plugins/pstack` folder of [`simpsonm09/pstack
 - Claude Code: `.claude\plugins\pstack`.
 - GitHub Copilot CLI: `.maxstack\bin\copilot.cmd` and `copilot.sh`, which run Copilot with the Claude plugin folders.
 - Pi: `.maxstack\bin\pi.cmd` and `pi.sh`, which run Pi with the settings in `.pi\agent`, listing the same layers as packages and skills.
+- Codex (opt-in): `.agents\skills`, a copy of each selected layer's skills. Its T3 instance needs one launch argument. See [`docs/t3-setup.md`](docs/t3-setup.md#codex-maxstack).
 
-The org and personal layers are local checkouts. They install for the same four runtimes, and their Claude folders are links to the OpenCode copies. Nothing is global. See [`docs/t3-setup.md`](docs/t3-setup.md). The plan to maintain one master source for seven runtimes is in [`docs/master-template.md`](docs/master-template.md), and the standalone layer generator is described in [`docs/neutral-layer-generator.md`](docs/neutral-layer-generator.md).
+The org and personal layers are local checkouts. They install for the same four runtimes, and for Codex when it is selected. Their Claude folders are links to the OpenCode copies. Nothing is global. See [`docs/t3-setup.md`](docs/t3-setup.md). The plan to maintain one master source for seven runtimes is in [`docs/master-template.md`](docs/master-template.md), and the standalone layer generator is described in [`docs/neutral-layer-generator.md`](docs/neutral-layer-generator.md).
 
 ## Guardrails
 

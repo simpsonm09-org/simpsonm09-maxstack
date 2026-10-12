@@ -54,7 +54,7 @@ Every key and every string value in the file is checked for a control, a format 
 
 `runtimes` and `layers` are additive: names in the file join the recorded lock selection and command-line flags. A runtime is a harness. An omitted name in a declared dimension remains selected and is reported as `unlisted`; an omitted dimension keeps the recorded selection without an unlisted report. Use `-Remove -Runtimes <name>` or `-Remove -Layers <name>` to remove a selection. A name in the file that is not yet recorded is `pending` and is selected on `-Apply`. An apply reports it as selected by that apply. `-Update` selects nothing from the file, so it reports the name as not selected by `-Update`, and `-Update -Apply` keeps the settings hash the last apply recorded.
 
-On a new workspace, a named settings dimension selects exactly its listed names. A dimension omitted from the file keeps the current behavior: all names on a new workspace, or the names in the lock. `-Update` stays with the recorded selection. A new selection in the file is reported as pending and needs `-Apply`.
+On a new workspace, a named settings dimension selects exactly its listed names. A dimension omitted from the file keeps the current behavior: the default names on a new workspace, or the names in the lock. The default runtimes are `claude`, `opencode`, `copilot`, and `pi`. `codex` is opt-in, so it is selected only when the file lists it under `runtimes`, or a command line names it or `all`. `-Update` stays with the recorded selection. A new selection in the file is reported as pending and needs `-Apply`.
 
 `runtimes.<name>.cli` and `t3.cli` accept `detect` or `install`. They are recorded and validated, but CLI installation is not supported in this release.
 
