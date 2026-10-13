@@ -1,7 +1,7 @@
 # platforms: windows
 [CmdletBinding()]
 param(
-    [string] $Workspace = 'D:\dev\simpsonm09',
+    [string] $Workspace = $env:MAXSTACK_WORKSPACE,
     [string] $ConfigFile = ''
 )
 
@@ -13,6 +13,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
+
+if ([string]::IsNullOrWhiteSpace($Workspace)) { throw 'Pass -Workspace or set MAXSTACK_WORKSPACE.' }
 
 if (-not $ConfigFile) { $ConfigFile = Join-Path $Workspace 'opencode.jsonc' }
 $document = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json

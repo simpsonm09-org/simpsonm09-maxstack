@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [string] $SkillId = 'poteto-mode',
-    [string] $Workspace = 'D:\dev\simpsonm09',
+    [string] $Workspace = $env:MAXSTACK_WORKSPACE,
     [string] $Project = (Join-Path $Workspace 'projects\repos\simpsonm09-repo-template'),
     [string] $OpenCodeBinary = 'opencode',
     # The model the bounded run uses, as provider/model. The workspace sets none.
@@ -12,6 +12,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($Workspace)) { throw 'Pass -Workspace or set MAXSTACK_WORKSPACE.' }
 
 . (Join-Path $PSScriptRoot 'Invoke-OpenCode.ps1')
 

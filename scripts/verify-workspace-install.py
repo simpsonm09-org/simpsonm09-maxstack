@@ -36,13 +36,6 @@ PI_SH_ASK_LINE = "export AGENT_ACCESS_PI_ASK=allow"
 RUNTIMES = ("claude", "opencode", "copilot", "pi")
 
 
-def default_workspace() -> str:
-    wsl = pathlib.Path("/mnt/d/dev/simpsonm09")
-    if os.name != "nt" and wsl.is_dir():
-        return str(wsl)
-    return "D:/dev/simpsonm09"
-
-
 def is_link(path: pathlib.Path) -> bool:
     """A junction on Windows, or a symlink elsewhere."""
     if hasattr(os.path, "isjunction") and os.path.isjunction(path):
@@ -589,9 +582,11 @@ def check_global(home: pathlib.Path, failures: list[str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--workspace", default=default_workspace())
+    parser.add_argument("--workspace", default=os.environ.get("MAXSTACK_WORKSPACE"))
     parser.add_argument("--home", default=os.path.expanduser("~"))
     args = parser.parse_args()
+    if not args.workspace:
+        parser.error("pass --workspace or set MAXSTACK_WORKSPACE")
 
     workspace = pathlib.Path(args.workspace)
     home = pathlib.Path(args.home)

@@ -563,7 +563,8 @@ function Invoke-InitSettings {
     $stackPath = Join-Path $WorkspaceRoot 'stack.lock.json'
     if (Test-MaxstackLinkedPath $stackPath) { throw '-InitSettings refuses stack.lock.json: it is a symbolic link or junction.' }
     if (-not (Test-Path -LiteralPath $stackPath -PathType Leaf)) {
-        throw "-InitSettings needs $(ConvertTo-SafeName $stackPath). Run Install-Workspace.ps1 -Apply first."
+        [Console]::Error.WriteLine('-InitSettings needs stack.lock.json. Copy workspace/maxstack.settings.json to the workspace, or run Install-Workspace.ps1 -Apply first.')
+        exit 1
     }
     $stack = Read-InitSettingsLock -Path $stackPath -LayerNames $LayerNames
     $text = ConvertTo-InitSettingsText (ConvertTo-InitSettingsValue -Stack $stack -WorkspaceRoot $WorkspaceRoot)

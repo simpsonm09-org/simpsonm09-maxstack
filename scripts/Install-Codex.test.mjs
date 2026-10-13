@@ -121,28 +121,38 @@ function normalizedLock(ctx) {
   return JSON.stringify(lock, null, 2).split(ctx.workspace).join('<WORKSPACE>');
 }
 
+function skipSnapshotEntry(prefix, name) {
+  return name === '.git' || (prefix === '' && (name === 'projects' || name.startsWith('stack.lock.json')));
+}
+
+function snapshotFileHash(full, relative, workspace, normalizeConfig) {
+  if (normalizeConfig && relative === 'opencode.jsonc') return createHash('sha256').update('<workspace-derived-config>').digest('hex');
+  const text = readFileSync(full, 'utf8').split(workspace).join('<WORKSPACE>');
+  return createHash('sha256').update(text).digest('hex');
+}
+
 // Every output of a workspace, as relative path to a hash of its text with the workspace path replaced. A junction is
 // recorded by its target text and never followed. The layer checkouts, the git metadata, and the lock files are not outputs.
-function snapshot(root, workspace, prefix = '', out = new Map()) {
+function snapshot(root, workspace, prefix = '', out = new Map(), { normalizeConfig = false } = {}) {
   for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.name === '.git' || (prefix === '' && (entry.name === 'projects' || entry.name.startsWith('stack.lock.json')))) continue;
+    if (skipSnapshotEntry(prefix, entry.name)) continue;
     const full = join(root, relative);
     const info = lstatSync(full);
     if (info.isSymbolicLink()) {
       out.set(relative, `link:${readlinkSync(full).split(workspace).join('<WORKSPACE>')}`);
     } else if (info.isDirectory()) {
       out.set(`${relative}/`, 'dir');
-      snapshot(root, workspace, relative, out);
+      snapshot(root, workspace, relative, out, { normalizeConfig });
     } else {
-      out.set(relative, createHash('sha256').update(readFileSync(full, 'utf8').split(workspace).join('<WORKSPACE>')).digest('hex'));
+      out.set(relative, snapshotFileHash(full, relative, workspace, normalizeConfig));
     }
   }
   return out;
 }
 
-function snapshotOf(ctx) {
-  return Object.fromEntries([...snapshot(ctx.workspace, ctx.workspace)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+function snapshotOf(ctx, options = {}) {
+  return Object.fromEntries([...snapshot(ctx.workspace, ctx.workspace, '', new Map(), options)].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
 function lstatSafe(path) {
@@ -456,12 +466,6 @@ function resetWorkspace(workspace) {
   }
 }
 
-function lockText(ctx) {
-  const lock = readLock(ctx);
-  delete lock.generatedAt;
-  return JSON.stringify(lock, null, 2);
-}
-
 // What one installer leaves from an empty workspace: its apply output, its status output, its lock, and its files. With
 // legacy, the base installer first writes the lock, and the selection field is then removed, as a lock from before it.
 function captureApply(ctx, { installerPath, layersFile }, { legacy = null } = {}) {
@@ -474,7 +478,14 @@ function captureApply(ctx, { installerPath, layersFile }, { legacy = null } = {}
   }
   const apply = mustRun(ctx, [], { installerPath, layersFile });
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false, installerPath, layersFile });
-  return { apply: plainOutput(apply), status: plainOutput(status), lock: lockText(ctx), files: snapshotOf(ctx) };
+  const lock = readLock(ctx);
+  delete lock.generatedAt;
+  lock.configSha256 = '<workspace-config>';
+  for (const record of lock.owned ?? []) if (record.path === 'opencode.jsonc') record.sha256 = '<workspace-config>';
+  const normalizeOutput = (run) => plainOutput(run)
+    .replace(/(?:Wrote |Config already matches: )[^\r\n]*opencode\.jsonc/g, 'CONFIG opencode.jsonc')
+    .replace(/: matches(?=\s|$)/g, ': matching');
+  return { apply: normalizeOutput(apply), status: normalizeOutput(status), lock: JSON.stringify(lock, null, 2), files: snapshotOf(ctx, { normalizeConfig: true }) };
 }
 
 withContext('a new workspace with no codex selection writes the same output, lock, and files as before', (shared) => {

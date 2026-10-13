@@ -91,6 +91,10 @@ const lines = createInterface({ input: process.stdin });
 let chain = Promise.resolve();
 lines.on("line", (line) => {
   const command = JSON.parse(line);
+  if (command.type === "get_commands") {
+    emit({ id: command.id, type: "response", command: "get_commands", success: true, data: { commands: [] } });
+    return;
+  }
   if (command.type !== "prompt") return;
   emit({ id: command.id, type: "response", command: "prompt", success: true, data: { disposition: "started" } });
   chain = chain.then(() => handlePrompt(command.message));

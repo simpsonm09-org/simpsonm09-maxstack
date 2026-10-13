@@ -2,7 +2,7 @@
 #requires -Version 7.0
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 param(
-    [string] $Workspace = 'D:\dev\simpsonm09',
+    [string] $Workspace = '',
     [string] $LayersFile = '',
     [string[]] $LayerSource = @(),
     # Per-run layer sources: name=owner/repo@ref, name=https://host/path.git@ref, name=local:<absolute path>, or
@@ -35,8 +35,9 @@ param(
     [switch] $Update,
     # With -Update, writes nothing and exits 0 whatever it finds. With -Strict it exits 1 when anything would change.
     [switch] $Check,
-    # With -Status, exits 1 when a path is not matching, or when the workspace has no record. With -Remove or
-    # -Uninstall, exits 1 when anything was skipped. With -Update, exits 1 when anything would change.
+    # With -Status, exits 1 when a path is not matching, or when the workspace has no record. With -Apply, exits 1
+    # when a selected runtime wrapper was skipped. With -Remove or -Uninstall, exits 1 when anything was skipped.
+    # With -Update, exits 1 when anything would change.
     [switch] $Strict
 )
 
@@ -52,19 +53,14 @@ $workspaceResolutionArguments = @{
     CurrentDirectory = (Get-Location).Path
     ScriptRoot = $PSScriptRoot
 }
-if (-not $workspaceWasSpecified) { $workspaceResolutionArguments.LegacyWorkspace = $Workspace }
 $workspaceResolution = Resolve-MaxstackWorkspace @workspaceResolutionArguments
 $Workspace = $workspaceResolution.Workspace
 Write-Host "Workspace: $(ConvertTo-SafeName $Workspace) (from $($workspaceResolution.Origin))"
 if ($workspaceResolution.Note) { Write-Warning $workspaceResolution.Note }
-if ($workspaceResolution.Warning) {
-    Write-Warning 'Using the legacy workspace default. Pass -Workspace or set MAXSTACK_WORKSPACE; this fallback will be removed after one release.'
-}
-
 if ($Apply -and $Status) { throw '-Apply writes the workspace and -Status only reports it. Choose one.' }
 if ($Remove -and $Uninstall) { throw '-Remove names what to remove and -Uninstall removes everything. Choose one.' }
 if (($Remove -or $Uninstall) -and $Status) { throw '-Status only reports. Choose -Status, -Remove, or -Uninstall.' }
-if ($Strict -and -not ($Status -or $Remove -or $Uninstall -or $Update)) { throw '-Strict applies to -Status, -Remove, -Uninstall, and -Update.' }
+if ($Strict -and -not ($Apply -or $Status -or $Remove -or $Uninstall -or $Update)) { throw '-Strict applies to -Apply, -Status, -Remove, -Uninstall, and -Update.' }
 $namesRequested = $PSBoundParameters.ContainsKey('RequestedRuntimes') -or $PSBoundParameters.ContainsKey('RequestedLayers')
 if ($Status -and $namesRequested) { throw '-Status reports the recorded selection and takes no -Runtimes or -Layers. Select with an apply.' }
 if ($Uninstall -and $namesRequested) { throw '-Uninstall removes everything the lock records, so it takes no -Runtimes or -Layers. Use -Remove to name what to remove.' }
@@ -325,16 +321,6 @@ function Get-OpenCodePluginPath {
 
     if ((-not (Test-OrdinalEqual $Spec.loader 'config'))) { return $null }
     return "./.opencode/plugins/$($Layer.name)/$($Spec.dir)"
-}
-
-# Whether an installed OpenCode folder is missing, or matches what the last apply
-# recorded. Audit uses it, so it never writes.
-function Get-OpenCodeState {
-    param([string] $EntryPath, $Prior, [string] $Entry, $Plugin)
-
-    if (-not (Test-Path -LiteralPath $EntryPath -PathType Leaf)) { return 'missing' }
-    if ($null -eq $Prior -or (-not (Test-OrdinalSame (Get-Field $Prior 'entry') $Entry)) -or (-not (Test-OrdinalSame (Get-Field $Prior 'plugin') $Plugin))) { return 'differs' }
-    return 'matches'
 }
 
 # Turns one layer's claude runtime into a record. A local layer is a junction under
@@ -1119,9 +1105,8 @@ function New-PiShText {
     return (($lines -join "`n") + "`n")
 }
 
-# A layer's Pi record. A pinned layer's package is the root of its cache, because a pi key
-# names paths from the repository root, and that root also holds the package.json. A local
-# layer's package is its installed Claude folder. The skills folder is the installed one.
+# A layer's Pi record. A pinned package uses the root of its cache. A local package points to
+# the source repository root, because the pi key names paths from there. Skills use the installed copy.
 # pending is set when a pinned layer's cache is not synced yet, which only audit sees.
 function Get-PiLayerRecord {
     param($Layer)
@@ -1136,17 +1121,19 @@ function Get-PiLayerRecord {
         $piKey = Get-Field (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json) 'pi'
     }
     $installed = ".claude/plugins/$($Layer.name)"
-    # The pi key names paths from the repository root, and the installed copy of a folder inside a repository has
-    # no package.json at its root. Only a package at the repository root can be the Pi package, so a local source
-    # with a subfolder keeps the skills folder and loses the rest of the key.
-    if (($null -ne $piKey) -and -not $pinned -and ((-not (Test-OrdinalEqual $Layer.sourcePath '.')))) {
-        Write-Warning "Layer '$($Layer.name)' is a local source with the folder $($Layer.sourcePath). Its package.json pi key names the repository root, so Pi gets its skills folder only, not the pi key's other entries."
-        $piKey = $null
+    $packageEntry = $null
+    $package = if ($pinned) { ".claude/cache/$($Layer.name)" } else { $installed }
+    if ($null -ne $piKey -and -not $pinned) {
+        $agentRoot = Join-Path $Workspace '.pi/agent'
+        $packageEntry = [IO.Path]::GetRelativePath($agentRoot, $repo).Replace('\', '/')
+        $package = [IO.Path]::GetRelativePath($Workspace, $repo).Replace('\', '/')
     }
     return [pscustomobject]@{
         layer   = $Layer.name
         pi      = $piKey
-        package = $(if ($null -ne $piKey) { if ($pinned) { ".claude/cache/$($Layer.name)" } else { $installed } } else { $null })
+        package = $(if ($null -ne $piKey) { $package } else { $null })
+        packageRoot = $(if ($null -ne $piKey -and -not $pinned) { $repo } elseif ($pinned) { Join-Path $claudeCacheTarget $Layer.name } else { $null })
+        packageEntry = $(if ($pinned) { '../../' + ".claude/cache/$($Layer.name)" } else { $packageEntry })
         skills  = $(if (Test-Path -LiteralPath ([IO.Path]::Combine($pluginSource, 'skills')) -PathType Container) { "$installed/skills" } else { $null })
         # The package and skills are unknown while the layer has no root: a git cache not at its pin, or a missing folder.
         pending = ($null -eq $Layer.root)
@@ -1160,7 +1147,7 @@ function Get-PiLayerRecord {
 function Assert-PiKeyInstalled {
     param($Record)
 
-    $installed = Join-Path $Workspace ($Record.package -replace '/', '\')
+    $installed = $Record.packageRoot
     if (-not (Test-Path -LiteralPath (Join-Path $installed 'package.json') -PathType Leaf)) {
         throw "Layer '$($Record.layer)' has a pi key in its package.json, but its installed copy at $installed has no package.json. Add package.json to the layer's files list."
     }
@@ -3181,7 +3168,11 @@ foreach ($layer in $layers) {
     if (-not $Apply) { continue }
     # -Source is an apply or audit option, so only a plain apply names it, and only for an override that it would drop.
     $repair = if (-not $removing -and $layer.override) { " or drop the override with -Source $($layer.name)=default -Apply" } else { '' }
-    if ($layer.folderMissing) { throw "Layer '$($layer.name)' has no folder at $($layer.repoRoot). Restore the folder$repair, then rerun." }
+    if ($layer.folderMissing) {
+        if ($removing -or $uninstalling) { throw "Layer '$($layer.name)' has no folder at $($layer.repoRoot). Restore the folder, then rerun." }
+        $repository = if ($layer.recordUrl) { "Clone $($layer.recordUrl) to $($layer.repoRoot), " } else { '' }
+        throw "Layer '$($layer.name)' has no folder at $($layer.repoRoot). ${repository}or pass -Source $($layer.name)=local:<path>, or set layers.$($layer.name).source in maxstack.settings.json to local:<path>$repair."
+    }
     throw "Layer '$($layer.name)' cannot be read at $($layer.repoRoot): $($layer.unreadable)$(Get-UnreadableRemedy $layer.unreadable)$repair, then rerun."
 }
 
@@ -3239,6 +3230,7 @@ $copilotExecutable = if ($copilotLayers.Count -gt 0) { Find-WrappedExecutable $C
 $copilotCmdText = $null
 $copilotShText = $null
 $copilotKept = $false
+$skippedRuntimeWrappers = [System.Collections.Generic.List[object]]::new()
 if ($copilotExecutable) {
     $copilotCmdText = New-CopilotCmdText -Executable $copilotExecutable -PluginDirs $copilotDirs
     $copilotShText = New-CopilotShText -PluginDirs $copilotDirs
@@ -3255,6 +3247,7 @@ if ($copilotExecutable) {
         Write-Warning "Copilot CLI not found: $copilotNotFound. Kept $copilotCmdTarget and $copilotShTarget because Copilot was not found on this run. The lock records them, so they stay as they are and still name the Copilot they were written for. Install Copilot, then rerun with -Apply."
     } else {
         Write-Warning "Copilot CLI not found: $copilotNotFound. Skipping $copilotCmdTarget and $copilotShTarget. Install Copilot, then rerun with -Apply."
+        $skippedRuntimeWrappers.Add([pscustomobject]@{ runtime = 'copilot'; paths = @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh') })
     }
 }
 
@@ -3266,7 +3259,7 @@ $piRecords = @($piLayers | ForEach-Object { Get-PiLayerRecord $_ })
 $piByLayer = [hashtable]::new([StringComparer]::Ordinal)
 foreach ($record in $piRecords) { $piByLayer[$record.layer] = $record }
 $piPending = @($piRecords | Where-Object { $_.pending }).Count -gt 0
-$piPackageEntries = @($piRecords | Where-Object { $_.package } | ForEach-Object { '../../' + $_.package })
+$piPackageEntries = @($piRecords | Where-Object { $_.package } | ForEach-Object { $_.packageEntry })
 $piSkillEntries = @($piRecords | Where-Object { $_.skills } | ForEach-Object { '../../' + $_.skills })
 $piExecutable = if ($piLayers.Count -gt 0) { Find-PiExecutable } else { $null }
 $piLocal = [bool]$piExecutable -and (Test-OrdinalEqual (Split-Path -Parent $piExecutable) $piLocalBinTarget)
@@ -3290,6 +3283,7 @@ if ($piExecutable) {
         Write-Warning "Pi CLI not found: $notFound. Kept $piCmdTarget and $piShTarget because Pi was not found on this run. The lock records them, so they stay as they are and still name the Pi they were written for. Install Pi, then rerun with -Apply."
     } else {
         Write-Warning "Pi CLI not found: $notFound. Skipping $piCmdTarget and $piShTarget. Install Pi, then rerun with -Apply."
+        $skippedRuntimeWrappers.Add([pscustomobject]@{ runtime = 'pi'; paths = @('.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh') })
     }
 }
 $piSettings = $null
@@ -3341,8 +3335,27 @@ if ($openCodeSelected -and -not $configUnknown) {
     foreach ($name in $servers.Keys) {
         $base.mcp.servers | Add-Member -NotePropertyName $name -NotePropertyValue $servers[$name] -Force
     }
-    if ($extraPermissions.Count -gt 0) {
-        $base.permissions = @($base.permissions) + $extraPermissions
+    $permissions = @($base.permissions) + $extraPermissions
+    if ($permissions.Count -gt 0) {
+        $workspacePermissionPath = $Workspace.Replace('\', '/')
+        $workspaceWslPath = $null
+        if ([regex]::IsMatch($Workspace, '^[A-Za-z]:[\\/]')) {
+            $workspaceWslPath = '/mnt/' + $Workspace.Substring(0, 1).ToLowerInvariant() + $Workspace.Substring(2).Replace('\', '/')
+        }
+        $base.permissions = @(
+            foreach ($permission in $permissions) {
+                $resource = Get-Field $permission 'resource'
+                if (Test-OrdinalEqual $resource '__MAXSTACK_WORKSPACE__/.opencode/*') {
+                    $permission.resource = "$workspacePermissionPath/.opencode/*"
+                    $permission
+                } elseif (Test-OrdinalEqual $resource '__MAXSTACK_WORKSPACE_WSL__/.opencode/*') {
+                    if ($workspaceWslPath) {
+                        $permission.resource = "$workspaceWslPath/.opencode/*"
+                        $permission
+                    }
+                } else { $permission }
+            }
+        )
     }
     # A nested entry point is named here, relative to this file, so the path holds no
     # machine-specific root. Root-level index.ts entries load on their own and are not listed.
@@ -3353,7 +3366,7 @@ if ($openCodeSelected -and -not $configUnknown) {
     $document = ($base | ConvertTo-Json -Depth 100)
 }
 
-# Apply needs the plan, and status needs it only to compare with a record. Audit does not need it.
+# Apply needs the plan, and both audit and status use it to compare installed paths with the record.
 # A pinned layer whose cache is not at its pin cannot say which Pi entries it adds. Only those entries
 # are unknown; every other entry is known.
 $piUnknown = @{ packages = @(); skills = @() }
@@ -3398,7 +3411,7 @@ if ($Apply -and -not $removing -and -not $uninstalling -and $null -ne $priorOwne
 }
 
 $plan = @()
-if ($Apply -or $removing -or $updating -or ($Status -and $null -ne $priorOwned)) {
+if ($Apply -or $removing -or $updating -or ($null -ne $priorOwned)) {
     $plan = Get-OwnedPlan -Document $document -Layers $layers -ClaudeRecords $claudeRecords -OpenCodeLayers $openCodeLayers `
         -OpenCodeSpecs $openCodeSpecs -CopilotCmdText $copilotCmdText -CopilotShText $copilotShText `
         -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown `
@@ -3458,7 +3471,10 @@ if (-not $Apply) {
     Write-SourcePinBlock -Entries (Get-ResolvedSourceEntries -Layers $allLayers)
     if ($codexSelected) { Write-CodexNotes }
     foreach ($layer in $layers) {
-        $where = if ($layer.root) { $layer.root } elseif ((Test-OrdinalEqual $layer.sourceKind 'local')) { "$($layer.localPath): folder missing" } else { "pinned $($layer.url) at $($layer.commit)" }
+        $where = if ($layer.root) { $layer.root } elseif ((Test-OrdinalEqual $layer.sourceKind 'local')) {
+            $reason = if ($layer.folderMissing) { 'folder missing' } else { "unreadable: $(ConvertTo-SafeName ([string] $layer.unreadable))" }
+            "$(ConvertTo-SafeName ([string] $layer.localPath)): $reason"
+        } else { "pinned $($layer.url) at $($layer.commit)" }
         Write-Host ("Layer:          {0} ({1}) at {2}" -f $layer.name, $layer.kind, $where)
     }
     if ($openCodeSelected) {
@@ -3481,12 +3497,12 @@ if (-not $Apply) {
         }
     }
     foreach ($layer in $openCodeLayers) {
-        $spec = $openCodeSpecs[$layer.name]
         $folder = Join-Path $opencodePluginsTarget $layer.name
-        $entryPath = Join-Path $folder ($spec.entry -replace '/', '\')
-        $prior = Get-Field $priorLayers[$layer.name] 'opencode'
-        $plugin = Get-OpenCodePluginPath -Layer $layer -Spec $spec
-        Write-Host ("Drift:          {0}: {1}" -f $folder, (Get-OpenCodeState -EntryPath $entryPath -Prior $prior -Entry $spec.entry -Plugin $plugin))
+        $relative = ".opencode/plugins/$($layer.name)"
+        $record = @($priorOwned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path $relative) -and (Test-OrdinalEqual $_.kind 'dir') } | Select-Object -First 1)
+        $planned = @($plan | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path $relative) -and (Test-OrdinalEqual $_.kind 'dir') } | Select-Object -First 1)
+        $state = if ($record.Count -eq 0) { 'missing' } else { Get-OwnedState -Record $record[0] -Planned $planned[0] }
+        Write-Host ("Drift:          {0}: {1}" -f $folder, $state)
     }
     foreach ($entry in $staleOpenCodeFolders) {
         Write-Host ("Drift:          {0}: stale" -f $entry.FullName)
@@ -3918,3 +3934,11 @@ Write-Host "Wrote $stackTarget"
 if ($codexSelected) { Write-CodexNotes }
 Write-Host 'Workspace bundle installed from the layer manifest.'
 Write-Host 'Restart the running OpenCode server, then start a new T3 session to load it: T3 can reuse that server across sessions. Claude Code reads plugins when a session starts. Pi reads its settings when a session starts.'
+if ($skippedRuntimeWrappers.Count -gt 0) {
+    Write-Host 'INCOMPLETE: selected runtime wrappers were skipped:'
+    foreach ($skipped in $skippedRuntimeWrappers) {
+        Write-Host "  $($skipped.runtime): $($skipped.paths -join ', ')"
+    }
+    Write-Host 'Install the missing CLI, then rerun with -Apply.'
+    if ($Strict) { exit 1 }
+}

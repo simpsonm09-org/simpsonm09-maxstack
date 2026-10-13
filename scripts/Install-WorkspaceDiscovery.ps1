@@ -319,16 +319,15 @@ function Get-MaxstackLayoutNote {
     return "script layout names $(ConvertTo-SafeName $layout); using $Origin $(ConvertTo-SafeName $Target)"
 }
 
-# Discovery order: -Workspace, MAXSTACK_WORKSPACE, the nearest marker from the current directory upward, the script's own
-# layout, then the legacy default with a warning. An explicit or environment value never falls through to a later source.
+# Discovery order: -Workspace, MAXSTACK_WORKSPACE, the nearest marker from the current directory upward, then the script's own
+# layout. An explicit or environment value never falls through to a later source.
 function Resolve-MaxstackWorkspace {
     [CmdletBinding()]
     param(
         [switch] $ExplicitSpecified,
         [AllowNull()][string] $ExplicitValue,
         [string] $CurrentDirectory = (Get-Location).Path,
-        [string] $ScriptRoot = $PSScriptRoot,
-        [AllowNull()][string] $LegacyWorkspace = $null
+        [string] $ScriptRoot = $PSScriptRoot
     )
 
     $repoRoot = Get-MaxstackRepoRoot $ScriptRoot
@@ -361,13 +360,5 @@ function Resolve-MaxstackWorkspace {
         }
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($LegacyWorkspace)) {
-        Assert-MaxstackPathText $LegacyWorkspace 'legacy default'
-        if (Test-Path -LiteralPath $LegacyWorkspace -PathType Container) {
-            $target = Assert-MaxstackWorkspaceTarget $LegacyWorkspace 'legacy default' $repoRoot
-            return New-MaxstackResolution $target 'legacy default' $true
-        }
-    }
-
-    throw 'Workspace discovery failed. Tried -Workspace, MAXSTACK_WORKSPACE, cwd marker (maxstack.settings.json or stack.lock.json), script layout (projects/repos/<repo> or projects/worktrees/<repo>), and legacy default.'
+    throw 'Workspace discovery failed. Name a workspace with -Workspace, MAXSTACK_WORKSPACE, a cwd marker (maxstack.settings.json or stack.lock.json), or the script layout (projects/repos/<repo> or projects/worktrees/<repo>).'
 }

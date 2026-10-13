@@ -510,7 +510,7 @@ function withoutCodexFiles(files) {
 }
 
 function portableFiles(ctx) {
-  const bases = [ctx.base, ctx.base.replaceAll('\\', '/'), JSON.stringify(ctx.base).slice(1, -1)];
+  const bases = [ctx.base, ctx.base.replaceAll('\\', '/'), JSON.stringify(ctx.base).slice(1, -1), `/mnt/${ctx.base[0].toLowerCase()}${ctx.base.slice(2).replaceAll('\\', '/')}`];
   return new Map([...workspaceFiles(ctx.workspace)].map(([path, bytes]) => {
     let text = bytes.toString('latin1');
     for (const base of bases) text = text.replaceAll(base, '<BASE>');
@@ -763,7 +763,7 @@ withWorkspace('the removal switches refuse each other, -Status, and a missing se
     [['-Uninstall', '-Status'], /Choose -Status, -Remove, or -Uninstall/],
     [['-Uninstall', '-Runtimes', 'pi'], /takes no -Runtimes or -Layers/],
     [['-Remove'], /names what to remove/],
-    [['-Strict'], /applies to -Status, -Remove, -Uninstall, and -Update/],
+    [['-Strict'], /applies to -Apply, -Status, -Remove, -Uninstall, and -Update/],
   ];
   for (const [args, pattern] of cases) {
     const run = runInstaller(shell, ctx, args, { apply: false });

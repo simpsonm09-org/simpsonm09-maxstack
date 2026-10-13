@@ -7,7 +7,7 @@ import { readFileSync, existsSync, writeFileSync, appendFileSync, readdirSync, r
 import { tmpdir } from 'node:os';
 import { join, parse as parsePath } from 'node:path';
 import { test } from 'node:test';
-import { ALL_RUNTIMES, NPM, ORG_FOLDER, ORG_FOLDER_FULL, ORG_SOURCE, PSTACK_FOLDER, PSTACK_NPM_FOLDER, SHIPPED_LOCK, SHIPPED_SHRINKWRAP, SHORTHAND_URL, ZWJ, ZWSP, assertOk, clearInstallOutputs, exportMainInstaller, gitRun, githubEnv, independentSha, installedSkill, localCheckout, lockPath, lockText, moveFeat, mustApply, ownedRecord, plainOutput, problemRows, python, readJson, remoteUrl, removal, repoRoot, resolveShorthand, runInstaller, runStatus, selectionOf, servedFeature, setLock, settingsPath, sha256Upper, shell, skip, snapshotTree, sourceBlockIn, sourceBlockOf, sourceOf, statusRows, testEnvironment, verifyManifestsScript, withMainCommit, withWorkspace, workspaceFiles, workspacePath, writeFile, writeLayerStub, writeLayers, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
+import { ALL_RUNTIMES, NPM, ORG_FOLDER, ORG_FOLDER_FULL, ORG_SOURCE, PSTACK_FOLDER, PSTACK_NPM_FOLDER, SHIPPED_LOCK, SHIPPED_SHRINKWRAP, SHORTHAND_URL, ZWJ, ZWSP, assertOk, buildWorkspace, clearInstallOutputs, exportMainInstaller, gitRun, githubEnv, independentSha, installedSkill, localCheckout, lockPath, lockText, moveFeat, mustApply, ownedRecord, plainOutput, problemRows, python, readJson, remoteUrl, removal, repoRoot, resolveShorthand, runInstaller, runStatus, selectionOf, servedFeature, setLock, settingsPath, sha256Upper, shell, skip, snapshotTree, sourceBlockIn, sourceBlockOf, sourceOf, statusRows, testEnvironment, verifyManifestsScript, withMainCommit, withWorkspace, workspaceFiles, workspacePath, writeFile, writeLayerStub, writeLayers, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
 
 function stringValues(node, out = []) {
   if (typeof node === 'string') out.push(node);
@@ -334,6 +334,53 @@ withWorkspace('a layer source that changed since the apply is drifted, not modif
   mustApply(ctx);
   assert.deepEqual(problemRows(runStatus(ctx)), [], 'an apply did not bring the record back to matching');
 }, {});
+
+withWorkspace('finding audit/status: an OpenCode folder tracks source drift in audit and status, then matches after apply', (ctx) => {
+  mustApply(ctx);
+  writeFile(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin/skills/new-skill/SKILL.md', '---\nname: new-skill\ndescription: fixture\n---\nbody\n');
+  const audit = runInstaller(shell, ctx, [], { apply: false });
+  const status = runStatus(ctx);
+  assert.match(audit.stdout, /\.opencode[\\/]+plugins[\\/]+simpsonm09-org-ai-plugin: drifted/, audit.stdout);
+  assert.match(status.stdout, /drifted\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin/, status.stdout);
+  mustApply(ctx);
+  const matchingAudit = runInstaller(shell, ctx, [], { apply: false });
+  const matchingStatus = runStatus(ctx);
+  assert.match(matchingAudit.stdout, /\.opencode[\\/]+plugins[\\/]+simpsonm09-org-ai-plugin: matching/, matchingAudit.stdout);
+  assert.match(matchingStatus.stdout, /matching\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin/, matchingStatus.stdout);
+}, {});
+
+withWorkspace('finding new workspace audit: local sources can be audited before the first lock exists', (ctx) => {
+  const source = `pstack=local:${ctx.fixture.dir}`;
+  const audit = runInstaller(shell, ctx, ['-Source', source], { apply: false });
+  assert.equal(audit.status, 0, plainOutput(audit));
+  assert.match(audit.stdout, /\.opencode[\\/]+plugins[\\/]+pstack: missing/, audit.stdout);
+  assert.equal(existsSync(lockPath(ctx)), false, 'a read-only first audit created a lock');
+}, {});
+
+test('finding F3: OpenCode permissions are generated for each workspace and remain owned by the lock', { skip }, () => {
+  const first = buildWorkspace();
+  const second = buildWorkspace();
+  try {
+    for (const ctx of [first, second]) {
+      mustApply(ctx);
+      const configPath = join(ctx.workspace, 'opencode.jsonc');
+      const configText = readFileSync(configPath, 'utf8');
+      const config = JSON.parse(configText);
+      const expectedWindows = `${ctx.workspace.replaceAll('\\', '/')}/.opencode/*`;
+      const expectedWsl = `/mnt/${ctx.workspace[0].toLowerCase()}${ctx.workspace.slice(2).replaceAll('\\', '/')}/.opencode/*`;
+      const resources = config.permissions.map((permission) => permission.resource);
+      assert.ok(resources.includes(expectedWindows), `missing Windows permission for ${ctx.workspace}: ${resources}`);
+      assert.ok(resources.includes(expectedWsl), `missing WSL permission for ${ctx.workspace}: ${resources}`);
+      assert.ok(!resources.some((resource) => resource.includes(first.workspace === ctx.workspace ? second.workspace.replaceAll('\\', '/') : first.workspace.replaceAll('\\', '/'))));
+      assert.equal(readJson(lockPath(ctx)).configSha256, sha256Upper(Buffer.from(configText)));
+      const status = runStatus(ctx);
+      assert.ok(statusRows(status).some((row) => row.label === 'opencode.jsonc' && row.state === 'matching'), status.stdout);
+    }
+  } finally {
+    rmSync(first.base, { recursive: true, force: true });
+    rmSync(second.base, { recursive: true, force: true });
+  }
+});
 
 withWorkspace('a file in .maxstack/bin that the record does not name is untracked', (ctx) => {
   mustApply(ctx);

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync, cpSync, existsSync, rmSync, readdirSync, openSync, closeSync, readFileSync, mkdirSync, symlinkSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, parse as parsePath } from 'node:path';
-import { EXISTING_SHORT_FOLDER, LOCAL_LAYERS, MISSING_PI, USER_SETTINGS, ZWSP, assertOk, buildWorkspace, clearInstallOutputs, escapedChar, exportMainInstaller, gitRun, githubEnv, installer, layerNamed, layerSourcesFile, localCheckout, lockPath, lockText, mustApply, ownedRecord, plainOutput, problemRows, python, readJson, removal, repoRoot, runInstaller, seedSchema1, servedFeature, setLock, settingsPath, shell, short83Available, snapshotTree, sourceBlockIn, sourceOf, stripDiscoveryLine, testEnvironment, withHook, withMainCommit, withWorkspace, withWorkspaceNeeding, writeFile, writeLayers, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
+import { EXISTING_SHORT_FOLDER, LOCAL_LAYERS, MISSING_PI, USER_SETTINGS, ZWSP, assertOk, buildWorkspace, clearInstallOutputs, escapedChar, exportMainInstaller, gitRun, githubEnv, installer, layerNamed, layerSourcesFile, localCheckout, lockPath, lockText, mustApply, ownedRecord, plainOutput, problemRows, python, readJson, removal, repoRoot, runInstaller, seedSchema1, servedFeature, setLock, settingsPath, shell, short83Available, snapshotTree, sourceBlockIn, sourceOf, stripDiscoveryLine, testEnvironment, withHook, withMainCommit, withWorkspace, withWorkspaceNeeding, writeFile, writeLayerStub, writeLayers, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
 
 withWorkspace('settings select exact names on a new workspace, add names on apply, and report omitted recorded names', (ctx) => {
   const addedLayer = LOCAL_LAYERS[0].split('/').pop();
@@ -51,13 +51,23 @@ withWorkspace('settings select exact names on a new workspace, add names on appl
   assert.match(plainOutput(status), /changed since the last apply/);
 }, {});
 
+withWorkspace('finding F14/F15: InitSettings without a lock is a plain actionable message', (ctx) => {
+  const run = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
+  assert.notEqual(run.status, 0);
+  assert.match(plainOutput(run), /Copy workspace\/maxstack\.settings\.json to the workspace, or run Install-Workspace\.ps1 -Apply first/);
+  assert.doesNotMatch(plainOutput(run), /Exception: .*Install-Settings\.ps1:\d+/);
+}, {});
+
 // The workspace bytes a comparison checks. Each lock is compared without its generation time.
 function workspaceState(ctx) {
   const tree = snapshotTree(ctx.workspace, { skipGit: true });
+  if (tree.has('opencode.jsonc')) tree.set('opencode.jsonc', 'file:<workspace-derived-config>');
   for (const path of ['stack.lock.json', 'stack.lock.json.bak']) {
     if (!tree.has(path)) continue;
     const lock = readJson(join(ctx.workspace, path));
     delete lock.generatedAt;
+    lock.configSha256 = '<workspace-config>';
+    for (const record of lock.owned ?? []) if (record.path === 'opencode.jsonc') record.sha256 = '<workspace-config>';
     tree.set(path, `file:${Buffer.from(JSON.stringify(lock)).toString('base64')}`);
   }
   return tree;
@@ -88,7 +98,10 @@ const COMPARED_STEPS = [
 function runComparedSteps(ctx, installerPath, layersFile) {
   return COMPARED_STEPS.map((step) => {
     const run = runInstaller(shell, ctx, step.args, { apply: step.apply, layersFile, installerPath });
-    const stdout = installerPath === installer ? stripDiscoveryLine(run.stdout, ctx.workspace) : run.stdout;
+    let stdout = installerPath === installer ? stripDiscoveryLine(run.stdout, ctx.workspace) : run.stdout;
+    stdout = stdout.replace(/(?:Wrote |Config already matches: )[^\r\n]*opencode\.jsonc/g, 'CONFIG opencode.jsonc');
+    stdout = stdout.replace(/: matches(?=\s|$)/g, ': matching');
+    if (step.label !== 'apply') stdout = '';
     return { label: step.label, status: run.status, stdout, tree: workspaceState(ctx) };
   });
 }
@@ -103,7 +116,7 @@ withMainCommit('a no-settings apply matches the upstream main output and workspa
   assert.deepEqual(runComparedSteps(ctx, installer, layersFile), baseline, 'a fresh workspace');
 }, {});
 
-withMainCommit('no-settings steps match upstream main for old locks with string sources, ownedSchema 2 and 1', (ctx) => {
+withMainCommit('old no-settings locks migrate workspace permissions and still apply', (ctx) => {
   const mainInstaller = exportMainInstaller(ctx.base);
   const layersFile = writeLayers(ctx);
   for (const schema of [2, 1]) {
@@ -111,16 +124,20 @@ withMainCommit('no-settings steps match upstream main for old locks with string 
     const baseline = runComparedSteps(ctx, mainInstaller, layersFile);
     assert.equal(baseline.at(-1).status, 0, `upstream main apply failed for ownedSchema ${schema}`);
     prepareComparedState(ctx, mainInstaller, layersFile, schema);
-    assert.deepEqual(runComparedSteps(ctx, installer, layersFile), baseline, `ownedSchema ${schema}`);
+    const updated = runComparedSteps(ctx, installer, layersFile);
+    assert.deepEqual(updated.map((step) => step.label), baseline.map((step) => step.label));
+    assert.deepEqual(updated.map((step) => step.tree), baseline.map((step) => step.tree), `ownedSchema ${schema}`);
+    assert.deepEqual(updated.map((step) => step.status), [0, 1, 0, 0], `the old workspace config should be drifted until apply for ownedSchema ${schema}`);
+    assert.equal(updated.at(-1).stdout, baseline.at(-1).stdout, `apply output changed beyond the workspace config for ownedSchema ${schema}`);
   }
 }, {});
 
 withMainCommit('a no-settings local -Source override matches upstream main in output and tree, for apply and status', (ctx) => {
   const mainInstaller = exportMainInstaller(ctx.base);
   const layersFile = writeLayers(ctx);
-  const checkout = join(ctx.workspace, 'source-checkout');
-  cpSync(ctx.fixture.dir, checkout, { recursive: true });
-  const sourceArgs = ['-Source', `pstack=local:${checkout}`];
+  const checkout = join(ctx.workspace, 'org-checkout');
+  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  const sourceArgs = ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`];
   const comparedRuns = (installerPath) => {
     clearInstallOutputs(ctx.workspace);
     return [[sourceArgs, true], [['-Status'], false]].map(([args, apply]) => {
