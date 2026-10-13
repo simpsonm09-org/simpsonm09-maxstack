@@ -232,7 +232,10 @@ withWorkspace('remove and uninstall delete unchanged generated files and keep ch
 // Ask the shell that runs the probe: where.exe can find a name that pwsh cannot run.
 const codexPath = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', 'if (Get-Command codex -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }'], { windowsHide: true, encoding: 'utf8' });
 const codexAvailable = codexPath.status === 0;
-withWorkspace('Codex debug prompt-input reads generated workspace instructions from a nested repository with the marker', (ctx) => {
+const codexProbeName = 'Codex debug prompt-input reads generated workspace instructions from a nested repository with the marker';
+// withWorkspace takes workspace options, not test options, so the skip is decided here.
+if (!codexAvailable) test(codexProbeName, { skip: 'codex is not available' }, () => {});
+else withWorkspace(codexProbeName, (ctx) => {
   declare(ctx, names.org, 'workspace.md', 'workspace probe unique 6e14649c\n');
   assert.equal(install(ctx, ['-Runtimes', 'codex', '-Layers', names.org]).status, 0);
   const nested = join(ctx.workspace, 'projects', 'repos', 'nested');
@@ -252,4 +255,4 @@ withWorkspace('Codex debug prompt-input reads generated workspace instructions f
   });
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
   assert.match(`${run.stdout}\n${run.stderr}`, /workspace probe unique 6e14649c/);
-}, { skip: shell && codexAvailable ? false : (shell ? 'codex is not available' : 'pwsh is not available') });
+});
