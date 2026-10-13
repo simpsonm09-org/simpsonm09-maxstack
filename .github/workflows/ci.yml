@@ -45,13 +45,16 @@ jobs:
       - name: Validate the workspace manifests
         run: python3 scripts/verify-manifests.py
 
-  # The installer tests run on Windows: they drive Install-Workspace.ps1 under PowerShell 7 and
-  # Windows paths. fetch-depth 0 keeps the upstream main commit that a test compares with.
-  test-node:
+  # The installer suite is split across four Windows runners; each shard drives Install-Workspace.ps1
+  # under PowerShell 7 and compares against upstream main. fetch-depth 0 provides that commit.
+  test-node-shard:
     if: github.repository_owner == 'simpsonm09-org'
     runs-on: windows-latest
-    # Measured 27 to over 40 minutes on the hosted runner: the installer suite is seven Install-Workspace.*.test.mjs files, run four at a time.
-    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -72,9 +75,21 @@ jobs:
           echo "os.tmpdir()=$(node -p "require('os').tmpdir()")"
           echo "global safe.directory entries:"
           git config --global --get-all safe.directory || echo "  (none)"
-      - name: Run the node test suite
+      - name: Run node test shard ${{ matrix.shard }} of 4
         # The default temp path is an 8.3 short name; the installer reports the long form, so the tests need a temp folder without one.
         env:
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: just test-node
+        run: just test-node-shard ${{ matrix.shard }} 4
+
+  test-node:
+    if: always() && github.repository_owner == 'simpsonm09-org'
+    runs-on: ubuntu-24.04
+    needs: [test-node-shard]
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every node test shard to succeed
+        env:
+          SHARDS_RESULT: ${{ needs.test-node-shard.result }}
+        run: test "$SHARDS_RESULT" = success

@@ -46,7 +46,7 @@ After an install, restart the running OpenCode server before using a new T3 sess
 | `just install` | Installs the pinned tools with `mise install`. |
 | `just check` | Runs lint and validate. |
 | `just test` | Runs the manifest verifier and the Node tests that need no Windows. |
-| `just test-node` | Runs the node test suite under `scripts/`. Needs Node 21+, and PowerShell 7 and git for the installer tests. CI runs it on Windows in the `test-node` job. |
+| `just test-node` | Runs the full node test suite under `scripts/`. Needs Node 21+, and PowerShell 7 and git for the installer tests. CI runs four shards on Windows and aggregates them into the required `test-node` check. |
 | `just verify` | Runs lint, test, and the AI-slop gate. |
 
 ## Documentation
