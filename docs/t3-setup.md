@@ -165,7 +165,7 @@ Verified: `codex debug prompt-input` from a nested repository reads the generate
 
 ## Cursor and Antigravity
 
-Selecting the `codex` runtime also puts the selected layers' skills in `.agents\skills`, which Cursor and Antigravity read when a session opens at the workspace root. A session opened inside a repository does not see skills or the generated workspace instruction file above that repository. These harnesses get no gate, layer agents, or workspace instructions in repository sessions. This is a known gap.
+Selecting the `codex` runtime also puts the selected layers' skills in `.agents\skills`, which Cursor and Antigravity read when a session opens at the workspace root. A session opened inside a repository does not see skills or the generated workspace instruction file above that repository. These harnesses get no gate, layer agents, or workspace instructions in repository sessions. They are second-class harnesses, and this is the supported level.
 
 Measured: documentation and T3 source show that both check the active project or working directory and home paths, without walking up to the parent workspace. A Cursor turn was attempted once and stopped at a usage limit. No Antigravity session was authenticated or run. Skill loading and instructions were not verified in a live session.
 

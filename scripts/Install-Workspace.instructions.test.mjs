@@ -229,7 +229,8 @@ withWorkspace('remove and uninstall delete unchanged generated files and keep ch
   assert.equal(readFileSync(claude, 'utf8'), 'edited by hand\n', 'uninstall keeps the hand-edited generated CLAUDE.md');
 });
 
-const codexPath = spawnSync('where.exe', ['codex'], { windowsHide: true, encoding: 'utf8' });
+// Ask the shell that runs the probe: where.exe can find a name that pwsh cannot run.
+const codexPath = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', 'if (Get-Command codex -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }'], { windowsHide: true, encoding: 'utf8' });
 const codexAvailable = codexPath.status === 0;
 withWorkspace('Codex debug prompt-input reads generated workspace instructions from a nested repository with the marker', (ctx) => {
   declare(ctx, names.org, 'workspace.md', 'workspace probe unique 6e14649c\n');
