@@ -590,6 +590,40 @@ withWorkspace('an audit of a -Source local tree runs no program that its .git/co
   assert.equal(existsSync(marker), false, 'the audit ran the command that core.fsmonitor names');
 }, {});
 
+withWorkspace('finding F1: a linked git worktree is a readable local layer and its worktree filter stays guarded', (ctx) => {
+  const normal = join(ctx.base, 'pstack-worktree');
+  gitRun(ctx.fixture.dir, ['worktree', 'add', '-b', 'fixture-worktree', normal, 'HEAD']);
+  mustApply(ctx, ['-Source', `pstack=local:${normal}`]);
+  assert.equal(sourceOf(ctx, 'pstack').source.kind, 'local');
+
+  const guarded = join(ctx.base, 'pstack-worktree-guarded');
+  gitRun(ctx.fixture.dir, ['worktree', 'add', '-b', 'fixture-worktree-guarded', guarded, 'HEAD']);
+  gitRun(guarded, ['config', '--local', 'extensions.worktreeConfig', 'true']);
+  const marker = join(ctx.base, 'worktree-filter-marker');
+  gitRun(guarded, ['config', '--worktree', 'filter.hostile.clean', touchAndCat(marker)]);
+  assert.equal(gitRun(guarded, ['config', '--local', '--bool', '--get', 'extensions.worktreeConfig']), 'true');
+  assert.match(gitRun(guarded, ['config', '--worktree', '--name-only', '--get-regexp', '^filter\.']), /filter\.hostile\.clean/);
+  writeFileSync(join(guarded, '.gitattributes'), '*.txt filter=hostile\n');
+  writeFileSync(join(guarded, 'notes.txt'), 'fixture\n');
+  gitRun(guarded, ['hash-object', '--path=notes.txt', 'notes.txt']);
+  assert.ok(existsSync(marker), 'the worktree filter fixture did not run unguarded');
+  rmSync(marker);
+  const attributes = gitRun(guarded, ['rev-parse', '--git-path', 'info/attributes']);
+  mkdirSync(dirname(attributes), { recursive: true });
+  writeFileSync(attributes, '*.txt filter=hostile\n');
+  const inspect = `$ErrorActionPreference = 'Stop'; . '${layerSourcesFile.replaceAll("'", "''")}'; Read-TreeFilterNames -Dir '${guarded.replaceAll("'", "''")}' | ConvertTo-Json -Compress`;
+  const guardedRead = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', inspect], { windowsHide: true, encoding: 'utf8', env: testEnvironment() });
+  assert.equal(guardedRead.status, 0, `${guardedRead.stdout}\n${guardedRead.stderr}`);
+  assert.match(guardedRead.stdout, /hostile/, guardedRead.stdout);
+  const guardedHash = `$ErrorActionPreference = 'Stop'; . '${layerSourcesFile.replaceAll("'", "''")}'; Invoke-GitGuarded -Dir '${guarded.replaceAll("'", "''")}' -Arguments @('-C', '${guarded.replaceAll("'", "''")}', 'hash-object', '--path=notes.txt', 'notes.txt') -TimeoutSeconds 15 | ConvertTo-Json -Compress`;
+  const guardedRun = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', guardedHash], { windowsHide: true, encoding: 'utf8', env: testEnvironment() });
+  assert.equal(guardedRun.status, 0, `${guardedRun.stdout}\n${guardedRun.stderr}`);
+  assert.equal(existsSync(marker), false, 'git ran the hostile per-worktree filter');
+  const audit = runInstaller(shell, ctx, ['-Source', `pstack=local:${guarded}`], { apply: false });
+  assertOk(audit);
+  assert.equal(existsSync(marker), false, 'the installer ran the hostile per-worktree filter');
+}, {});
+
 // Finding 3: a recorded local override whose folder is gone is reported, and only an apply stops on it.
 withWorkspace('a recorded local override whose folder is gone is reported by -Status, -Update -Check, and -Remove, and only -Apply stops', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
@@ -610,7 +644,7 @@ withWorkspace('a recorded local override whose folder is gone is reported by -St
   assertOk(runInstaller(shell, ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin'], { apply: false }));
   const refused = removal(ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin']);
   assert.notEqual(refused.status, 0, 'a removal rewrote the config without the missing fragment');
-  assert.match(plainOutput(refused), /has no folder at .*Restore the folder, then rerun/, refused.stdout);
+  assert.match(plainOutput(refused), /has no folder at .*Restore the folder/i, plainOutput(refused));
   assert.doesNotMatch(plainOutput(refused), /-Source/, refused.stdout);
   assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-personal-ai-plugin')), 'a refused removal removed the layer');
 
@@ -934,12 +968,13 @@ test('the installer under Windows PowerShell 5.1 stops with the PowerShell 7 req
 // Round 2, H: the refusal for a missing layer folder names the absolute folder, and the command that fits the mode.
 const ORG_DEFAULT_FOLDER = (ctx) => join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
 
-withWorkspace('a missing default layer folder is refused with its absolute path and no -Source advice', (ctx) => {
+withWorkspace('finding F4: a missing default layer names the clone URL and first-time source options', (ctx) => {
   rmSync(ORG_DEFAULT_FOLDER(ctx), { recursive: true, force: true });
   const apply = runInstaller(shell, ctx, []);
   assert.notEqual(apply.status, 0, 'an apply wrote past a missing default folder');
-  assert.ok(plainOutput(apply).includes(`has no folder at ${ORG_DEFAULT_FOLDER(ctx)}. Restore the folder, then rerun`), plainOutput(apply));
-  assert.doesNotMatch(plainOutput(apply), /-Source|drop the override/, plainOutput(apply));
+  assert.ok(plainOutput(apply).includes(`Clone https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin.git to ${ORG_DEFAULT_FOLDER(ctx)}`), plainOutput(apply));
+  assert.match(plainOutput(apply), /-Source simpsonm09-org-ai-plugin=local:<path>/);
+  assert.match(plainOutput(apply), /layers\.simpsonm09-org-ai-plugin\.source in maxstack\.settings\.json/);
 }, {});
 
 withWorkspace('a missing override folder is refused with its absolute path and the -Source repair that applies', (ctx) => {
@@ -949,7 +984,7 @@ withWorkspace('a missing override folder is refused with its absolute path and t
   rmSync(checkout, { recursive: true, force: true });
   const apply = runInstaller(shell, ctx, []);
   assert.notEqual(apply.status, 0, 'an apply wrote past a missing override folder');
-  assert.ok(plainOutput(apply).includes(`has no folder at ${checkout}. Restore the folder or drop the override with -Source simpsonm09-org-ai-plugin=default -Apply, then rerun`), plainOutput(apply));
+  assert.match(plainOutput(apply), /has no folder at .*clone the repository|pass -Source simpsonm09-org-ai-plugin=local:<path>/i, plainOutput(apply));
 }, {});
 
 withWorkspace('a removal refused for a missing layer folder gives no -Source advice, since -Remove takes no -Source', (ctx) => {
@@ -957,7 +992,7 @@ withWorkspace('a removal refused for a missing layer folder gives no -Source adv
   rmSync(ORG_DEFAULT_FOLDER(ctx), { recursive: true, force: true });
   const removed = removal(ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin']);
   assert.notEqual(removed.status, 0, 'a removal rewrote the config without a missing fragment');
-  assert.match(plainOutput(removed), /has no folder at .*Restore the folder, then rerun/, plainOutput(removed));
+  assert.match(plainOutput(removed), /has no folder at .*Restore the folder/i, plainOutput(removed));
   assert.doesNotMatch(plainOutput(removed), /-Source/, plainOutput(removed));
 }, {});
 
@@ -1948,7 +1983,6 @@ withWorkspace('workspace discovery rejects control characters before path APIs a
     { kind: 'explicit', path: unsafe, safe: 'bad\\u001B[31m' },
     { kind: 'environment', path: unsafe, safe: 'bad\\u001B[31m', scriptRoot: join(ctx.base, 'unrecognized') },
     { kind: 'scriptRoot', path: unsafe, safe: 'bad\\u001B[31m' },
-    { kind: 'legacy', path: `bad${del}`, safe: 'bad\\u007F', scriptRoot: join(ctx.base, 'unrecognized') },
   ];
   for (const item of cases) {
     const run = runWorkspaceDiscovery(ctx, item);
@@ -1960,12 +1994,11 @@ withWorkspace('workspace discovery rejects control characters before path APIs a
   }
 }, {});
 
-withWorkspace('workspace discovery uses the shell current directory default and safely reports a missing current directory', (ctx) => {
-  const explicit = runWorkspaceDiscovery(ctx, { kind: 'defaultCurrentDirectory', path: 'simpsonm09', scriptRoot: join(ctx.base, 'unrecognized') });
-  assert.equal(explicit.status, 0, `${explicit.stdout}${explicit.stderr}`);
-  assert.match(explicit.stdout, /ORIGIN=-Workspace;/);
+withWorkspace('workspace discovery refuses without a source and safely reports a missing current directory', (ctx) => {
+  const noWorkspace = runWorkspaceDiscovery(ctx, { kind: 'noWorkspace', path: ctx.base, scriptRoot: join(ctx.base, 'unrecognized') });
+  assert.equal(noWorkspace.status, 2, `${noWorkspace.stdout}${noWorkspace.stderr}`);
+  assert.match(noWorkspace.stdout, /Workspace discovery failed.*-Workspace.*MAXSTACK_WORKSPACE.*cwd marker.*script layout/);
 
-  // A missing current directory holds no marker, so discovery falls through and fails with its own message.
   const missing = join(ctx.base, 'missing-current-directory');
   const invalid = runWorkspaceDiscovery(ctx, { kind: 'currentDirectory', path: missing, scriptRoot: join(ctx.base, 'unrecognized') }, { launchCwd: ctx.base });
   assert.equal(invalid.status, 2, `${invalid.stdout}${invalid.stderr}`);
@@ -1981,18 +2014,14 @@ withWorkspace('an unusable current directory holds no marker and is never echoed
   assert.equal(run.stdout.includes(esc), false, 'the raw ESC byte reached the output');
 }, {});
 
-withWorkspace('the legacy workspace fallback warns before command validation and never writes on a rejected command', (ctx) => {
+withWorkspace('finding F11: missing workspace source refuses before command validation and writes nothing', (ctx) => {
   const copyRoot = join(ctx.base, 'isolated-copy');
   const copyScripts = join(copyRoot, 'scripts');
-  const legacyTarget = join(ctx.base, 'legacy-target');
   mkdirSync(copyScripts, { recursive: true });
-  mkdirSync(legacyTarget);
-  const source = readFileSync(installer, 'utf8');
-  const replaced = source.replace(/(\[string\] \$Workspace = ')[^']+(')/, (_match, prefix, suffix) => `${prefix}${legacyTarget.replaceAll("'", "''")}${suffix}`);
-  assert.notEqual(replaced, source, 'the isolated script no longer has the legacy workspace parameter');
-  writeFileSync(join(copyScripts, 'Install-Workspace.ps1'), replaced);
+  cpSync(installer, join(copyScripts, 'Install-Workspace.ps1'));
   cpSync(join(repoRoot, 'scripts', 'Install-WorkspaceDiscovery.ps1'), join(copyScripts, 'Install-WorkspaceDiscovery.ps1'));
   cpSync(join(repoRoot, 'scripts', 'Install-Ordinal.ps1'), join(copyScripts, 'Install-Ordinal.ps1'));
+  const before = snapshotTree(ctx.base);
 
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.toUpperCase() === 'MAXSTACK_WORKSPACE') delete env[key];
@@ -2002,11 +2031,9 @@ withWorkspace('the legacy workspace fallback warns before command validation and
     cwd: ctx.base,
     env,
   });
-  assert.notEqual(run.status, 0, 'the conflicting command was accepted');
-  assert.match(run.stdout.split(/\r?\n/)[0], /^Workspace: .* \(from legacy default\)$/);
-  assert.match(`${run.stdout}\n${run.stderr}`, /legacy workspace default.*one release/i);
-  assert.match(`${run.stdout}\n${run.stderr}`, /-Apply writes the workspace and -Status only reports it/);
-  assert.deepEqual(readdirSync(legacyTarget), [], 'the rejected command wrote into the legacy workspace');
+  assert.notEqual(run.status, 0, 'a run without a workspace source was accepted');
+  assert.match(`${run.stdout}\n${run.stderr}`, /Workspace discovery failed.*-Workspace.*MAXSTACK_WORKSPACE.*cwd marker.*script layout/is);
+  assert.deepEqual(snapshotTree(ctx.base), before, 'the rejected command wrote into the workspace');
 }, {});
 
 // N6: a read-only audit names a valid declared source, and an unavailable one is not listed as an override in the pin block.

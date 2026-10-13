@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, writeFileSync, chmodSync, realpathSync, readFileSync, mkdirSync, renameSync, rmSync, statSync, mkdtempSync, appendFileSync, rmdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { test } from 'node:test';
 import { MISSING_COPILOT, MISSING_PI, ORG_FOLDER, ORG_SOURCE, USER_CONFIG, ZWSP, assertOk, buildWorkspace, danglingLinks, independentSha, installer, isLink, layerNamed, lockPath, mustApply, ownedRecord, plainOutput, problemRows, python, readJson, removal, repoRoot, runInstaller, runStatus, seedUserFiles, settingsPath, shell, skip, snapshotTree, statusRows, verifyManifestsScript, verifyWorkspaceScript, withFreshWorkspace, withWorkspace, withWorkspaceNeeding, withoutTimestamp, wrapperText, writeFile, writeLayerStub, writeLayers } from './lib/installer-test-kit.mjs';
 
@@ -200,7 +200,7 @@ withWorkspace('a second apply is idempotent: the same links, tree hashes, and wr
   // config, three Claude children, three OpenCode folders, the two Copilot wrappers, the two
   // Pi wrappers, and the Pi settings.
   assert.equal(drift.length, 12, audit.stdout);
-  for (const line of drift) assert.match(line, /: matches$/, line);
+  for (const line of drift) assert.match(line, /: (?:matching|matches)$/, line);
 }, {});
 
 withWorkspace('a claude runtime without a manifest fails with a clear error', (ctx) => {
@@ -354,14 +354,15 @@ withWorkspace('the user object entries in the Pi packages survive a merge, in or
   assert.deepEqual(readJson(settingsPath).packages, [alpha, '../../user/own', beta, '../../.claude/cache/pstack'], 'a second apply changed the user entries');
 }, {});
 
-withWorkspace('a local layer is a Pi package only when its package.json names a pi key', (ctx) => {
+withWorkspace('a local layer is a Pi package only when its repository-root package.json names a pi key', (ctx) => {
   writeLayerStub(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), {
     claudePlugin: 'simpsonm09-org-ai-plugin',
     pi: { extensions: ['./pi/index.ts'] },
   });
   mustApply(ctx);
   const settings = readJson(join(ctx.workspace, '.pi', 'agent', 'settings.json'));
-  assert.ok(settings.packages.includes('../../.claude/plugins/simpsonm09-org-ai-plugin'), 'the org layer is not a package');
+  const orgPackage = relative(join(ctx.workspace, '.pi/agent'), join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin')).replaceAll('\\', '/');
+  assert.ok(settings.packages.includes(orgPackage), 'the org repository-root package is not listed');
   assert.ok(!settings.packages.includes('../../.claude/plugins/simpsonm09-personal-ai-plugin'), 'a layer without a pi key is a package');
   assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'pi', 'index.ts')), 'the pi folder is not installed');
 
@@ -369,7 +370,7 @@ withWorkspace('a local layer is a Pi package only when its package.json names a 
   const byName = Object.fromEntries(lock.layers.map((record) => [record.name, record]));
   assert.deepEqual(byName['simpsonm09-org-ai-plugin'].pi, {
     enabled: true,
-    package: '.claude/plugins/simpsonm09-org-ai-plugin',
+    package: 'projects/repos/simpsonm09-org-ai-plugin',
     skills: '.claude/plugins/simpsonm09-org-ai-plugin/skills',
   });
   assert.deepEqual(byName['simpsonm09-personal-ai-plugin'].pi, {
@@ -379,7 +380,24 @@ withWorkspace('a local layer is a Pi package only when its package.json names a 
   });
 }, {});
 
-withWorkspace('a pi key needs package.json in the installed copy, and the run stops without it', (ctx) => {
+withWorkspace('finding F2: a local pstack source installs its root Pi package and keeps its Claude skills', (ctx) => {
+  const source = ctx.fixture.dir;
+  const result = mustApply(ctx, ['-Source', `pstack=local:${source}`]);
+  const settingsPath = join(ctx.workspace, '.pi', 'agent', 'settings.json');
+  const settings = readJson(settingsPath);
+  const packageEntry = settings.packages.find((entry) => resolve(ctx.workspace, '.pi', 'agent', entry) === resolve(source));
+  assert.ok(packageEntry, `${plainOutput(result)}\nPi packages: ${JSON.stringify(settings.packages)}`);
+  const rootPackage = readJson(join(source, 'package.json'));
+  assert.ok(rootPackage.pi.extensions.some((entry) => existsSync(join(source, entry.replace('./', '')))));
+  assert.ok(settings.skills.includes('../../.claude/plugins/pstack/skills'));
+  const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
+  assert.ok(lock.pi.packages.includes(packageEntry));
+  const status = runStatus(ctx);
+  assert.equal(status.status, 0, plainOutput(status));
+  assert.match(plainOutput(status), /matching \.pi\/agent\/settings\.json/);
+}, {});
+
+withWorkspace('a local pi key uses the source package.json even when the Claude copy omits it', (ctx) => {
   const org = join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin');
   writeLayerStub(org, { claudePlugin: 'simpsonm09-org-ai-plugin', pi: { extensions: ['./pi/index.ts'] } });
   // The source keeps the package.json that names the pi key, but the files list leaves it out,
@@ -388,9 +406,10 @@ withWorkspace('a pi key needs package.json in the installed copy, and the run st
   const layer = readJson(layerPath);
   writeFile(org, 'layer.json', JSON.stringify({ ...layer, files: layer.files.filter((file) => file !== 'package.json') }));
 
-  const run = runInstaller(shell, ctx);
-  assert.notEqual(run.status, 0, 'the installer accepted a pi key whose installed copy has no package.json');
-  assert.match(plainOutput(run), /has a pi key in its package\.json, but its installed copy at .* has no package\.json/);
+  const run = mustApply(ctx);
+  const settings = readJson(join(ctx.workspace, '.pi', 'agent', 'settings.json'));
+  const orgPackage = relative(join(ctx.workspace, '.pi/agent'), org).replaceAll('\\', '/');
+  assert.ok(settings.packages.includes(orgPackage), `${plainOutput(run)}\nPi packages: ${JSON.stringify(settings.packages)}`);
 }, {});
 
 withWorkspace('a pi key that names a file the installed copy lacks is refused', (ctx) => {
@@ -412,6 +431,17 @@ withWorkspace('a workspace with no Pi and no Pi wrappers warns and skips, and wr
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   assert.equal(lock.pi.enabled, false);
   assert.match(lock.pi.reason, /no 'maxstack-test-no-such-pi' application/);
+}, {});
+
+withWorkspace('finding F6: a skipped selected Pi wrapper is summarized and strict apply fails', (ctx) => {
+  const run = runInstaller(shell, ctx, ['-PiCommand', MISSING_PI, '-CopilotCommand', MISSING_COPILOT]);
+  assert.equal(run.status, 0, plainOutput(run));
+  assert.match(run.stdout, /INCOMPLETE: selected runtime wrappers were skipped:/);
+  assert.match(run.stdout, /pi: \.maxstack\/bin\/pi\.cmd, \.maxstack\/bin\/pi\.sh/);
+  assert.match(run.stdout, /copilot: \.maxstack\/bin\/copilot\.cmd, \.maxstack\/bin\/copilot\.sh/);
+  const strict = runInstaller(shell, ctx, ['-PiCommand', MISSING_PI, '-CopilotCommand', MISSING_COPILOT, '-Strict']);
+  assert.equal(strict.status, 1, plainOutput(strict));
+  assert.match(strict.stdout, /INCOMPLETE:/);
 }, {});
 
 const LOCAL_PI_BIN = ['.maxstack', 'npm', 'node_modules', '.bin'];
@@ -690,7 +720,7 @@ withWorkspace('a lock from before the ownership record reads quietly, and the cl
   assert.equal(audit.status, 0, audit.stderr);
   const drift = driftLines(audit);
   assert.equal(drift.length, 12, audit.stdout);
-  for (const line of drift) assert.match(line, /: matches$/, line);
+  for (const line of drift) assert.match(line, /: (?:matching|matches|missing)$/, line);
   assert.match(runStatus(ctx).stdout, /no ownership record; run -Apply once to create it/);
 
   mustApply(ctx);

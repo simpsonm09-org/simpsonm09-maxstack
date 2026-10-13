@@ -6,7 +6,11 @@ set -euo pipefail
 skill_id="${1:-poteto-mode}"
 model="${2:-}"
 call_timeout_seconds="${3:-180}"
-workspace="${WORKSPACE:-/mnt/d/dev/simpsonm09}"
+workspace="${WORKSPACE:-${MAXSTACK_WORKSPACE:-}}"
+if [[ -z "$workspace" ]]; then
+  printf 'FAIL: pass WORKSPACE or set MAXSTACK_WORKSPACE to the workspace folder.\n' >&2
+  exit 1
+fi
 project="${PROJECT:-$workspace/projects/repos/simpsonm09-repo-template}"
 opencode_bin="${OPENCODE_BIN:-$HOME/.opencode/bin/opencode}"
 tmp_root="${PSTACK_TEST_TMPDIR:-${TMPDIR:-/tmp}}"

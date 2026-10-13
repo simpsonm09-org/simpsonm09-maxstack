@@ -1,15 +1,14 @@
 # platforms: windows
 [CmdletBinding()]
 param(
-    [string] $Workspace = 'D:\dev\simpsonm09',
+    [string] $Workspace = $env:MAXSTACK_WORKSPACE,
     [string] $OpenCodeBinary = 'opencode',
     [int] $CallTimeoutSeconds = 60
 )
 
-# Checks what a fresh OpenCode process resolves from the workspace: the workspace
-# config and .opencode directory, and the three PStack agent profiles. It starts no
-# server and makes no model call, so it does not depend on a running server; T3 starts
-# can reuse a running server across sessions. Plugin loading needs a model call, so
+# Checks what OpenCode resolves from the workspace: the workspace config and .opencode
+# directory, and the three PStack agent profiles. OpenCode debug commands start or
+# reuse its managed background service, but make no model call. Plugin loading needs a model call, so
 # scripts/verify-workspace-skill.ps1 covers it.
 #
 # maxstack sets no model. Each profile must resolve without one, so the session's
@@ -25,6 +24,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($Workspace)) { throw 'Pass -Workspace or set MAXSTACK_WORKSPACE.' }
 
 . (Join-Path $PSScriptRoot 'Invoke-OpenCode.ps1')
 

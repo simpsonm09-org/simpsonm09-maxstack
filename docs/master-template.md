@@ -90,7 +90,7 @@ A layer source is one of:
 | --- | --- | --- |
 | Git, by owner and repository | `simpsonm09/pstack-claude@feat/opencode-runtime` | Resolves to `https://github.com/<owner>/<repo>.git`. The ref may be a branch, a tag, or a full commit. |
 | Git, by URL | `https://github.com/michael-denyer/pstack-claude.git@main` | The same, for any host. |
-| Local | `local:D:\dev\simpsonm09\projects\repos\pstack-claude` | A working tree. It is never fetched, and uncommitted changes are installed as they are. |
+| Local | `local:<workspace>\projects\repos\pstack-claude` | A working tree. It is never fetched, and uncommitted changes are installed as they are. |
 
 The committed `layers.json` holds each layer's default source with a full commit pin, so a plain install is reproducible. An override changes the source for one run without editing `layers.json`:
 

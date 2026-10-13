@@ -54,6 +54,14 @@ export function checkLayerSkill(stub, skill) {
   return check(name, Boolean(found), `${skill.name} at ${skill.layerPath}`);
 }
 
+// PStack registers /loop from its Pi extension. RPC get_commands reports loaded extension commands.
+export function checkPstackExtensionLoaded(session) {
+  const response = session.events.find((record) => record.type === "response" && record.id === "smoke-commands" && record.command === "get_commands");
+  const commands = response?.data?.commands ?? [];
+  const found = commands.some((command) => command.name === "loop" && command.source === "extension");
+  return check("pstack-pi-extension-loaded", found, found ? "/loop is registered by an extension" : "get_commands did not report PStack's /loop extension command");
+}
+
 function deniedToolEvent(session) {
   return session.events.find(
     (record) => record.type === "tool_execution_end" && record.toolName === "bash" && record.isError === true,

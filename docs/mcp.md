@@ -1,6 +1,6 @@
 # MCP servers
 
-`maxstack` composes the OpenCode configuration for the `D:\dev\simpsonm09` workspace from ordered layers. `scripts/Install-Workspace.ps1 -Apply` merges the layer fragments over [`workspace/opencode.jsonc`](../workspace/opencode.jsonc) and writes the result to `D:\dev\simpsonm09\opencode.jsonc`. It applies only inside that workspace. The layers and their pinned commits are recorded in `stack.lock.json` in the workspace root.
+`maxstack` composes the OpenCode configuration for the `<workspace>` workspace from ordered layers. `scripts/Install-Workspace.ps1 -Apply` merges the layer fragments over [`workspace/opencode.jsonc`](../workspace/opencode.jsonc) and writes the result to `<workspace>\opencode.jsonc`. It applies only inside that workspace. The layers and their pinned commits are recorded in `stack.lock.json` in the workspace root.
 
 Precedence is personal over org over the base. The org layer and the personal layer each contribute no MCP server by default, so the composed default set is empty.
 

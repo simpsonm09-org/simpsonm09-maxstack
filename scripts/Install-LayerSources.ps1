@@ -312,9 +312,17 @@ function Read-TreeFilterNames {
         if ($reason -match 'dubious ownership') { return [pscustomobject]@{ names = @(); fault = $script:DubiousOwnershipReason } }
         return [pscustomobject]@{ names = @(); fault = "config cannot be read: $reason" }
     }
-    # The tree's own scopes are its repository config and its per-worktree config. --includes follows an include.path in them,
-    # so a filter that an include adds is seen. With no scope flag, git reads every scope.
-    $scopes = if ($AllScopes) { @('') } else { @('--local', '--worktree') }
+    # --worktree is valid only when extensions.worktreeConfig is enabled. Probe that setting with the same guarded,
+    # timed wrapper as every other git read, then inspect its scope only when git supports it.
+    $scopes = @('')
+    if (-not $AllScopes) {
+        $scopes = @('--local')
+        $worktreeConfig = Invoke-GitProcess -Arguments @('-C', $Dir, 'config', '--local', '--bool', '--get', 'extensions.worktreeConfig') -Settings $settings -TimeoutSeconds 15
+        if ($null -ne $worktreeConfig.unreadable) { return [pscustomobject]@{ names = @(); fault = $worktreeConfig.unreadable } }
+        if ($worktreeConfig.incomplete) { return [pscustomobject]@{ names = @(); fault = 'git output was cut off, so worktree config is unknown' } }
+        if ($worktreeConfig.code -eq 0 -and (Test-OrdinalEqualIgnoreCase $worktreeConfig.text.Trim() 'true')) { $scopes += '--worktree' }
+        elseif ($worktreeConfig.code -ne 1 -and $worktreeConfig.code -ne 0) { return [pscustomobject]@{ names = @(); fault = 'git could not read the worktree config of this folder' } }
+    }
     $keys = [System.Collections.Generic.List[string]]::new()
     foreach ($scope in $scopes) {
         $scopeArgs = @()

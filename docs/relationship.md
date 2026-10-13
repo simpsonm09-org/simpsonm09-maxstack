@@ -50,6 +50,6 @@ Every repository beneath that root inherits the agents and the skills, because O
 
 Secrets do not load from a `.envrc`, and no shell holds them. A leftover `.envrc` that imports secrets must be removed by hand; `with-secrets` warns when one is in the current directory or a parent.
 
-Do not store an absolute root. The same workspace is `D:\dev\simpsonm09` on Windows and `/mnt/d/dev/simpsonm09` in WSL, so a stored path is wrong in the other runtime. Record what each tool needs relative to the workspace, or read it from an environment variable.
+Do not store an absolute root. The same workspace is `<workspace>` on Windows and `<workspace> (WSL)` in WSL, so a stored path is wrong in the other runtime. Record what each tool needs relative to the workspace, or read it from an environment variable.
 
 The generated runtime folders keep to that rule. Their links and copies are created on each apply, and `stack.lock.json` holds only workspace-relative paths. Two generated files name an absolute path, because the tool that reads them needs one: the T3 Claude instance's launch arguments name the Claude folder, and `.maxstack\bin\copilot.cmd` names the Copilot executable and the Claude folders. Both are app state or generated output, not repository content. See [T3 setup](t3-setup.md).

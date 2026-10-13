@@ -44,12 +44,11 @@ function invoke(options = {}) {
     explicitValue: '',
     cwd: process.cwd(),
     scriptRoot: join(tmpdir(), 'maxstack-no-layout', 'scripts'),
-    legacy: null,
     ...options,
   };
   const encodedOptions = Buffer.from(JSON.stringify(complete), 'utf8').toString('base64');
   const locationSetup = complete.nonFilesystem ? 'Set-Location Env:; ' : '';
-  const command = `[Console]::OutputEncoding = [Text.Encoding]::UTF8; ${locationSetup}$o = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedOptions}')) | ConvertFrom-Json -AsHashtable; . '${helper.replaceAll("'", "''")}'; ${complete.prelude ?? ''} try { $r = Resolve-MaxstackWorkspace -ExplicitSpecified:$o.explicitSpecified -ExplicitValue $o.explicitValue -CurrentDirectory $o.cwd -ScriptRoot $o.scriptRoot -LegacyWorkspace $o.legacy; [ordered]@{workspace=$r.Workspace; origin=$r.Origin; warning=$r.Warning; note=$(if ($r.PSObject.Properties.Name -contains 'Note') { $r.Note } else { $null })} | ConvertTo-Json -Compress } catch { Write-Error $_; exit 23 }`;
+  const command = `[Console]::OutputEncoding = [Text.Encoding]::UTF8; ${locationSetup}$o = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedOptions}')) | ConvertFrom-Json -AsHashtable; . '${helper.replaceAll("'", "''")}'; ${complete.prelude ?? ''} try { $r = Resolve-MaxstackWorkspace -ExplicitSpecified:$o.explicitSpecified -ExplicitValue $o.explicitValue -CurrentDirectory $o.cwd -ScriptRoot $o.scriptRoot; [ordered]@{workspace=$r.Workspace; origin=$r.Origin; warning=$r.Warning; note=$(if ($r.PSObject.Properties.Name -contains 'Note') { $r.Note } else { $null })} | ConvertTo-Json -Compress } catch { Write-Error $_; exit 23 }`;
   const env = { ...process.env };
   if (Object.hasOwn(options, 'envWorkspace')) env.MAXSTACK_WORKSPACE = options.envWorkspace;
   else delete env.MAXSTACK_WORKSPACE;
@@ -78,21 +77,19 @@ test('workspace discovery requires PowerShell 7', { skip: !shell }, () => {
   assert.ok(existsSync(helper));
 });
 
-test('explicit path wins over environment, cwd marker, script layout, and legacy', { skip: !shell }, () => withRoot((root) => {
+test('explicit path wins over environment, cwd marker, and script layout', { skip: !shell }, () => withRoot((root) => {
   const explicit = marker(directory(root, 'explicit'));
   const env = marker(directory(root, 'env'));
   const cwd = marker(directory(root, 'cwd'));
   const layout = marker(directory(root, 'layout'));
-  const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ explicitSpecified: true, explicitValue: explicit, envWorkspace: env, cwd, scriptRoot: join(layout, 'projects/repos/repo/scripts'), legacy }, explicit, '-Workspace');
+  resolveCase({ explicitSpecified: true, explicitValue: explicit, envWorkspace: env, cwd, scriptRoot: join(layout, 'projects/repos/repo/scripts') }, explicit, '-Workspace');
 }));
 
-test('environment wins over cwd marker, script layout, and legacy', { skip: !shell }, () => withRoot((root) => {
+test('environment wins over cwd marker and script layout', { skip: !shell }, () => withRoot((root) => {
   const env = marker(directory(root, 'env'));
   const cwd = marker(directory(root, 'cwd'));
   const layout = marker(directory(root, 'layout'));
-  const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ envWorkspace: env, cwd, scriptRoot: join(layout, 'projects/repos/repo/scripts'), legacy }, env, 'MAXSTACK_WORKSPACE');
+  resolveCase({ envWorkspace: env, cwd, scriptRoot: join(layout, 'projects/repos/repo/scripts') }, env, 'MAXSTACK_WORKSPACE');
 }));
 
 test('a marker that is a symbolic link is not read, and the walk goes on to the next marker', { skip: !shell }, (t) => withRoot((root) => {
@@ -111,8 +108,7 @@ test('a marker that is a symbolic link is not read, and the walk goes on to the 
     throw error;
   }
   const layout = marker(directory(root, 'layout'));
-  const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ cwd: directory(nearest, 'nested'), scriptRoot: join(layout, 'projects/worktrees/repo/scripts'), legacy }, outer, 'cwd marker stack.lock.json');
+  resolveCase({ cwd: directory(nearest, 'nested'), scriptRoot: join(layout, 'projects/worktrees/repo/scripts') }, outer, 'cwd marker stack.lock.json');
 }));
 
 test('script layout resolves exact repos and worktrees segments', { skip: !shell }, () => withRoot((root) => {
@@ -131,8 +127,7 @@ test('cwd marker beats script layout; unrelated script paths do not match layout
   const layoutRoot = directory(layoutWorkspace, 'projects/repos/repo/scripts');
   resolveCase({ cwd: directory(cwdWorkspace, 'child'), scriptRoot: layoutRoot }, cwdWorkspace, 'cwd marker stack.lock.json');
   const badScript = directory(root, 'a/b/c/repo/scripts');
-  const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ cwd: directory(root, 'outside'), scriptRoot: badScript, legacy }, legacy, 'legacy default');
+  resolveFails({ cwd: directory(root, 'outside'), scriptRoot: badScript }, 'Workspace discovery failed');
 }));
 
 test('relative explicit and environment paths resolve against filesystem cwd', { skip: !shell }, () => withRoot((root) => {
@@ -180,9 +175,7 @@ test('explicit empty and invalid environment targets fail without falling throug
   assert.match(runEmptyEnv.stderr, /MAXSTACK_WORKSPACE is set but empty/);
 }));
 
-test('a non-filesystem current location holds no marker, so discovery falls through to the legacy default', { skip: !shell }, () => withRoot((root) => {
-  const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ nonFilesystem: true, cwd: root, scriptRoot: join(root, 'no-layout', 'scripts'), legacy }, legacy, 'legacy default');
+test('a non-filesystem current location without a script layout refuses discovery', { skip: !shell }, () => withRoot((root) => {
   resolveFails({ nonFilesystem: true, cwd: root, scriptRoot: join(root, 'no-layout', 'scripts') }, 'Workspace discovery failed');
 }));
 
@@ -194,21 +187,15 @@ test('missing explicit target fails instead of using a marker or layout', { skip
   assert.match(run.stderr, /-Workspace target does not exist/);
 }));
 
-test('missing legacy target reports all four discovery sources', { skip: !shell }, () => withRoot((root) => {
+test('finding F11: missing workspace reports all four discovery sources', { skip: !shell }, () => withRoot((root) => {
   const cwd = directory(root, 'cwd');
   const scriptRoot = directory(root, 'no/matching/layout/repo/scripts');
-  const run = invoke({ cwd, scriptRoot, legacy: join(root, 'absent-legacy') });
+  const run = invoke({ cwd, scriptRoot });
   assert.equal(run.status, 23);
   assert.match(run.stderr, /MAXSTACK_WORKSPACE/);
   assert.match(run.stderr, /cwd marker/);
   assert.match(run.stderr, /script layout/);
-  assert.match(run.stderr, /legacy default/);
-}));
-
-test('legacy fallback is only used when its injected target exists and carries a warning', { skip: !shell }, () => withRoot((root) => {
-  const legacy = marker(directory(root, 'legacy'));
-  const result = resolveCase({ cwd: directory(root, 'outside'), scriptRoot: directory(root, 'outside-script'), legacy }, legacy, 'legacy default');
-  assert.equal(result.warning, true);
+  assert.match(run.stderr, /-Workspace/);
 }));
 
 // A run that the discovery must refuse: exit 23 and the named message on stderr.
@@ -309,16 +296,14 @@ test('a checkout under projects\\repos or projects\\worktrees is never a workspa
   resolveCase({ cwd: directory(checkout, 'src') }, workspace, 'cwd marker stack.lock.json');
 }));
 
-test('a script layout that lands inside a layer checkout is not a workspace, and the legacy default is used', { skip: !shell }, () => withRoot((root) => {
+test('a script layout that lands inside a layer checkout is not a workspace and discovery refuses', { skip: !shell }, () => withRoot((root) => {
   const scriptRoot = directory(root, 'X/projects/repos/A/projects/repos/B/scripts');
-  const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ cwd: directory(root, 'outside'), scriptRoot, legacy }, legacy, 'legacy default');
+  resolveFails({ cwd: directory(root, 'outside'), scriptRoot }, 'Workspace discovery failed');
 }));
 
 test('a script root at a drive root is not a layout, and the check does not fail', { skip: !shell }, () => withRoot((root) => {
-  const legacy = marker(directory(root, 'legacy'));
   const drive = parse(root).root;
-  resolveCase({ cwd: directory(root, 'outside'), scriptRoot: join(drive, 'scripts'), legacy }, legacy, 'legacy default');
+  resolveFails({ cwd: directory(root, 'outside'), scriptRoot: join(drive, 'scripts') }, 'Workspace discovery failed');
 }));
 
 test('a relative environment path with dot segments resolves from the current directory', { skip: !shell }, () => withRoot((root) => {
@@ -373,10 +358,8 @@ test('the installer walks from the current directory to a marker when neither fl
   assert.equal(run.stdout.split(/\r?\n/)[0], `Workspace: ${workspace} (from cwd marker stack.lock.json)`, run.stdout + run.stderr);
 }));
 
-test('a legacy default with a control character is refused by its text, not skipped as missing', { skip: !shell }, () => withRoot((root) => {
-  const legacy = join(root, `bad${String.fromCharCode(0x7f)}legacy`);
-  const run = assertRefused({ cwd: directory(root, 'outside'), scriptRoot: join(root, 'no-layout', 'scripts'), legacy }, /legacy default path contains control characters/, 'legacy control');
-  assert.ok(run.stderr.includes('\\u007F'), run.stderr);
+test('unconfigured discovery refuses instead of selecting an implicit default', { skip: !shell }, () => withRoot((root) => {
+  resolveFails({ cwd: directory(root, 'outside'), scriptRoot: join(root, 'no-layout', 'scripts') }, 'Workspace discovery failed');
 }));
 
 // A run that must find no workspace: exit 23 and the named message.
@@ -440,10 +423,6 @@ test('a no-flag apply from a checkout workspace folder writes nothing into the c
   cpSync(join(repoRoot, 'scripts'), join(clone, 'scripts'), { recursive: true });
   cpSync(join(repoRoot, 'workspace'), join(clone, 'workspace'), { recursive: true });
   const copy = join(clone, 'scripts', 'Install-Workspace.ps1');
-  const source = readFileSync(copy, 'utf8');
-  const replaced = source.replace(/(\[string\] \$Workspace = ')[^']+(')/, (_match, prefix, suffix) => `${prefix}${join(root, 'no-legacy').replaceAll("'", "''")}${suffix}`);
-  assert.notEqual(replaced, source, 'the copied installer lost its legacy default');
-  writeFileSync(copy, replaced);
   const before = snapshotFolder(clone);
   const env = { ...process.env };
   delete env.MAXSTACK_WORKSPACE;
@@ -548,16 +527,14 @@ function withSubstDrive(t, body) {
 test('a marker in a drive root is skipped by the walk, so a no-flag run does not abort', { skip: !shell }, (t) => withSubstDrive(t, (root, drive) => {
   writeFileSync(`${drive}\stack.lock.json`, '{}');
   directory(drive + '\\', 'child');
-  const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ cwd: `${drive}\child`, scriptRoot: join(root, 'no-layout', 'scripts'), legacy }, legacy, 'legacy default');
+  resolveFails({ cwd: `${drive}\child`, scriptRoot: join(root, 'no-layout', 'scripts') }, 'Workspace discovery failed');
 }));
 
 // A folder whose link target cannot be read makes the walk's resolution throw. The seam replaces the resolver after the
 // helper loads, so the walk meets the failure a real junction or drive root can cause.
 test('a walk candidate whose folder cannot be resolved is skipped, and the run does not abort', { skip: !shell }, () => withRoot((root) => {
-  const legacy = marker(directory(root, 'legacy'));
   const workspace = marker(directory(root, 'ws'));
-  resolveCase({ cwd: directory(workspace, 'child'), scriptRoot: join(root, 'no-layout', 'scripts'), legacy, prelude: "function Get-MaxstackFinalDirectory { param([string] $Path) if ($Path -like '*\ws') { throw 'simulated link failure' }; return [IO.Path]::TrimEndingDirectorySeparator((Get-Item -LiteralPath $Path -Force).FullName) }" }, legacy, 'legacy default');
+  resolveFails({ cwd: directory(workspace, 'child'), scriptRoot: join(root, 'no-layout', 'scripts'), prelude: "function Get-MaxstackFinalDirectory { param([string] $Path) if ($Path -like '*\ws') { throw 'simulated link failure' }; return [IO.Path]::TrimEndingDirectorySeparator((Get-Item -LiteralPath $Path -Force).FullName) }" }, 'Workspace discovery failed');
 }));
 
 test('the installer prints the resolved line first and the layout note once, as a warning', { skip: !shell }, () => withRoot((root) => {
@@ -708,7 +685,6 @@ test('a marker that is a hard link is an ordinary file and identifies its folder
 
 // A file symbolic link needs the symbolic-link privilege. Where it is missing the test is skipped with that reason.
 test('a marker that is a file symbolic link is not a marker, and the walk goes on', { skip: !shell }, (t) => withRoot((root) => {
-  const legacy = marker(directory(root, 'legacy'));
   const workspace = directory(root, 'workspace');
   const source = join(root, 'source.json');
   writeFileSync(source, '{}');
@@ -721,43 +697,35 @@ test('a marker that is a file symbolic link is not a marker, and the walk goes o
     }
     throw error;
   }
-  resolveCase({ cwd: directory(workspace, 'child'), scriptRoot: join(root, 'no-layout', 'scripts'), legacy }, legacy, 'legacy default');
+  resolveFails({ cwd: directory(workspace, 'child'), scriptRoot: join(root, 'no-layout', 'scripts') }, 'Workspace discovery failed');
 }));
 
-// A script layout that is itself a maxstack checkout is not a workspace: the layout is not detected and the legacy default
-// is used.
-test('a script layout that is a maxstack checkout is not a workspace, and the legacy default is used', { skip: !shell }, () => withRoot((root) => {
+// A script layout that is itself a maxstack checkout is not a workspace, so discovery refuses.
+test('a script layout that is a maxstack checkout is not a workspace, and discovery refuses', { skip: !shell }, () => withRoot((root) => {
   const checkout = makeCheckout(root, 'checkout');
   const scriptRoot = directory(checkout, 'projects/repos/r/scripts');
-  const legacy = marker(directory(root, 'legacy'));
-  resolveCase({ cwd: directory(root, 'outside'), scriptRoot, legacy }, legacy, 'legacy default');
+  resolveFails({ cwd: directory(root, 'outside'), scriptRoot }, 'Workspace discovery failed');
 }));
 
-// The installer's own legacy default is used when neither a flag, the environment, a marker, nor the layout names a target.
+// With no explicit or discovered target, the installer refuses before touching any folder.
 // The copied installer names an existing folder as its default, and an empty layers manifest keeps the run offline.
-test('the installer uses its legacy default when nothing else names a target, and warns', { skip: !shell }, () => withRoot((root) => {
-  const legacy = marker(directory(root, 'legacy'));
+test('finding F11: the installer refuses when no workspace source names a target', { skip: !shell }, () => withRoot((root) => {
   const copyScripts = join(directory(root, 'copy'), 'scripts');
   mkdirSync(copyScripts, { recursive: true });
   cpSync(join(repoRoot, 'scripts'), copyScripts, { recursive: true });
   const copy = join(copyScripts, 'Install-Workspace.ps1');
-  const source = readFileSync(copy, 'utf8');
-  const replaced = source.replace(/(\[string\] \$Workspace = ')[^']+(')/, (_match, prefix, suffix) => `${prefix}${legacy.replaceAll("'", "''")}${suffix}`);
-  assert.notEqual(replaced, source, 'the copied installer lost its legacy default');
-  writeFileSync(copy, replaced);
   const emptyLayers = join(root, 'empty-layers.json');
   writeFileSync(emptyLayers, '{"layers":[]}');
   const env = { ...process.env };
   delete env.MAXSTACK_WORKSPACE;
   const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-File', copy, '-LayersFile', emptyLayers, '-Status'], { windowsHide: true, encoding: 'utf8', cwd: directory(root, 'outside'), env });
-  assert.equal(run.stdout.split(/\r?\n/)[0], `Workspace: ${legacy} (from legacy default)`, run.stdout + run.stderr);
-  assert.match(`${run.stdout}${run.stderr}`, /legacy workspace default/i);
+  assert.notEqual(run.status, 0, `${run.stdout}${run.stderr}`);
+  assert.match(`${run.stdout}${run.stderr}`, /Workspace discovery failed.*-Workspace.*MAXSTACK_WORKSPACE.*cwd marker.*script layout/is);
 }));
 
 // The walk ignores a marker that is a link. Here the link predicate is replaced after the helper loads, because a file symbolic
 // link cannot be created in this environment; the predicate itself is exercised by the reparse-point tests.
 test('the walk ignores a marker that is a link, whatever its kind', { skip: !shell }, () => withRoot((root) => {
-  const legacy = marker(directory(root, 'legacy'));
   const workspace = marker(directory(root, 'ws'));
-  resolveCase({ cwd: directory(workspace, 'child'), scriptRoot: join(root, 'no-layout', 'scripts'), legacy, prelude: 'function Test-MaxstackLinkedPath { param([string] $Path) return $Path -like \'*stack.lock.json\' }' }, legacy, 'legacy default');
+  resolveFails({ cwd: directory(workspace, 'child'), scriptRoot: join(root, 'no-layout', 'scripts'), prelude: 'function Test-MaxstackLinkedPath { param([string] $Path) return $Path -like \'*stack.lock.json\' }' }, 'Workspace discovery failed');
 }));

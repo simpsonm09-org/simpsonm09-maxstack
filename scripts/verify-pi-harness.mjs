@@ -18,6 +18,7 @@ import {
   checkDeniedNotRun,
   checkGateLoaded,
   checkLayerSkill,
+  checkPstackExtensionLoaded,
   checkPiExit,
   checkPlainTurn,
   checkWorkspaceUnchanged,
@@ -85,6 +86,7 @@ async function runChecks({ workspace, settings, skills, launch, parentEnv, scrat
   return [
     checkPiExit(session),
     checkChatRequest(stub),
+    checkPstackExtensionLoaded(session),
     checkPlainTurn(session),
     ...skills.map((skill) => checkLayerSkill(stub, skill)),
     checkBashCallMade(session),

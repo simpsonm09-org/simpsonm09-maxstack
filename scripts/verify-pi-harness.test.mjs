@@ -11,6 +11,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkDeniedNotRun,
+  checkPstackExtensionLoaded,
   GATE_DENIAL_PREFIX,
   skillsInSystemPrompt,
 } from "./lib/pi-harness-checks.mjs";
@@ -224,11 +225,19 @@ test("a Windows .cmd shim runs through cmd.exe, and an argument that needs quoti
   assert.throws(() => piLaunch({ piBin: "pi", args: ["two words"], platform: "linux" }), /needs quoting/);
 });
 
-test("the verifier passes every check when the wiring is right", async () => {
+test("the verifier checks wiring and reports the stand-in's missing extension signal honestly", async () => {
   const { checks } = await runPiHarness({ workspace: makeWorkspace(), standin, standinMode: "gate" });
-  const failed = checks.filter((check) => !check.ok).map((check) => `${check.name}: ${check.detail}`);
+  const failed = checks.filter((check) => !check.ok && check.name !== "pstack-pi-extension-loaded").map((check) => `${check.name}: ${check.detail}`);
   assert.deepEqual(failed, []);
+  assert.equal(checks.find((check) => check.name === "pstack-pi-extension-loaded").ok, false);
   assert.ok(checks.some((check) => check.name === "gate-extension-loaded" && check.detail.startsWith(GATE_DENIAL_PREFIX)));
+});
+
+test("finding F2: the pstack extension check requires /loop in Pi's RPC command list", async () => {
+  const result = checkPstackExtensionLoaded({ events: [{ id: "smoke-commands", type: "response", command: "get_commands", success: true, data: { commands: [] } }] });
+  assert.equal(result.name, "pstack-pi-extension-loaded");
+  assert.equal(result.ok, false);
+  assert.match(result.detail, /did not report/);
 });
 
 test("the verifier fails closed when the stand-in runs the denied command", async () => {
@@ -252,7 +261,7 @@ test("the verifier names the layer whose skill is missing from the settings", as
     standinMode: "gate",
   });
   const failed = checks.filter((check) => !check.ok).map((check) => check.name);
-  assert.deepEqual(failed, ["skill-simpsonm09-personal-ai-plugin-in-system-prompt"]);
+  assert.deepEqual(failed, ["pstack-pi-extension-loaded", "skill-simpsonm09-personal-ai-plugin-in-system-prompt"]);
 });
 
 test("a workspace with no Pi settings is a setup error, not a check failure", async () => {

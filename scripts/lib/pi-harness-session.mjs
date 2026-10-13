@@ -137,6 +137,8 @@ export async function runRpcSession({ launch, env, cwd, prompts, timeoutMs, prom
   const settled = () => session.events.filter((record) => record.type === "agent_settled").length;
   const rejected = () => session.events.some((record) => record.type === "response" && record.success === false);
   const deadline = Date.now() + timeoutMs;
+  child.stdin.write(`${JSON.stringify({ id: "smoke-commands", type: "get_commands" })}\n`);
+  await waitFor(() => session.events.some((record) => record.type === "response" && record.id === "smoke-commands") || child.exitCode !== null, Math.min(promptMs, deadline - Date.now()));
   for (let index = 0; index < prompts.length; index += 1) {
     if (child.exitCode !== null || rejected()) break;
     child.stdin.write(`${JSON.stringify({ id: `smoke-${index + 1}`, type: "prompt", message: prompts[index] })}\n`);

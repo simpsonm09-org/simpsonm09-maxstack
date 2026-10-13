@@ -50,8 +50,8 @@ jobs:
   test-node:
     if: github.repository_owner == 'simpsonm09-org'
     runs-on: windows-latest
-    # Expected about 20 to 25 minutes: the installer suite is six Install-Workspace.*.test.mjs files, run four at a time.
-    timeout-minutes: 40
+    # Measured 27 to over 40 minutes on the hosted runner: the installer suite is seven Install-Workspace.*.test.mjs files, run four at a time.
+    timeout-minutes: 75
     permissions:
       contents: read
     steps:
