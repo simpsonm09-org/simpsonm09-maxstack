@@ -157,9 +157,15 @@ What Codex receives:
 
 Verified: with codex-cli 0.162.1, `codex debug prompt-input` run from a repository under a scratch workspace lists the installed skills, and the workspace `AGENTS.md`, only with the marker. That check needs no login and no model call. Separately, `scripts/codex-hook-trust.mjs` reads `hooks/list` and reports the emitted hook trusted with an empty temporary `CODEX_HOME`, no login, and no model call. A T3 Codex session and a live turn with the trusted line are not verified.
 
+## Cursor and Antigravity
+
+Selecting the `codex` runtime also puts the selected layers' skills in `.agents\skills`, which Cursor and Antigravity read when a session opens at the workspace root. A session opened inside a repository does not see skills stored at the workspace root. These harnesses get no gate, layer agents, or workspace instructions from maxstack. They are second-class harnesses, and this is the supported level.
+
+Measured: documentation and T3 source show that both check the active project or working directory and home paths, without walking up to the parent workspace. A Cursor turn was attempted once and stopped at a usage limit. No Antigravity session was authenticated or run. Skill loading and instructions were not verified in a live session.
+
 ## Not set up
 
-Cursor and Antigravity are not set up for this workspace, because their quota is not available. They have no instance or wrapper here.
+Cursor and Antigravity have no instance or wrapper here.
 
 ## Checks
 
