@@ -117,12 +117,12 @@ If T3 reports that the provider could not start a turn, read the server log for 
 
 ## Codex (maxstack)
 
-The `codex` runtime gives OpenAI Codex the workspace's skills and instructions. It is opt-in: select it with `-Runtimes codex` or in `maxstack.settings.json`. The installer copies each selected layer's skills into the workspace's `.agents\skills` folder, and it writes nothing else for Codex.
+The `codex` runtime gives OpenAI Codex the workspace's skills, instructions, and the org layer's access gate. It is opt-in: select it with `-Runtimes codex` or in `maxstack.settings.json`. The installer copies each selected layer's skills into the workspace's `.agents\skills` folder.
 
 Set up a Codex provider instance in T3 Code:
 
 1. Add a Codex instance named `Codex (maxstack)`. Leave Binary path, CODEX_HOME path, and Shadow home path at their defaults.
-2. Set Launch arguments to exactly this line:
+2. Set Launch arguments to the line the installer prints. When no layer ships a Codex gate hook, that line is exactly this one:
 
    ```text
    -c 'project_root_markers=["stack.lock.json"]'
@@ -130,20 +130,42 @@ Set up a Codex provider instance in T3 Code:
 
 Codex treats the git root of a session as the project root, so a repository under `projects\repos` never sees the workspace's skills or instructions. The marker makes the workspace the project root, so every repository under the workspace sees the workspace's skills and `AGENTS.md`.
 
-`T3CODE_CODEX_LAUNCH_ARGS` replaces the instance's launch arguments when it is set. With it set, the marker is gone and the session sees no workspace skills. The installer prints the launch-arguments line when `codex` is selected.
+### The access gate line
+
+When a selected layer's installed copy carries a Codex PreToolUse hook, the installer prints a longer Launch-arguments line instead of the marker line. The line carries the marker, the hook definition, and a `hooks.state` entry that marks the hook trusted. Codex skips a hook it does not trust, so that entry is what turns the hook on.
+
+The installer builds the line with `scripts/codex-hook-trust.mjs`. It reads the hook's key and hash from `codex app-server` `hooks/list`, then confirms that Codex reports the hook trusted. It runs with an empty temporary `CODEX_HOME`, so it needs no login and makes no model call. A failed run prints the plain marker line and a warning, and the install still succeeds.
+
+Codex reads a hook's definition, not the hook script's bytes, when it decides trust. Paste the line into the instance's Launch arguments, and paste it again whenever the installer prints a different one. A changed hook definition, a moved hook path, or a changed timeout changes the key or the hash, and the old line no longer trusts the hook.
+
+A layer's hook lives inside the layer's installed copy under `.opencode\plugins`, which only the `opencode` runtime writes. Select `opencode` with `codex` to get the gate line. With `codex` alone, the installer prints the marker line and a note naming that runtime. maxstack supports one gate hook, so when more than one layer ships one, the installer uses the first and says so.
+
+### What the gate covers on Codex
+
+- The gate covers shell commands only, through the `Bash` tool, which also covers Codex unified exec. File edits, MCP tools, and hosted tools are outside it.
+- Chained commands are decided by their first word, as on the other harnesses.
+- On Codex the gate is a guardrail and not a hard boundary. Codex skips a hook that is untrusted, cannot start, or times out, and only the exit-0 JSON deny blocks on Windows. A worker or gate failure after the adapter starts is converted to that JSON deny. A missing `node`, a missing hook script, or a timeout lets the command through.
+- A gate `ask` becomes a deny, because Codex PreToolUse cannot ask a person.
+
+`T3CODE_CODEX_LAUNCH_ARGS` replaces the instance's launch arguments when it is set. With it set, the marker is gone and the session sees no workspace skills.
 
 What Codex receives:
 
 - Skills: each selected layer's skills, as folders under `.agents\skills`. The lock owns each folder.
 - Instructions: the workspace root `AGENTS.md`, if you keep one there. maxstack writes no `AGENTS.md`, and it never overwrites one.
+- The access gate: the org layer's PreToolUse hook, when the gate line is set. MCP servers and custom agents are not delivered yet.
 
-What Codex does not receive yet: the access gate (PreToolUse hooks), MCP servers, custom agents, and hooks. The gate needs one authenticated Codex turn to confirm the hook behaviour before it is built.
+Verified: with codex-cli 0.162.1, `codex debug prompt-input` run from a repository under a scratch workspace lists the installed skills, and the workspace `AGENTS.md`, only with the marker. That check needs no login and no model call. Separately, `scripts/codex-hook-trust.mjs` reads `hooks/list` and reports the emitted hook trusted with an empty temporary `CODEX_HOME`, no login, and no model call. A T3 Codex session and a live turn with the trusted line are not verified.
 
-Verified: with codex-cli 0.162.1, `codex debug prompt-input` run from a repository under a scratch workspace lists the installed skills, and the workspace `AGENTS.md`, only with the marker. That check needs no login and no model call. A T3 Codex session and a live turn are not verified.
+## Cursor and Antigravity
+
+Selecting the `codex` runtime also puts the selected layers' skills in `.agents\skills`, which Cursor and Antigravity read when a session opens at the workspace root. A session opened inside a repository does not see skills stored at the workspace root. These harnesses get no gate, layer agents, or workspace instructions from maxstack. They are second-class harnesses, and this is the supported level.
+
+Measured: documentation and T3 source show that both check the active project or working directory and home paths, without walking up to the parent workspace. A Cursor turn was attempted once and stopped at a usage limit. No Antigravity session was authenticated or run. Skill loading and instructions were not verified in a live session.
 
 ## Not set up
 
-Cursor and Antigravity are not set up for this workspace, because their quota is not available. They have no instance or wrapper here.
+Cursor and Antigravity have no instance or wrapper here.
 
 ## Checks
 

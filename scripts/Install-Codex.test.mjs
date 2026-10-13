@@ -8,9 +8,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { test } from 'node:test';
 
 import {
@@ -48,16 +48,23 @@ function skillMarkdown(name, { description = 'fixture skill', frontmatterName = 
 }
 
 // A local layer checkout. Its skills map a folder name to the SKILL.md text. The Claude manifest names the layer, and the
-// node_modules tree stops the installer from running npm.
-function writeLocalLayer(workspace, name, skills) {
+// node_modules tree stops the installer from running npm. With hooks, the layer ships the two files that make a Codex
+// gate hook, so the opencode copy under .opencode/plugins carries them.
+function writeLocalLayer(workspace, name, skills, { hooks = false } = {}) {
   const root = join(workspace, LAYER_PATH[name]);
+  const files = ['index.ts', 'node_modules', 'package.json', 'skills', '.claude-plugin'];
+  if (hooks) files.push('hooks');
   writeFile(root, 'index.ts', 'export default {};\n');
-  writeFile(root, 'layer.json', JSON.stringify({ files: ['index.ts', 'node_modules', 'package.json', 'skills', '.claude-plugin'] }));
+  writeFile(root, 'layer.json', JSON.stringify({ files }));
   writeFile(root, 'package.json', JSON.stringify({ name, version: '0.1.0' }));
   writeFile(root, 'node_modules/@opencode/plugin/index.js', 'module.exports = {};\n');
   writeFile(root, 'opencode.fragment.jsonc', '{}');
   writeFile(root, '.claude-plugin/plugin.json', JSON.stringify({ name, version: '0.1.0' }));
   for (const [folder, text] of Object.entries(skills)) writeFile(root, `skills/${folder}/SKILL.md`, text);
+  if (hooks) {
+    writeFile(root, 'hooks/pre-tool-use.mjs', '#!/usr/bin/env node\nprocess.exit(0);\n');
+    writeFile(root, 'hooks/lib/codex.mjs', 'export {};\n');
+  }
 }
 
 // One scratch context per test: a fixture repository from the kit, the stand-ins, and the layers file for the repository's
@@ -76,11 +83,36 @@ function buildContext({ orgSkills = { 'org-demo': skillMarkdown('org-demo') }, p
 }
 
 // A workspace under the context. Its folder is named simpsonm09 in every workspace, so two can compare by their text.
-function addWorkspace(ctx, name, { skills = ctx.skills } = {}) {
+// hooks maps a layer name to true to give that layer a Codex gate hook in its installed copy.
+function addWorkspace(ctx, name, { skills = ctx.skills, hooks = {} } = {}) {
   const workspace = join(ctx.base, name, 'simpsonm09');
   mkdirSync(workspace, { recursive: true });
-  for (const layer of [ORG, PERSONAL]) writeLocalLayer(workspace, layer, skills[layer]);
+  for (const layer of [ORG, PERSONAL]) writeLocalLayer(workspace, layer, skills[layer], { hooks: hooks[layer] === true });
   return { ...ctx, workspace };
+}
+
+// A stand-in for codex on PATH: the installer's gate generator spawns `codex`, which is this wrapper around the shared
+// fake. FAKE_CODEX_MODE is read by the fake, so a test can make it refuse trust.
+function writeFakeCodex(base) {
+  const bin = join(base, 'fake-codex-bin');
+  const fake = join(repoRoot, 'scripts', 'fixtures', 'fake-codex.mjs');
+  mkdirSync(bin, { recursive: true });
+  if (process.platform === 'win32') {
+    writeFileSync(join(bin, 'codex.cmd'), `@echo off\r\n"${process.execPath}" "${fake}" %*\r\n`);
+  } else {
+    const path = join(bin, 'codex');
+    writeFileSync(path, `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`);
+    chmodSync(path, 0o755);
+  }
+  return bin;
+}
+
+// The installer environment with the fake codex first on PATH. The Path key is found by case, as the kit does.
+function envWithFakeCodex(base, extra = {}) {
+  const env = { ...process.env, ...extra };
+  const key = Object.keys(env).find((name) => name.toUpperCase() === 'PATH') ?? 'PATH';
+  env[key] = `${writeFakeCodex(base)}${delimiter}${env[key] ?? ''}`;
+  return env;
 }
 
 // The layers file of an installer tree other than this one: its layers.json, with the pstack pin pointed at the fixture.
@@ -454,6 +486,62 @@ withContext('the settings file refuses a runtime name with a zero-width space', 
   const run = runInstaller(shell, ctx, []);
   assert.notEqual(run.status, 0, plainOutput(run));
   assert.equal(lstatSafe(lockPath(ctx)), null);
+});
+
+// -- The Codex gate launch line -------------------------------------------------------------------------------------
+// A layer whose installed opencode copy carries hooks/pre-tool-use.mjs and hooks/lib/codex.mjs gets a Launch-arguments
+// line with the trusted hook. Every workspace here selects codex with opencode, so the installed copy exists. The
+// stand-in codex on PATH trusts the hook it hands out, unless FAKE_CODEX_MODE makes it refuse.
+
+withContext('codex and opencode print the gate Launch-arguments line in place of the marker line', (shared) => {
+  const ctx = addWorkspace(shared, 'gate', { hooks: { [ORG]: true } });
+  const run = runInstaller(shell, ctx, ['-Runtimes', 'opencode,codex'], { env: envWithFakeCodex(shared.base) });
+  assert.equal(run.status, 0, plainOutput(run));
+  const out = plainOutput(run);
+  assert.match(out, /Codex: Launch arguments: -c 'project_root_markers=\["stack\.lock\.json"\]' -c 'hooks\.PreToolUse=/);
+  assert.ok(out.includes('.opencode/plugins/simpsonm09-org-ai-plugin/hooks/pre-tool-use.mjs codex'), out);
+  assert.match(out, /paste that line into the Launch arguments of the T3/);
+  assert.doesNotMatch(out, /Codex: start the T3 Codex \(maxstack\) instance with Launch arguments/, 'the plain marker line is replaced');
+});
+
+withContext('a failed gate generator prints the plain marker line and a warning, and the install still succeeds', (shared) => {
+  const ctx = addWorkspace(shared, 'gate-fail', { hooks: { [ORG]: true } });
+  const run = runInstaller(shell, ctx, ['-Runtimes', 'opencode,codex'], { env: envWithFakeCodex(shared.base, { FAKE_CODEX_MODE: 'untrusted' }) });
+  assert.equal(run.status, 0, plainOutput(run));
+  const out = plainOutput(run);
+  assert.match(out, /Codex: start the T3 Codex \(maxstack\) instance with Launch arguments: -c 'project_root_markers=\["stack\.lock\.json"\]'/);
+  assert.match(out, /could not be generated/);
+  assert.match(out, /not trusted/);
+});
+
+withContext('no layer with a Codex hook prints only the marker line', (shared) => {
+  const ctx = addWorkspace(shared, 'gate-none');
+  const run = runInstaller(shell, ctx, ['-Runtimes', 'opencode,codex'], { env: envWithFakeCodex(shared.base) });
+  assert.equal(run.status, 0, plainOutput(run));
+  const out = plainOutput(run);
+  assert.match(out, /Codex: start the T3 Codex \(maxstack\) instance with Launch arguments/);
+  assert.doesNotMatch(out, /Launch arguments: -c 'hooks\.PreToolUse/);
+  assert.doesNotMatch(out, /could not be generated/);
+});
+
+withContext('codex alone prints the marker line and the note that the opencode copy is needed', (shared) => {
+  const ctx = addWorkspace(shared, 'gate-codex-only', { hooks: { [ORG]: true } });
+  const run = runInstaller(shell, ctx, ['-Runtimes', 'codex'], { env: envWithFakeCodex(shared.base) });
+  assert.equal(run.status, 0, plainOutput(run));
+  const out = plainOutput(run);
+  assert.match(out, /select the opencode runtime with codex/);
+  assert.match(out, /Codex: start the T3 Codex \(maxstack\) instance with Launch arguments/);
+  assert.doesNotMatch(out, /Launch arguments: -c 'hooks\.PreToolUse/);
+});
+
+withContext('an audit run says a gate line would be generated and does not start Codex', (shared) => {
+  const ctx = addWorkspace(shared, 'gate-audit', { hooks: { [ORG]: true } });
+  mustRun(ctx, ['-Runtimes', 'opencode,codex'], { env: envWithFakeCodex(shared.base) });
+  const run = runInstaller(shell, ctx, ['-Runtimes', 'opencode,codex'], { apply: false, env: envWithFakeCodex(shared.base) });
+  assert.equal(run.status, 0, plainOutput(run));
+  const out = plainOutput(run);
+  assert.match(out, /a gate Launch-arguments line would be generated/);
+  assert.doesNotMatch(out, /Launch arguments: -c 'hooks\.PreToolUse/);
 });
 
 // -- Byte for byte: a workspace that does not select codex is unchanged ---------------------------------------------

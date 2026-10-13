@@ -39,11 +39,13 @@ validate:
 validate-online:
     {{python}} scripts/verify-manifests.py --online
 
-# Four test files run at once, the width of the CI runner, so a local run and the CI job schedule the same way.
-
 # Run the node test suite under scripts/. The installer tests need PowerShell 7 and git; a missing program skips its test.
 test-node:
     node --test --test-concurrency=4 scripts/*.test.mjs
+
+# Run one shard of the node test suite. CI runs four shards on separate Windows runners.
+test-node-shard index total:
+    node --test --test-concurrency=4 --test-shard={{index}}/{{total}} scripts/*.test.mjs
 
 # The installer suite stays in test-node, because it drives Install-Workspace.ps1 under PowerShell 7.
 

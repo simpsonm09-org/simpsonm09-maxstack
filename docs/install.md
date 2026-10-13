@@ -149,7 +149,7 @@ The same install also builds `.claude/plugins` at the workspace root: one child 
 
 ## Codex
 
-With `codex` selected, the installer copies each selected layer's skills into `.agents\skills`. Codex reads the skills, and the workspace `AGENTS.md` when you keep one, only when the T3 Codex instance's launch arguments name the marker `stack.lock.json`. The installer writes no `AGENTS.md`, and `-Status` says so when `codex` is selected. See [T3 setup](t3-setup.md#codex-maxstack) for the instance and what Codex does not receive yet.
+With `codex` selected, the installer copies each selected layer's skills into `.agents\skills`. Codex reads the skills, and the workspace `AGENTS.md` when you keep one, only when the T3 Codex instance's launch arguments name the marker `stack.lock.json`. When a selected layer ships a Codex gate hook and the `opencode` runtime is selected too, the installer prints a longer Launch-arguments line that also turns the hook on. The installer writes no `AGENTS.md`, and `-Status` says so when `codex` is selected. See [T3 setup](t3-setup.md#codex-maxstack) for the instance, the gate line, and its limits. Cursor and Antigravity can read the installed skills when a session opens at the workspace root. See [their T3 setup notes](t3-setup.md#cursor-and-antigravity) for the scope and verification limits.
 
 ## Copilot CLI
 

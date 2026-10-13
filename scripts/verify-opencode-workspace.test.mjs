@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repoRoot, "scripts", "verify-opencode-workspace.ps1");
-const PROMPT_EXIT_MS = 5_000;
+// Leave room for slow hosted runners while staying well below the 8-second leftover child and 10-second call timeout.
+const PROMPT_EXIT_MS = 7_000;
 const RUN_CEILING_MS = 30_000;
 
 function findPwsh() {
