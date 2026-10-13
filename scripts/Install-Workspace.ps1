@@ -3441,7 +3441,7 @@ if ($Status) {
         Write-Host ((Format-Selection -Runtimes $selectedRuntimes -Layers $selectedLayers) + $legacyNote)
     }
     Write-SourcePinBlock -Entries (Get-RecordedSourceEntries $priorStack)
-    if ($codexSelected) { Write-CodexNotes }
+    if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $false -OpenCodeSelected $openCodeSelected }
     if ($null -eq $priorOwned) {
         Write-Host 'no ownership record; run -Apply once to create it'
         if ($Strict) { exit 1 }
@@ -3469,7 +3469,7 @@ if (-not $Apply) {
     Write-Host "Workspace:      $Workspace"
     Write-Host (Format-Selection -Runtimes $selectedRuntimes -Layers $selectedLayers)
     Write-SourcePinBlock -Entries (Get-ResolvedSourceEntries -Layers $allLayers)
-    if ($codexSelected) { Write-CodexNotes }
+    if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $false -OpenCodeSelected $openCodeSelected }
     foreach ($layer in $layers) {
         $where = if ($layer.root) { $layer.root } elseif ((Test-OrdinalEqual $layer.sourceKind 'local')) {
             $reason = if ($layer.folderMissing) { 'folder missing' } else { "unreadable: $(ConvertTo-SafeName ([string] $layer.unreadable))" }
@@ -3931,7 +3931,7 @@ Invoke-StrayReport -Known $knownNow -ConfigSha $stack.configSha256 -SettingsSha 
 Write-LockAtomically -Text ($stack | ConvertTo-Json -Depth 8)
 Write-Host "Wrote $stackTarget"
 
-if ($codexSelected) { Write-CodexNotes }
+if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $true -OpenCodeSelected $openCodeSelected }
 Write-Host 'Workspace bundle installed from the layer manifest.'
 Write-Host 'Restart the running OpenCode server, then start a new T3 session to load it: T3 can reuse that server across sessions. Claude Code reads plugins when a session starts. Pi reads its settings when a session starts.'
 if ($skippedRuntimeWrappers.Count -gt 0) {

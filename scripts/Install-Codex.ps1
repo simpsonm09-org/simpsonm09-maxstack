@@ -10,6 +10,17 @@ Set-StrictMode -Version Latest
 $script:CodexSkillFolder = '.agents/skills'
 $script:CodexLaunchLine = 'Codex: start the T3 Codex (maxstack) instance with Launch arguments: -c ''project_root_markers=["stack.lock.json"]''. See docs/t3-setup.md#codex-maxstack.'
 $script:CodexAgentsNote = 'Codex: this installer writes no workspace AGENTS.md. Codex reads the workspace AGENTS.md when the launch arguments name stack.lock.json, if you keep one there.'
+# A layer's installed copy is its opencode plugin folder. A Codex gate hook lives inside that copy, so the gate line can
+# only be generated when the opencode runtime is selected too. The rule for a Codex gate hook is the two files below, which
+# is how the org layer's adapter ships. scripts/codex-hook-trust.mjs reads the hook key, hash, and trust from Codex itself.
+$script:CodexGateFolder = '.opencode/plugins'
+$script:CodexGateHookRelative = 'hooks/pre-tool-use.mjs'
+$script:CodexGateLibRelative = 'hooks/lib/codex.mjs'
+$script:CodexGateScript = 'codex-hook-trust.mjs'
+$script:CodexPasteNote = 'Codex: paste that line into the Launch arguments of the T3 "Codex (maxstack)" instance, and paste it again whenever this installer prints a different one. See docs/t3-setup.md#codex-maxstack.'
+$script:CodexGateOneNote = 'Codex: only one gate hook is supported for now, so only the first layer with a Codex hook is used.'
+$script:CodexGateAuditNote = 'Codex: a gate Launch-arguments line would be generated because a selected layer ships a Codex hook. Run -Apply to generate it.'
+$script:CodexGateRuntimeNote = 'Codex: a gate hook lives inside the layer''s installed copy under .opencode\plugins, so select the opencode runtime with codex to generate the gate line.'
 
 # Reads a SKILL.md frontmatter the way the generator does: the block between the first two --- lines, one key per line.
 # A key that is not name or description is read and kept, so a model key is found and refused by the caller.
@@ -162,8 +173,68 @@ function Write-CodexSkills {
     }
 }
 
-# The codex lines an apply and a status print when codex is selected. Nothing is printed when it is not.
+# The installed copy of a selected layer.
+function Get-CodexGateFolder {
+    param([object] $Layer)
+
+    return (Join-Path $Workspace (($script:CodexGateFolder + '/' + $Layer.name) -replace '/', '\'))
+}
+
+# The selected layers whose installed copy carries a Codex gate hook: the hook script and the codex runtime library.
+# A layer is checked in layer order, and only the layers that selected codex take part.
+function Get-CodexGateLayers {
+    param([object[]] $Layers)
+
+    $found = [System.Collections.Generic.List[object]]::new()
+    foreach ($layer in @($Layers | Where-Object { $_.runtimes.ContainsKey('codex') })) {
+        $folder = Get-CodexGateFolder -Layer $layer
+        $hook = Join-Path $folder ($script:CodexGateHookRelative -replace '/', '\')
+        $lib = Join-Path $folder ($script:CodexGateLibRelative -replace '/', '\')
+        if ((Test-Path -LiteralPath $hook -PathType Leaf) -and (Test-Path -LiteralPath $lib -PathType Leaf)) { $found.Add($layer) }
+    }
+    return $found.ToArray()
+}
+
+# The codex lines an apply and a status print when codex is selected. Nothing is printed when it is not. On an apply, a
+# layer whose installed copy carries a Codex gate hook gets a Launch-arguments line with the trusted hook, read from Codex
+# itself by scripts/codex-hook-trust.mjs. Any failure, or a path the line cannot carry, falls back to the plain marker line,
+# and the install still succeeds. A run without -Apply says only that a gate line would be generated, and starts no Codex.
 function Write-CodexNotes {
-    Write-Host $script:CodexLaunchLine
+    param([object[]] $Layers, [bool] $Applying, [bool] $OpenCodeSelected)
+
+    $gateLayers = @(Get-CodexGateLayers -Layers $Layers)
+    if ($gateLayers.Count -gt 1) { Write-Host $script:CodexGateOneNote }
+    if (-not $Applying) {
+        if ($gateLayers.Count -gt 0) { Write-Host $script:CodexGateAuditNote } else { Write-Host $script:CodexLaunchLine }
+        Write-Host $script:CodexAgentsNote
+        return
+    }
+    if ($gateLayers.Count -eq 0) {
+        if (-not $OpenCodeSelected) { Write-Host $script:CodexGateRuntimeNote }
+        Write-Host $script:CodexLaunchLine
+        Write-Host $script:CodexAgentsNote
+        return
+    }
+    $hook = Join-Path (Get-CodexGateFolder -Layer $gateLayers[0]) ($script:CodexGateHookRelative -replace '/', '\')
+    $text = ''
+    $code = 1
+    try {
+        $output = @(& node (Join-Path $PSScriptRoot $script:CodexGateScript) --workspace $Workspace --hook $hook 2>&1 | ForEach-Object { [string] $_ })
+        $code = $LASTEXITCODE
+        $text = ($output -join "`n").Trim()
+    } catch {
+        $text = $_.Exception.Message
+    }
+    $parsed = $null
+    if ($code -eq 0) { try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $null } }
+    $launch = Get-Field $parsed 'launchArguments'
+    if ($null -ne $parsed -and (Test-NonEmptyString $launch)) {
+        Write-Host ("Codex: Launch arguments: {0}" -f $launch)
+        Write-Host $script:CodexPasteNote
+    } else {
+        Write-Host $script:CodexLaunchLine
+        $reason = if (Test-NonEmptyString $text) { $text } else { "the gate generator exited with code $code" }
+        Write-Warning "Codex: the gate Launch-arguments line could not be generated, so the plain marker line is printed: $reason"
+    }
     Write-Host $script:CodexAgentsNote
 }

@@ -27,7 +27,7 @@ Pins:
 - maxstack pins pstack at commit `f629de81cfc9a2a9fd631cacc7567beee7b5b346` on branch `feat/opencode-runtime` [MS-LAY]. The fork worktree HEAD is the same commit [FORK].
 - The `pstack-claude` checkout at `pstack-claude` is on `main` (60ae9e2), not the pin. Where the two differ, the row says so (see G7).
 
-Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex is a fifth runtime, opt-in, which installs the layers' skills and no plugin (rows 2.1 and 2.2). Cursor and Antigravity have no installer target.
+Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex is a fifth runtime, opt-in, which installs the layers' skills and no plugin, and can turn on a layer's Codex gate hook through a Launch-arguments line (rows 2.1, 2.2, and 2.8). Cursor and Antigravity have no installer target.
 
 Harness versions named in the sources: Copilot CLI 1.0.93 and 1.0.89 [ORG, PSC-MAP-CP]; OpenCode 2.0.24 and 2.0.26 [MS-T3]; Pi 1.0 [PSC-PI].
 
@@ -41,6 +41,7 @@ Source key (short IDs used in cells):
 | MS-PUB | simpsonm09-maxstack/docs/plugin-publishing.md |
 | MS-MCP | simpsonm09-maxstack/docs/mcp.md |
 | MS-LAY | simpsonm09-maxstack/layers.json and pstack.lock.json |
+| MS-CXG | simpsonm09-maxstack/scripts/codex-hook-trust.mjs and docs/t3-setup.md (Codex (maxstack)) |
 | PSC-PI | pstack-claude/docs/pi-equivalence.md |
 | PSC-HK | pstack-claude/plugins/pstack/hooks/hooks.json (main) |
 | PSC-CPH | pstack-claude/plugins/pstack/hooks/copilot-hooks.json (main) |
@@ -80,8 +81,8 @@ Summary grid (status only; the detail below holds the reason and evidence). Gene
 | Ask the user a question | same | differs | differs | differs | not built yet | differs | unverified |
 | Scheduled wakeup and /loop | same | cannot | cannot | differs | not built yet | cannot | unverified |
 | Session-start routing mandate | same | differs | differs | differs | not built yet | differs | unverified |
-| Access gate denies the same commands | same | same | differs | same | not built yet | not built yet | not built yet |
-| Gate ask handling | differs | differs | differs | differs | not built yet | not built yet | not built yet |
+| Access gate denies the same commands | same | same | differs | same | not built yet | differs | not built yet |
+| Gate ask handling | differs | differs | differs | differs | not built yet | differs | not built yet |
 | pstack PreToolUse hooks | differs | cannot | cannot | not built yet | not built yet | not built yet | unverified |
 | MCP servers | not built yet | not built yet | differs | unverified | not built yet | not built yet | unverified |
 | Custom agent files and their format | same | differs | differs | differs | not built yet | not built yet | unverified |
@@ -92,7 +93,7 @@ Summary grid (status only; the detail below holds the reason and evidence). Gene
 | Windows | same | differs | same | same | not built yet | not built yet | unverified |
 | macOS | not built yet | unverified | not built yet | unverified | not built yet | not built yet | not built yet |
 
-Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 44, cannot 6, not built yet 38, unverified 20.
+Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 46, cannot 6, not built yet 36, unverified 20.
 
 ### 2.1 Skills load (same SKILL.md; naming and prefix)
 
@@ -171,7 +172,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 44, cannot 6, 
 - OpenCode: **differs**: the same decision, but the adapter rewrites a denied command in the `create.before` shell hook; it does not block the call. The rewrite's effect is not measured live. Parity is checked against golden outcomes only. Evidence: ORG (Repo facts, Differences), ORG-AGENTS (Repo facts).
 - Pi: **same**. The `tool_call` handler blocks a denied bash call with the gate's reason. Verified live in print, rpc and child agents. The edit and write tools are not gated (see G10). Evidence: BRIEF-LIVE, ORG (Pi coding agent build, Known limits).
 - Cursor: **not built yet**. No adapter. The org README lists adapters for Claude, OpenCode, Copilot and Pi only. Evidence: ORG (Contents), MS-MT (artifact table).
-- Codex: **not built yet**. No adapter. `codex-hooks.json` is SessionStart only. Evidence: ORG (Contents), PSC-CXH.
+- Codex: **differs**. The org layer's `hooks/lib/codex.mjs` reads the gate's answer from a `PreToolUse` hook for `Bash`, including unified exec, and maxstack's installer turns the hook on. On `-Apply` with the `codex` runtime, `scripts/codex-hook-trust.mjs` reads the hook's key and hash from `codex app-server` `hooks/list` and prints a Launch-arguments line that carries the hook definition and the `hooks.state` trust entry for the T3 "Codex (maxstack)" instance. The line is a guardrail, not a hard boundary: Codex skips a hook it does not trust, cannot start, or that times out, and only the exit-0 JSON deny blocks on Windows. Verified: the `hooks/list` answer reports `trustStatus:"trusted"` for the emitted definition, with an empty temporary `CODEX_HOME`, no login, and no model call. A live turn through T3 with the trusted line is not yet verified. A gate hook appears only when the layer's installed copy exists, so the `opencode` runtime must be selected too. Evidence: MS-CXG, ORG (The agent access gate), MS-T3 (Codex (maxstack)).
 - Antigravity: **not built yet**. No adapter; hooks unchecked. Evidence: ORG (Contents), MS-MT (Hooks row).
 
 ### 2.9 Gate ask handling (prompt versus AGENT_ACCESS_*_ASK)
@@ -181,7 +182,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 44, cannot 6, 
 - OpenCode: **differs**: no ask step in the adapter. An allowed gh command gets the App token at once, with no prompt. No switch exists. Evidence: ORG (Known limits: OpenCode gives these commands the App token without a prompt), RS-AG (Agent-side gates).
 - Pi: **differs**: with `AGENT_ACCESS_PI_ASK=allow`, asks are rewritten with no prompt in rpc and no-UI sessions. A TUI session still prompts. In rpc an unanswered confirm resolves false after 3 s, which is why the wrapper sets the switch. Child asks are rewritten too. Verified: BRIEF-LIVE. Evidence: ORG (Pi coding agent build), MS-T3 (Pi).
 - Cursor: **not built yet**. Evidence: ORG (Contents).
-- Codex: **not built yet**. Evidence: ORG (Contents).
+- Codex: **differs**. The adapter converts a gate `ask` to a deny, because Codex PreToolUse cannot request human approval, and there is no allow-on-ask switch. Evidence: MS-CXG, ORG (The agent access gate).
 - Antigravity: **not built yet**. Evidence: ORG (Contents).
 
 ### 2.10 pstack PreToolUse hooks (file-read and subagent-model checks)
@@ -304,7 +305,7 @@ Each item is a difference the docs call deliberate, or a limit the docs accept. 
 
 Ranked by how much the plan's goals depend on the gap. Each gap names the evidence.
 
-G1. The access gate is absent on Codex, Cursor and Antigravity (rows 2.8, 2.9, 2.10). Three of seven harnesses have no adapter, no hook delivery and no proof. The master template's phase table requires a blocked denied command in a Codex session (Phase 2) and the gate working in Cursor and Antigravity (Phase 3, "quota permitting"). None of the three has an adapter or a hook delivery to meet that. Evidence: ORG (Contents), PSC-CXH, MS-MT (Phases). Fix: decide whether these three are launched at all before the gate exists, or build the adapter first. Confirm Codex's PreToolUse support, which is not recorded.
+G1. The access gate is absent on Cursor and Antigravity (rows 2.8, 2.9, 2.10). Codex now has an adapter, a hook definition, and a trust step through the installer's Launch-arguments line, verified only at the `hooks/list` `trusted` status and with no live turn. Cursor and Antigravity have no adapter, no hook delivery and no proof. The master template's phase table requires a blocked denied command in a Codex session (Phase 2) and the gate working in Cursor and Antigravity (Phase 3, "quota permitting"). Evidence: ORG (Contents), PSC-CXH, MS-MT (Phases), MS-CXG. Fix: record a blocked denied command in a Codex T3 session that uses the trusted line, and build the Cursor and Antigravity adapters.
 
 G2. Copilot PreToolUse is a no-op on Windows (row 2.10). The file-read approval and the subagent-model deny do not run on the machine this workspace uses. The POSIX port exists for bash only. Fix: port `pre-tool-use.awk` to PowerShell or Node and run the same fixtures on both. Evidence: FORK-WIN, PSC-PRE, MS-T3.
 
@@ -373,7 +374,7 @@ These need a real harness, a real model, or a real machine. Each run is recorded
 2. Copilot on Windows: a PowerShell gh call through the rewrite; a hook timeout (kill the hook past its timeout and observe); an `ask` with `AGENT_ACCESS_COPILOT_ASK` unset and set to `allow` in ACP. Rows 2.8, 2.9, 2.10 (G2, G3, G13).
 3. Pi: a TUI `ask` prompt answered yes and no; an rpc `ask_user_question` with no answer; `schedule_wakeup` inside a T3 session; a child agent loaded through `-e` versus saved packages. Rows 2.4, 2.6, 2.8, 2.9 (G9).
 4. OpenCode: the text the agent sees for a rewritten denied command; `routing: false` removing the mandate; a background `subagent` finishing with its report; the `question` tool name in a live session. Rows 2.5, 2.7, 2.8, 2.4 (G4, G11).
-5. Codex: a scratch workspace with the pstack plugin installed; the `/hooks` trust prompt and the SessionStart output; a repo with AGENTS.md at the root and a parent folder with one. Rows 2.2, 2.7, 2.16. Note that Codex's PreToolUse support is not recorded at all.
+5. Codex: a T3 turn with the installer's trusted Launch-arguments line, one allowed shell command and one denied `gh` write, to show the deny blocks and no marker is written; the `/hooks` trust prompt and the SessionStart output; a repo with AGENTS.md at the root and a parent folder with one. Rows 2.2, 2.7, 2.8, 2.16. The gate's `hooks/list` `trusted` status is verified without a login (MS-CXG); the live deny is not.
 6. Cursor: a scratch repo under a workspace folder with AGENTS.md above it; the rules location; any hook. Rows 2.1, 2.2, 2.8.
 7. Antigravity: `.agents/` at the workspace root, opened against a repo inside it; whether AGENTS.md is read; hooks. Rows 2.1, 2.2, 2.7, 2.8.
 8. macOS: run the installer and the lifecycle tests on a Mac; run `copilot.sh` and `pi.sh` with the real CLIs. Rows 2.17, 2.18.
