@@ -44,8 +44,10 @@ Add the generated paths to the workspace `.gitignore`; the installer does not ed
 
 ```gitignore
 .agents/
+AGENTS.md
 .claude/cache/
 .claude/plugins/
+CLAUDE.md
 .maxstack/
 .opencode/agents/
 .opencode/plugins/
@@ -114,6 +116,16 @@ What each runtime writes:
 - `pi`: `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`.
 - `codex`: `.agents\skills\<name>\`, one copy of each skill of each selected layer, in layer order. A skill is a folder with a `SKILL.md` whose frontmatter `name` is the folder name and whose `description` is set. Two layers cannot name a skill the same, even by case, and a skill that sets a `model` is refused. The lock owns each folder. A folder the installer did not write is never overwritten or deleted, and an apply refuses to replace one. Nothing else is written: no config, no `CODEX_HOME`, no `auth.json`, and no model. The installer prints the T3 launch-arguments line when `codex` is selected.
 
+## Workspace instructions
+
+Any selected layer can declare `"workspaceInstructions": "path/to/file.md"` in its `layer.json`. The path is relative to the layer folder. The file must be regular UTF-8 Markdown, at most 4096 bytes, and cannot be a link or escape the layer folder. Layers without the field add nothing. maxstack joins declared files in layer order, with a generated header and a source marker before each file. The combined file is limited to 8192 bytes. A refusal names the layer. An oversized composition reports its measured size and each layer's contribution.
+
+When no unowned root `AGENTS.md` or `CLAUDE.md` blocks the output, maxstack writes the composition to `AGENTS.md`. It writes a generated `CLAUDE.md` containing `@AGENTS.md` only when Claude is selected. Both files are owned in `stack.lock.json`. The output is generated whenever at least one runtime is selected, even when that runtime is not Claude or OpenCode. OpenCode receives a relative `instructions` entry for `./AGENTS.md` when selected.
+
+If either root file exists and is not recorded as maxstack-owned, maxstack keeps it byte for byte and writes the composition to `.maxstack/workspace-instructions.md`. It does not create the other root file. It prints a line naming each kept root file and the fallback path. OpenCode points at the fallback file when selected. Add a reference to that fallback in your own instructions if you need it loaded by another harness.
+
+An edited generated file is reported and kept. Apply does not overwrite it. `-Status` reports it as modified. `-Remove` and `-Uninstall` delete only unchanged generated files and keep edited ones in the lock for a later retry. When no selected layer declares instructions, no new file or OpenCode entry is produced. Previously generated files are removed through the same ownership rules.
+
 The pinned pstack cache under `.claude\cache` is the source every runtime copies from, so each layer that installs anything writes it, whichever runtime it serves. The lock records each runtime a layer does not install as `enabled: false`. For `copilot` and `pi` the reason is `not selected`.
 
 The lock is replaced whole. The installer writes the new text to `stack.lock.json.new` beside it and then replaces the lock, so an interrupted run cannot leave a partial lock. The lock it replaced is kept as `stack.lock.json.bak`.
@@ -149,7 +161,7 @@ The same install also builds `.claude/plugins` at the workspace root: one child 
 
 ## Codex
 
-With `codex` selected, the installer copies each selected layer's skills into `.agents\skills`. Codex reads the skills, and the workspace `AGENTS.md` when you keep one, only when the T3 Codex instance's launch arguments name the marker `stack.lock.json`. When a selected layer ships a Codex gate hook and the `opencode` runtime is selected too, the installer prints a longer Launch-arguments line that also turns the hook on. The installer writes no `AGENTS.md`, and `-Status` says so when `codex` is selected. See [T3 setup](t3-setup.md#codex-maxstack) for the instance, the gate line, and its limits. Cursor and Antigravity can read the installed skills when a session opens at the workspace root. See [their T3 setup notes](t3-setup.md#cursor-and-antigravity) for the scope and verification limits.
+With `codex` selected, the installer copies each selected layer's skills into `.agents\skills`. Codex reads skills and workspace `AGENTS.md` only when the T3 Codex instance's launch arguments name the marker `stack.lock.json`. The installer reports whether it generated or kept the workspace `AGENTS.md`. When a selected layer ships a Codex gate hook and the `opencode` runtime is selected too, the installer prints a longer Launch-arguments line that also turns the hook on. See [T3 setup](t3-setup.md#codex-maxstack) for the instance, the gate line, and its limits. Cursor and Antigravity do not receive the shared file in repository sessions. See [their T3 setup notes](t3-setup.md#cursor-and-antigravity) for the known gap.
 
 ## Copilot CLI
 
