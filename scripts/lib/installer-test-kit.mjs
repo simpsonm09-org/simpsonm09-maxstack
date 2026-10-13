@@ -230,9 +230,9 @@ export function testEnvironment(base) {
 }
 
 // Runs the installer. Copilot and Pi are the stand-ins unless the caller names their command.
-export function runInstaller(shell, ctx, extra = [], { apply = true, layersFile = writeLayers(ctx), env = undefined, installerPath = installer } = {}) {
-  const copilot = extra.includes('-CopilotCommand') ? [] : ['-CopilotCommand', ctx.fakeCopilot];
-  const pi = extra.includes('-PiCommand') ? [] : ['-PiCommand', ctx.fakePi];
+export function runInstaller(shell, ctx, extra = [], { apply = true, layersFile = writeLayers(ctx), env = undefined, installerPath = installer, includeRuntimeCommands = true } = {}) {
+  const copilot = !includeRuntimeCommands || extra.includes('-CopilotCommand') ? [] : ['-CopilotCommand', ctx.fakeCopilot];
+  const pi = !includeRuntimeCommands || extra.includes('-PiCommand') ? [] : ['-PiCommand', ctx.fakePi];
   const args = [
     '-NoProfile', '-NonInteractive', '-File', installerPath,
     '-Workspace', ctx.workspace,
