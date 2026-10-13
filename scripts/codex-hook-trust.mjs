@@ -142,9 +142,9 @@ function startAppServer(command, args, options) {
   const { file, shim } = resolveCommand(command);
   if (process.platform === 'win32' && shim) {
     const line = `"${[file, ...args].map(quoteForCommandShell).join(' ')}"`;
-    return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', line], { ...options, windowsVerbatimArguments: true });
+    return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', line], { ...options, windowsHide: true, windowsVerbatimArguments: true });
   }
-  return spawn(file, args, options);
+  return spawn(file, args, { ...options, windowsHide: true });
 }
 
 function delay(ms) {
