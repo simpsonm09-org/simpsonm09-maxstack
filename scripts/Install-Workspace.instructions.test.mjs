@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { test } from 'node:test';
 import {
   lockPath,
   plainOutput,
