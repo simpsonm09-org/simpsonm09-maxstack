@@ -42,6 +42,34 @@ export function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+// The Pi self-update interception intentionally changes these wrappers until upstream/main has the same change.
+// Canonicalize only their bytes and owned hashes in parity snapshots; remove this once upstream/main contains it.
+export const PI_WRAPPER_PATHS = ['.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh'];
+
+export function normalizePiWrapperLock(lock) {
+  const wrapperHashes = new Set();
+  const collect = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (PI_WRAPPER_PATHS.includes(value.path) && typeof value.sha256 === 'string') wrapperHashes.add(value.sha256);
+    for (const child of Object.values(value)) collect(child);
+  };
+  collect(lock);
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (PI_WRAPPER_PATHS.includes(value.path)) value.sha256 = '<pi-wrapper-hash>';
+    for (const key of ['cmdSha256', 'shSha256']) {
+      if (wrapperHashes.has(value[key])) value[key] = '<pi-wrapper-hash>';
+    }
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(lock);
+  return lock;
+}
+
+export function isPiWrapperPath(path) {
+  return PI_WRAPPER_PATHS.includes(path.replaceAll('\\', '/'));
+}
+
 // PowerShell colours and wraps its error view, with a "Line |" gutter, so matching
 // a message needs the escape codes, the gutter bars, and the line breaks removed.
 export function plainOutput(run) {
@@ -553,16 +581,18 @@ export function collectSnapshot(dir, prefix, entries, options) {
       entries.set(rel, 'dir');
       collectSnapshot(full, rel, entries, options);
     } else {
-      entries.set(rel, `file:${snapshotBytes(full, rel)}`);
+      entries.set(rel, `file:${snapshotBytes(full, rel, options)}`);
     }
   }
 }
 
-export function snapshotBytes(full, rel) {
+export function snapshotBytes(full, rel, options = {}) {
   const bytes = readFileSync(full);
+  if (options.normalizePiWrappers && isPiWrapperPath(rel)) return Buffer.from('<pi-wrapper-content>').toString('base64');
   if (rel !== 'stack.lock.json') return bytes.toString('base64');
   const lock = JSON.parse(bytes.toString('utf8'));
   delete lock.generatedAt;
+  if (options.normalizePiWrappers) normalizePiWrapperLock(lock);
   return Buffer.from(JSON.stringify(lock)).toString('base64');
 }
 

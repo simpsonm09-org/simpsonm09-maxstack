@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { writeFileSync, cpSync, existsSync, rmSync, readdirSync, openSync, closeSync, readFileSync, mkdirSync, symlinkSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, parse as parsePath } from 'node:path';
-import { EXISTING_SHORT_FOLDER, LOCAL_LAYERS, MISSING_PI, USER_SETTINGS, ZWSP, assertOk, buildWorkspace, clearInstallOutputs, escapedChar, exportMainInstaller, gitRun, githubEnv, installer, layerNamed, layerSourcesFile, localCheckout, lockPath, lockText, mustApply, ownedRecord, plainOutput, problemRows, python, readJson, removal, repoRoot, runInstaller, seedSchema1, servedFeature, setLock, settingsPath, shell, short83Available, snapshotTree, sourceBlockIn, sourceOf, stripDiscoveryLine, testEnvironment, withHook, withMainCommit, withWorkspace, withWorkspaceNeeding, writeFile, writeLayerStub, writeLayers, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
+import { EXISTING_SHORT_FOLDER, LOCAL_LAYERS, MISSING_PI, USER_SETTINGS, ZWSP, assertOk, buildWorkspace, clearInstallOutputs, escapedChar, exportMainInstaller, gitRun, githubEnv, installer, layerNamed, layerSourcesFile, localCheckout, lockPath, lockText, mustApply, normalizePiWrapperLock, ownedRecord, plainOutput, problemRows, python, readJson, removal, repoRoot, runInstaller, seedSchema1, servedFeature, setLock, settingsPath, shell, short83Available, snapshotTree, sourceBlockIn, sourceOf, stripDiscoveryLine, testEnvironment, withHook, withMainCommit, withWorkspace, withWorkspaceNeeding, writeFile, writeLayerStub, writeLayers, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
 
 withWorkspace('settings select exact names on a new workspace, add names on apply, and report omitted recorded names', (ctx) => {
   const addedLayer = LOCAL_LAYERS[0].split('/').pop();
@@ -60,12 +60,13 @@ withWorkspace('finding F14/F15: InitSettings without a lock is a plain actionabl
 
 // The workspace bytes a comparison checks. Each lock is compared without its generation time.
 function workspaceState(ctx) {
-  const tree = snapshotTree(ctx.workspace, { skipGit: true });
+  const tree = snapshotTree(ctx.workspace, { skipGit: true, normalizePiWrappers: true });
   if (tree.has('opencode.jsonc')) tree.set('opencode.jsonc', 'file:<workspace-derived-config>');
   for (const path of ['stack.lock.json', 'stack.lock.json.bak']) {
     if (!tree.has(path)) continue;
     const lock = readJson(join(ctx.workspace, path));
     delete lock.generatedAt;
+    normalizePiWrapperLock(lock);
     lock.configSha256 = '<workspace-config>';
     for (const record of lock.owned ?? []) if (record.path === 'opencode.jsonc') record.sha256 = '<workspace-config>';
     tree.set(path, `file:${Buffer.from(JSON.stringify(lock)).toString('base64')}`);
