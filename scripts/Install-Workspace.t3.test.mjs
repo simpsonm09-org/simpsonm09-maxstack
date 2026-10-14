@@ -84,6 +84,63 @@ test('an explicit source wins over the environment and writes only the sanitized
   });
 });
 
+test('an existing unowned snapshot is kept and not claimed', () => {
+  withWorkspace('unowned T3 snapshot', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    const original = '{"personal":true}\n';
+    mkdirSync(join(ctx.workspace, '.maxstack', 't3'), { recursive: true });
+    writeFileSync(snapshotPath, original);
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: true }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.equal(readFileSync(snapshotPath, 'utf8'), original);
+    assert.match(plainOutput(applied), /Kept \.maxstack\/t3\/settings\.snapshot\.json: it exists and was not written by maxstack/);
+    assert.equal(readJson(lockPath(ctx)).owned.some((item) => item.path === '.maxstack/t3/settings.snapshot.json'), false);
+    const status = install(ctx, ['-Status', '-Strict'], { apply: false, env: { ...process.env, MAXSTACK_T3_SETTINGS: source } });
+    assert.equal(status.status, 1, plainOutput(status));
+    assert.match(status.stdout, /untracked\s+\.maxstack\/t3\/settings\.snapshot\.json/);
+  });
+});
+
+test('apply keeps a modified owned snapshot and strict status reports it as modified', () => {
+  withWorkspace('modified owned T3 snapshot', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    assert.equal(install(ctx, ['-T3Settings', source]).status, 0);
+    const priorRecord = readJson(lockPath(ctx)).owned.find((item) => item.path === '.maxstack/t3/settings.snapshot.json');
+    const userContent = '{"keptByUser":true}\n';
+    writeFileSync(snapshotPath, userContent);
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: true }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.equal(readFileSync(snapshotPath, 'utf8'), userContent);
+    const retainedRecord = readJson(lockPath(ctx)).owned.find((item) => item.path === '.maxstack/t3/settings.snapshot.json');
+    assert.equal(retainedRecord.sha256, priorRecord.sha256);
+    const status = install(ctx, ['-Status', '-Strict'], { apply: false, env: { ...process.env, MAXSTACK_T3_SETTINGS: source } });
+    assert.equal(status.status, 1, plainOutput(status));
+    assert.match(status.stdout, /modified\s+\.maxstack\/t3\/settings\.snapshot\.json/);
+  });
+});
+
+test('an unchanged owned snapshot updates when the selected source changes', () => {
+  withWorkspace('current owned T3 snapshot update', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    assert.equal(install(ctx, ['-T3Settings', source]).status, 0);
+    const priorRecord = readJson(lockPath(ctx)).owned.find((item) => item.path === '.maxstack/t3/settings.snapshot.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: true }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.deepEqual(readJson(snapshotPath), { defaultAutoPull: true });
+    const nextRecord = readJson(lockPath(ctx)).owned.find((item) => item.path === '.maxstack/t3/settings.snapshot.json');
+    assert.notEqual(nextRecord.sha256, priorRecord.sha256);
+    assert.match(plainOutput(applied), /Snapshot: \.maxstack\/t3\/settings\.snapshot\.json \(stale: would change\)/);
+  });
+});
+
 test('snapshot false ignores a selected malformed source without output or side effects', () => {
   withWorkspace('T3 snapshot disabled', (ctx) => {
     writeWorkspaceSettings(ctx, { version: 1, t3: { snapshot: false } });

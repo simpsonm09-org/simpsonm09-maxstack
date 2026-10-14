@@ -2148,7 +2148,8 @@ function Get-OwnershipReport {
             # A backup that the next apply would write is not reported until it exists.
             if ((Get-Field $planned 'backup') -and -not (Test-Path -LiteralPath (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $planned.path)) -PathType Leaf)) { continue }
             if (-not $recordedKeys.Contains((Get-OwnedKey $planned))) {
-                $results.Add([pscustomobject]@{ state = 'drifted'; label = $planned.path })
+                $state = if (Test-IsTrue (Get-Field $planned 'preserve')) { 'untracked' } else { 'drifted' }
+                $results.Add([pscustomobject]@{ state = $state; label = $planned.path })
             }
             continue
         }
@@ -3777,8 +3778,24 @@ if ($Apply -or $removing -or $updating -or ($null -ne $priorOwned)) {
 }
 $priorT3Snapshot = @($priorOwned | Where-Object { (Test-OrdinalEqual (Get-Field $_ 'path') '.maxstack/t3/settings.snapshot.json') -and (Test-OrdinalEqual (Get-Field $_ 'kind') 'file') })
 $preserveT3SnapshotRecord = $priorT3Snapshot.Count -gt 0 -and ($null -eq $t3Report -or (-not (Test-OrdinalEqual $t3Report.sourceState 'present')))
+$t3SnapshotPlan = $null
 if ($null -ne $t3Report -and (Test-OrdinalEqual $t3Report.sourceState 'present')) {
-    $plan += [pscustomobject]@{ path = '.maxstack/t3/settings.snapshot.json'; kind = 'file'; sha256 = $t3Report.snapshotSha256; runtime = $null; layers = @() }
+    $snapshotPath = Join-MaxstackPath $Workspace '.maxstack/t3/settings.snapshot.json'
+    $snapshotPreserve = $false
+    if (Test-Path -LiteralPath $snapshotPath) {
+        $priorSnapshot = if ($priorT3Snapshot.Count -gt 0) { $priorT3Snapshot[0] } else { $null }
+        $snapshotPreserve = $null -eq $priorSnapshot
+        if ($null -ne $priorSnapshot) {
+            $snapshotPreserve = (Test-ReparsePoint $snapshotPath) -or (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf))
+            if (-not $snapshotPreserve) { $snapshotPreserve = -not (Test-OrdinalEqual (Get-FileHash -LiteralPath $snapshotPath -Algorithm SHA256).Hash $priorSnapshot.sha256) }
+        }
+        if ($snapshotPreserve) {
+            $reason = if ($null -eq $priorSnapshot) { 'it exists and was not written by maxstack' } else { 'it changed since the last apply, so it was not overwritten' }
+            Write-Host "Kept .maxstack/t3/settings.snapshot.json: $reason."
+        }
+    }
+    $t3SnapshotPlan = [pscustomobject]@{ path = '.maxstack/t3/settings.snapshot.json'; kind = 'file'; sha256 = $t3Report.snapshotSha256; runtime = $null; layers = @(); preserve = $snapshotPreserve }
+    $plan += $t3SnapshotPlan
 } elseif ($preserveT3SnapshotRecord) { $plan += $priorT3Snapshot[0] }
 
 # The Claude plugin folders, and the OpenCode folders that no unselected layer owns. An unselected
@@ -4301,8 +4318,10 @@ foreach ($key in @('packages', 'skills')) {
 }
 $t3SnapshotSha = $null
 if ($Apply -and $null -ne $t3Report -and (Test-OrdinalEqual $t3Report.sourceState 'present')) {
-    $t3SnapshotSha = Write-T3Snapshot -Workspace $Workspace -Report $t3Report
-    if ((-not (Test-OrdinalEqualIgnoreCase $t3SnapshotSha $t3Report.snapshotSha256))) { throw 'T3 snapshot hash changed while it was written.' }
+    if (-not (Test-IsTrue (Get-Field $t3SnapshotPlan 'preserve'))) {
+        $t3SnapshotSha = Write-T3Snapshot -Workspace $Workspace -Report $t3Report
+        if ((-not (Test-OrdinalEqualIgnoreCase $t3SnapshotSha $t3Report.snapshotSha256))) { throw 'T3 snapshot hash changed while it was written.' }
+    }
 }
 $createdDirs = @(Get-CreatedPaths -Candidates $installerDirs -Prior $priorCreatedDirs -ExistedBefore $existedBefore -Kind 'dir')
 $createdFiles = @(Get-CreatedPaths -Candidates $replacedFileNames -Prior $priorCreatedFiles -ExistedBefore $existedBeforeFiles -Kind 'file')
