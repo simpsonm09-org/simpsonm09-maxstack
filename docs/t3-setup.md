@@ -105,6 +105,13 @@ The Pi harness asks RPC `get_commands` for loaded commands and checks that `/loo
 
 Not verified: the `piSimpsonm09` instance in a T3 session, any model turn, a login, an org gate decision under a real Pi session (the rpc probe lists no commands for the gate), and `pi.sh` run with the real Pi CLI. On macOS, nothing in this section has been run.
 
+Update the workspace-local CLI with `pwsh -File scripts/Install-Workspace.ps1 -Workspace <workspace> -UpdatePi` to
+audit, then add `-Apply` to perform the update. Use `-PiVersion <version>` to pin a release, such as
+`-UpdatePi -PiVersion 1.2.0 -Apply`. Do not use `pi update --self` for this install. Pi cannot self-update a
+workspace-local npm dependency. The installer uses npm to update only `.maxstack/npm`. npm may warn that some packages
+have install scripts that are not covered. This is expected because scripts are not run. An update does not require
+another installer apply. The wrappers and `.pi\agent\settings.json` do not depend on the Pi version.
+
 ### Check Pi without a model
 
 Run `just verify-pi` (or `node scripts/verify-pi-harness.mjs`). It starts the workspace's Pi in RPC mode, the mode T3 uses, against a stub model server on `127.0.0.1` and a scratch agent folder. It needs no model, GPU, or download, and it takes seconds. It asserts that Pi starts and exits 0, that a turn reaches the stub, that one installed skill from each Pi layer (pstack, org, personal) is in the system prompt, that the org gate denies a launcher call, that the denied command does not run, that the denial reaches the model as a tool result, and that the Pi agent folder and the wrapper folder did not change. It exits 0 only when every check passes, and names each failing check otherwise.

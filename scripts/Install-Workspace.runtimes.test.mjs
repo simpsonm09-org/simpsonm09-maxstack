@@ -35,6 +35,126 @@ function driftLines(run) {
   return run.stdout.split(/\r?\n/).filter((line) => line.startsWith('Drift:'));
 }
 
+const piPackagePath = (ctx) => join(ctx.workspace, '.maxstack', 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent');
+
+function seedPiPackage(ctx, version = '1.1.0') {
+  mkdirSync(piPackagePath(ctx), { recursive: true });
+  writeFileSync(join(piPackagePath(ctx), 'package.json'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version }));
+}
+
+function fakePiNpm(ctx) {
+  const bin = join(ctx.base, 'fake-pi-update-npm');
+  mkdirSync(bin);
+  const argsLog = join(ctx.base, 'npm-args.txt');
+  const fakeScript = join(ctx.base, 'fake-pi-update-npm.mjs');
+  writeFileSync(fakeScript, `import { readFileSync, writeFileSync } from 'node:fs';\nimport { join } from 'node:path';\nconst args = process.argv.slice(2);\nwriteFileSync(process.env.FAKE_NPM_ARGS, JSON.stringify(args));\nconst prefix = args[args.indexOf('--prefix') + 1];\nconst pkg = join(prefix, 'node_modules/@earendil-works/pi-coding-agent/package.json');\nconst old = JSON.parse(readFileSync(pkg, 'utf8'));\nold.version = args.at(-1).split('@').at(-1) === 'latest' ? '1.2.0' : args.at(-1).split('@').at(-1);\nwriteFileSync(pkg, JSON.stringify(old));\n`);
+  if (process.platform === 'win32') writeFileSync(join(bin, 'npm.cmd'), `@echo off\r\n"${process.execPath}" "${fakeScript}" %*\r\n`);
+  else {
+    const npm = join(bin, 'npm');
+    writeFileSync(npm, `#!/bin/sh\nexec "${process.execPath}" "${fakeScript}" "$@"\n`);
+    chmodSync(npm, 0o755);
+  }
+  const env = { ...(ctx.env ?? process.env), FAKE_NPM_ARGS: argsLog };
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+  env[pathKey] = `${bin}${process.platform === 'win32' ? ';' : ':'}${env[pathKey]}`;
+  return { env, argsLog };
+}
+
+withWorkspace('Pi update audit does not invoke npm or change the package', (ctx) => {
+  seedPiPackage(ctx);
+  const { env, argsLog } = fakePiNpm(ctx);
+  const before = snapshotTree(ctx.workspace);
+  const audit = runInstaller(shell, ctx, ['-UpdatePi'], { apply: false, env, layersFile: null, includeRuntimeCommands: false });
+  assertOk(audit, 'Pi update audit failed');
+  assert.match(plainOutput(audit), /Pi version before: 1\.1\.0/);
+  assert.match(plainOutput(audit), /@earendil-works\/pi-coding-agent@latest/);
+  assert.equal(readFileSync(join(piPackagePath(ctx), 'package.json'), 'utf8'), JSON.stringify({ name: '@earendil-works/pi-coding-agent', version: '1.1.0' }));
+  assert.equal(existsSync(argsLog), false, 'audit invoked npm');
+  assert.deepEqual(snapshotTree(ctx.workspace), before, 'audit changed the workspace');
+}, { fixture: { npm: true } });
+
+withWorkspace('Pi update apply passes safe npm flags and the requested version', (ctx) => {
+  seedPiPackage(ctx);
+  const { env, argsLog } = fakePiNpm(ctx);
+  const before = snapshotTree(ctx.workspace);
+  const applied = runInstaller(shell, ctx, ['-UpdatePi', '-PiVersion', '1.1.5'], { env, layersFile: null, includeRuntimeCommands: false });
+  assertOk(applied, 'Pi update apply failed');
+  assert.match(plainOutput(applied), /Pi version before: 1\.1\.0/);
+  assert.match(plainOutput(applied), /Pi version after: 1\.1\.5/);
+  assert.deepEqual(JSON.parse(readFileSync(argsLog, 'utf8')), ['install', '--prefix', join(ctx.workspace, '.maxstack', 'npm'), '--ignore-scripts', '--no-audit', '--no-fund', '@earendil-works/pi-coding-agent@1.1.5']);
+  assert.equal(JSON.parse(readFileSync(join(piPackagePath(ctx), 'package.json'), 'utf8')).version, '1.1.5');
+  const after = snapshotTree(ctx.workspace);
+  for (const path of new Set([...before.keys(), ...after.keys()])) {
+    if (before.get(path) === after.get(path)) continue;
+    assert.ok(path.startsWith('.maxstack/npm/'), `update changed ${path} outside .maxstack/npm`);
+  }
+}, { fixture: { npm: true } });
+
+withWorkspace('Pi update refuses a missing package and invalid option combinations', (ctx) => {
+  const missing = runInstaller(shell, ctx, ['-UpdatePi'], { apply: false, layersFile: null, includeRuntimeCommands: false });
+  assert.notEqual(missing.status, 0);
+  assert.match(plainOutput(missing), /No workspace Pi package was found/);
+  const wrong = join(ctx.workspace, '.maxstack', 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent');
+  mkdirSync(wrong, { recursive: true });
+  writeFileSync(join(wrong, 'package.json'), JSON.stringify({ name: 'other-package', version: '1.0.0' }));
+  const mismatch = runInstaller(shell, ctx, ['-UpdatePi'], { apply: false, layersFile: null, includeRuntimeCommands: false });
+  assert.notEqual(mismatch.status, 0);
+  assert.match(plainOutput(mismatch), /not @earendil-works\/pi-coding-agent/);
+  for (const args of [['-UpdatePi', '-Uninstall'], ['-UpdatePi', '-Status'], ['-UpdatePi', '-Update'], ['-PiVersion', '1.0.0']]) {
+    const invalid = runInstaller(shell, ctx, args, { apply: false, layersFile: null, includeRuntimeCommands: false });
+    assert.notEqual(invalid.status, 0, `accepted ${args.join(' ')}`);
+  }
+}, { fixture: { npm: true } });
+
+withWorkspace('Pi apply refreshes old wrappers and status is clean', (ctx) => {
+  mustApply(ctx, []);
+  const cmdPath = join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd');
+  const shPath = join(ctx.workspace, '.maxstack', 'bin', 'pi.sh');
+  writeFileSync(cmdPath, readFileSync(cmdPath, 'utf8').replace(/^if \/i .*?\r?\n/m, ''));
+  writeFileSync(shPath, readFileSync(shPath, 'utf8').replace(/^if \[ "\$#".*?\n/m, ''));
+  assert.notDeepEqual(problemRows(runStatus(ctx)), [], 'status did not detect old wrappers');
+  mustApply(ctx, []);
+  assert.deepEqual(problemRows(runStatus(ctx)), [], 'status found drift after wrapper refresh');
+}, { fixture: { npm: true } });
+
+withWorkspace('Pi wrappers intercept update self and pass plain update through', (ctx) => {
+  let fake;
+  if (process.platform === 'win32') {
+    fake = join(ctx.base, 'fake-pi-args.cmd');
+    writeFileSync(fake, '@echo off\r\necho ARGS=%*\r\n');
+  } else {
+    fake = join(ctx.base, 'fake-pi-args');
+    writeFileSync(fake, '#!/bin/sh\nprintf "ARGS=%s\\n" "$*"\n');
+    chmodSync(fake, 0o755);
+  }
+  mustApply(ctx, []);
+  const cmdPath = join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd');
+  assert.match(readFileSync(cmdPath, 'utf8'), /%~1/);
+  const bash = findBash();
+  assert.ok(bash, 'Git Bash is needed to execute pi.sh');
+  const shPath = join(ctx.workspace, '.maxstack', 'bin', 'pi.sh');
+  assert.match(readFileSync(shPath, 'utf8'), /\[ "\$2" = --self \]/);
+  const shCases = process.platform === 'win32' ? [['update', '--self']] : [['update', '--self'], ['update'], ['status']];
+  for (const args of shCases) {
+    const result = spawnSync(bash, [shPath, ...args], { windowsHide: true, encoding: 'utf8', env: { ...process.env, MAXSTACK_PI_BIN: fake } });
+    if (args.length === 2) {
+      assert.notEqual(result.status, 0);
+      assert.match(plainOutput(result), /Install-Workspace\.ps1 -UpdatePi -Apply/);
+    } else {
+      assert.equal(result.status, 0, plainOutput(result));
+      assert.match(plainOutput(result), new RegExp(`ARGS=${args.join(' ')}`));
+    }
+  }
+  if (process.platform === 'win32') {
+    const cmd = spawnSync('cmd.exe', ['/d', '/c', cmdPath, 'update', '--self'], { windowsHide: true, encoding: 'utf8', env: process.env });
+    assert.notEqual(cmd.status, 0);
+    assert.match(plainOutput(cmd), /Install-Workspace\.ps1 -UpdatePi -Apply/);
+    const passed = spawnSync('cmd.exe', ['/d', '/c', cmdPath, 'update'], { windowsHide: true, encoding: 'utf8', env: process.env });
+    assert.equal(passed.status, 0, plainOutput(passed));
+    assert.match(plainOutput(passed), /ARGS=update/);
+  }
+}, { fixture: { npm: true } });
+
 withWorkspace('the Claude runtime is a junction for local layers and a pinned sparse copy for pstack', (ctx) => {
   mustApply(ctx);
 

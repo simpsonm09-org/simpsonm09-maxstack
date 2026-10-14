@@ -175,6 +175,25 @@ To test the wrapper without an install, pass a different executable: `-CopilotCo
 
 `Install-Workspace.ps1` writes `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`. The wrappers set `PI_CODING_AGENT_DIR` to `.pi\agent`. At install time, `-PiCommand <path>` chooses the Pi CLI to wrap, beside `-CopilotCommand <path>` for Copilot. Without it, the installer checks the workspace Pi copy, `.maxstack\npm\node_modules\.bin\pi.cmd` (`pi` on POSIX), then the first `pi` on `PATH` outside `.maxstack\bin`. `MAXSTACK_PI_BIN` is read by the wrapper at run time; the installer does not read it. `pi.cmd` runs the Pi found at install time, and `pi.sh` runs the workspace copy when that was selected; with a PATH Pi, `pi.sh` resolves PATH at run time. The wrappers bake absolute paths to the agent folder and executable. After the workspace or Pi moves, rerun the installer. If Pi is missing, the installer prints a final incomplete-runtime summary; default exit remains 0, and `-Strict` exits 1. A wrapper is removed only when the lock records it, its hash matches, and no layer declares `pi`. Settings hold `packages` and `skills` lists; the installer owns only the entries it wrote under those keys. User values such as `defaultProvider` or `defaultModel` stay, and maxstack writes no model or provider. A layer is a Pi package when its root `package.json` has a `pi` key. For a local source, Pi uses that repository-root package; skills still point to the installed Claude plugin folders. Pi lists those folders, so `pi` needs `claude` selected. See [T3 setup](t3-setup.md#pi-maxstack).
 
+### Update Pi
+
+The workspace Pi CLI is managed by npm under `.maxstack/npm`. `pi update --self` cannot update it because Pi does not
+self-update a workspace-local npm dependency. Run the installer from the maxstack checkout to update it to the latest
+version:
+
+  ```powershell
+  pwsh -File scripts/Install-Workspace.ps1 -Workspace <workspace> -UpdatePi
+  pwsh -File scripts/Install-Workspace.ps1 -Workspace <workspace> -UpdatePi -Apply
+  ```
+
+The first command audits the update. The second applies it. Pin a version with `-PiVersion <version>`, for example
+`-UpdatePi -PiVersion 1.2.0 -Apply`. The update changes only `.maxstack/npm`. npm may warn that some packages have
+install scripts that are not covered. This is expected because scripts are not run. Plain `npm update --prefix
+<workspace>/.maxstack/npm` respects the saved dependency range. An exact version stays on that version. The documented
+initial npm install normally saves a caret range. An exact pin means npm used `save-exact` when the dependency was
+saved, or the range was set explicitly. Updating Pi does not require another installer apply. Its wrapper paths and
+`.pi\agent\settings.json` do not depend on the Pi version.
+
 ## Audit and apply
 
 Audit mode is the default. It prints one `Drift:` line for each thing the installer would change, and writes nothing:

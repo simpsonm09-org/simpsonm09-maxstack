@@ -15,8 +15,10 @@ import { test } from 'node:test';
 
 import {
   installer,
+  isPiWrapperPath,
   lockPath,
   makeFixture,
+  normalizePiWrapperLock,
   plainOutput,
   python,
   readJson,
@@ -157,7 +159,8 @@ function skipSnapshotEntry(prefix, name) {
   return name === '.git' || (prefix === '' && (name === 'projects' || name.startsWith('stack.lock.json')));
 }
 
-function snapshotFileHash(full, relative, workspace, normalizeConfig) {
+function snapshotFileHash(full, relative, workspace, normalizeConfig, normalizePiWrappers) {
+  if (normalizePiWrappers && isPiWrapperPath(relative)) return createHash('sha256').update('<pi-wrapper-content>').digest('hex');
   if (normalizeConfig && relative === 'opencode.jsonc') return createHash('sha256').update('<workspace-derived-config>').digest('hex');
   const text = readFileSync(full, 'utf8').split(workspace).join('<WORKSPACE>');
   return createHash('sha256').update(text).digest('hex');
@@ -165,7 +168,7 @@ function snapshotFileHash(full, relative, workspace, normalizeConfig) {
 
 // Every output of a workspace, as relative path to a hash of its text with the workspace path replaced. A junction is
 // recorded by its target text and never followed. The layer checkouts, the git metadata, and the lock files are not outputs.
-function snapshot(root, workspace, prefix = '', out = new Map(), { normalizeConfig = false } = {}) {
+function snapshot(root, workspace, prefix = '', out = new Map(), { normalizeConfig = false, normalizePiWrappers = false } = {}) {
   for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (skipSnapshotEntry(prefix, entry.name)) continue;
@@ -175,9 +178,9 @@ function snapshot(root, workspace, prefix = '', out = new Map(), { normalizeConf
       out.set(relative, `link:${readlinkSync(full).split(workspace).join('<WORKSPACE>')}`);
     } else if (info.isDirectory()) {
       out.set(`${relative}/`, 'dir');
-      snapshot(root, workspace, relative, out, { normalizeConfig });
+      snapshot(root, workspace, relative, out, { normalizeConfig, normalizePiWrappers });
     } else {
-      out.set(relative, snapshotFileHash(full, relative, workspace, normalizeConfig));
+      out.set(relative, snapshotFileHash(full, relative, workspace, normalizeConfig, normalizePiWrappers));
     }
   }
   return out;
@@ -568,12 +571,13 @@ function captureApply(ctx, { installerPath, layersFile }, { legacy = null } = {}
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false, installerPath, layersFile });
   const lock = readLock(ctx);
   delete lock.generatedAt;
+  normalizePiWrapperLock(lock);
   lock.configSha256 = '<workspace-config>';
   for (const record of lock.owned ?? []) if (record.path === 'opencode.jsonc') record.sha256 = '<workspace-config>';
   const normalizeOutput = (run) => plainOutput(run)
     .replace(/(?:Wrote |Config already matches: )[^\r\n]*opencode\.jsonc/g, 'CONFIG opencode.jsonc')
     .replace(/: matches(?=\s|$)/g, ': matching');
-  return { apply: normalizeOutput(apply), status: normalizeOutput(status), lock: JSON.stringify(lock, null, 2), files: snapshotOf(ctx, { normalizeConfig: true }) };
+  return { apply: normalizeOutput(apply), status: normalizeOutput(status), lock: JSON.stringify(lock, null, 2), files: snapshotOf(ctx, { normalizeConfig: true, normalizePiWrappers: true }) };
 }
 
 withContext('a new workspace with no codex selection writes the same output, lock, and files as before', (shared) => {
