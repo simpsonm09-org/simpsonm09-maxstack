@@ -493,6 +493,23 @@ withWorkspace('the recorded hashes match an independent recomputation, and each 
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
 }, {});
 
+withWorkspace('status reports a link matching its recorded target as drifted when the planned target changes', (ctx) => {
+  mustApply(ctx);
+  const linkPath = '.claude/plugins/simpsonm09-org-ai-plugin';
+  const child = join(ctx.workspace, ...linkPath.split('/'));
+  const alternate = join(ctx.workspace, '.opencode', 'plugins', 'status-target');
+  mkdirSync(alternate);
+  rmdirSync(child);
+  symlinkSync(alternate, child, 'junction');
+  const lock = readJson(lockPath(ctx));
+  lock.owned.find((record) => record.path === linkPath).target = '.opencode/plugins/status-target';
+  setLock(ctx, lock);
+
+  const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+  assert.equal(status.status, 0, plainOutput(status));
+  assert.ok(statusRows(status).some((row) => row.state === 'drifted' && row.label === linkPath), plainOutput(status));
+}, {});
+
 withWorkspace('a junction that loops back into its own folder neither hangs the status nor survives the apply', (ctx) => {
   mustApply(ctx);
   const folder = join(ctx.workspace, ...ORG_FOLDER.split('/'));

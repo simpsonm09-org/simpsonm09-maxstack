@@ -2,6 +2,7 @@
 # The ordinal helpers, which every comparison here uses.
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
 . (Join-Path $PSScriptRoot 'Install-Paths.ps1')
+. (Join-Path $PSScriptRoot 'Install-Links.ps1')
 # Layer sources: the -Source and -LayerSource overrides, how each layer's source is chosen, and the source
 # record the lock keeps. A layer installs from a git source (a url, a ref, and the commit the ref resolved to) or
 # from a local working tree. layers.json gives each layer's default source. An override changes the source for one
@@ -37,7 +38,7 @@ function Test-UnderTempFolder {
 
     $temp = Get-NormalPath (Get-FullFolderPath ([IO.Path]::GetTempPath()))
     $full = Get-NormalPath $Path
-    return $full.StartsWith("$temp\", [StringComparison]::Ordinal)
+    return (-not (Test-MaxstackPathEqual $full $temp)) -and (Test-MaxstackPathInside $full $temp)
 }
 
 # Whether the test seam is on. The tests set MAXSTACK_TEST_MODE, and a real run never does.
@@ -66,11 +67,14 @@ function Resolve-PathLink {
 
     try {
         $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-        if ($null -eq $item -or -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $Path }
+        if ($null -eq $item -or -not (Test-MaxstackLink -Path $Path)) { return $Path }
         $target = $item.ResolveLinkTarget($true)
         if ($null -ne $target) { return $target.FullName }
-        $text = @($item.Target)[0]
-        if ($text) { return [IO.Path]::GetFullPath([string] $text) }
+        $text = Get-MaxstackLinkTarget -Path $Path
+        if ($text) {
+            if (-not (Test-MaxstackAbsolutePath $text)) { $text = Join-MaxstackPath ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))) $text }
+            return [IO.Path]::GetFullPath($text)
+        }
         return $Path
     } catch {
         return $Path

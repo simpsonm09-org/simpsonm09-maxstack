@@ -36,6 +36,7 @@ function driftLines(run) {
 }
 
 const piPackagePath = (ctx) => join(ctx.workspace, '.maxstack', 'npm', 'node_modules', '@earendil-works', 'pi-coding-agent');
+const expectedClaudeLinkKind = process.platform === 'win32' ? 'junction' : 'symlink';
 
 function seedPiPackage(ctx, version = '1.1.0') {
   mkdirSync(piPackagePath(ctx), { recursive: true });
@@ -155,7 +156,7 @@ withWorkspace('Pi wrappers intercept update self and pass plain update through',
   }
 }, { fixture: { npm: true } });
 
-withWorkspace('the Claude runtime is a junction for local layers and a pinned sparse copy for pstack', (ctx) => {
+withWorkspace('the Claude runtime uses a platform directory link for local layers and a pinned sparse copy for pstack', (ctx) => {
   mustApply(ctx);
 
   const plugins = join(ctx.workspace, '.claude', 'plugins');
@@ -165,7 +166,7 @@ withWorkspace('the Claude runtime is a junction for local layers and a pinned sp
   ]) {
     const child = join(plugins, plugin);
     assert.ok(isLink(child), `${plugin} is a link`);
-    assert.equal(realpathSync(child).toLowerCase(), realpathSync(join(ctx.workspace, ...target.split('/'))).toLowerCase());
+    assert.equal(realpathSync(child), realpathSync(join(ctx.workspace, ...target.split('/'))));
     assert.ok(existsSync(join(child, '.claude-plugin', 'plugin.json')), `${plugin} exposes its manifest`);
   }
 
@@ -178,7 +179,7 @@ withWorkspace('the Claude runtime is a junction for local layers and a pinned sp
 
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   const byName = Object.fromEntries(lock.layers.map((record) => [record.name, record]));
-  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.kind, 'junction');
+  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.kind, expectedClaudeLinkKind);
   assert.equal(byName['simpsonm09-org-ai-plugin'].claude.plugin, 'simpsonm09-org-ai-plugin');
   assert.equal(byName['simpsonm09-org-ai-plugin'].claude.child, '.claude/plugins/simpsonm09-org-ai-plugin');
   assert.equal(byName['simpsonm09-org-ai-plugin'].claude.target, '.opencode/plugins/simpsonm09-org-ai-plugin');
@@ -812,6 +813,7 @@ withWorkspace('a link retargeted by hand is modified, and a file changed in a pi
   rmdirSync(child);
   const other = join(ctx.base, 'other-target');
   mkdirSync(other);
+  writeFileSync(join(other, 'keep.txt'), 'outside bytes');
   symlinkSync(other, child, 'junction');
   appendFileSync(join(ctx.workspace, '.claude', 'plugins', 'pstack', 'skills', 'poteto-mode', 'SKILL.md'), 'edit\n');
 
@@ -819,8 +821,10 @@ withWorkspace('a link retargeted by hand is modified, and a file changed in a pi
     { state: 'modified', label: '.claude/plugins/pstack' },
     { state: 'modified', label: '.claude/plugins/simpsonm09-org-ai-plugin' },
   ]);
+  assert.equal(readFileSync(join(other, 'keep.txt'), 'utf8'), 'outside bytes', 'status followed the escaped link');
   mustApply(ctx);
-  assert.equal(realpathSync(child).toLowerCase(), realpathSync(join(ctx.workspace, ...ORG_FOLDER.split('/'))).toLowerCase());
+  assert.equal(readFileSync(join(other, 'keep.txt'), 'utf8'), 'outside bytes', 'replacement changed the escaped target');
+  assert.equal(realpathSync(child), realpathSync(join(ctx.workspace, ...ORG_FOLDER.split('/'))));
   assert.deepEqual(problemRows(runStatus(ctx)), []);
 }, {});
 

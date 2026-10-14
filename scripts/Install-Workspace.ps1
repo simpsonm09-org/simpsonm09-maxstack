@@ -50,6 +50,7 @@ $ErrorActionPreference = 'Stop'
 $workspaceWasSpecified = $PSBoundParameters.ContainsKey('Workspace')
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
 . (Join-Path $PSScriptRoot 'Install-Paths.ps1')
+. (Join-Path $PSScriptRoot 'Install-Links.ps1')
 . (Join-Path $PSScriptRoot 'Install-WorkspaceDiscovery.ps1')
 $workspaceResolutionArguments = @{
     ExplicitSpecified = $workspaceWasSpecified
@@ -632,7 +633,7 @@ function Get-ClaudeRecord {
     # A local folder that is missing has no manifest or items to read. A junction needs neither, and a copy is unknown.
     if ($null -eq $Layer.root) {
         if ($Layer.runtimes.ContainsKey('opencode')) {
-            return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = 'junction'; target = ".opencode/plugins/$($Layer.name)" }
+            return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = (Get-MaxstackLinkRecordKind); target = ".opencode/plugins/$($Layer.name)" }
         }
         return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = 'copy'; items = $null }
     }
@@ -656,7 +657,7 @@ function Get-ClaudeRecord {
     if (-not $Layer.runtimes.ContainsKey('opencode')) {
         return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = 'copy'; items = $items }
     }
-    return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = 'junction'; target = ".opencode/plugins/$($Layer.name)" }
+    return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = (Get-MaxstackLinkRecordKind); target = ".opencode/plugins/$($Layer.name)" }
 }
 
 # The folders directly under .opencode\plugins that no current layer names.
@@ -667,13 +668,10 @@ function Get-StalePluginFolders {
     return @(Get-ChildItem -LiteralPath $opencodePluginsTarget -Directory -Force | Where-Object { -not (Test-OrdinalIn $_.Name $Wanted) })
 }
 
-function Test-ClaudeJunction {
-    param([string] $Child, [string] $Target)
+function Test-ClaudeLink {
+    param([string] $Child, [string] $Target, [string] $Kind = '')
 
-    $item = Get-Item -LiteralPath $Child -Force -ErrorAction SilentlyContinue
-    if ($null -eq $item -or (-not (Test-OrdinalEqual $item.LinkType 'Junction'))) { return $false }
-    $linked = @($item.Target)[0]
-    return ([bool]$linked -and (Test-OrdinalEqual (Get-NormalPath $linked) (Get-NormalPath $Target)))
+    return (Test-MaxstackLinkTarget -Path $Child -Target $Target -Kind $Kind)
 }
 
 # Removes a junction by deleting the link itself, which never touches its target.
@@ -689,7 +687,7 @@ function Remove-ClaudeChild {
 function Test-ReparsePoint {
     param([string] $Path)
 
-    return [bool]([IO.File]::GetAttributes($Path) -band [IO.FileAttributes]::ReparsePoint)
+    return (Test-MaxstackLink -Path $Path)
 }
 
 # The target a link names, without the \?\ or \??\ prefix that the Windows API adds, so
@@ -697,11 +695,7 @@ function Test-ReparsePoint {
 function Get-LinkTargetText {
     param([string] $Path)
 
-    $text = [string] (@((Get-Item -LiteralPath $Path -Force).Target)[0])
-    foreach ($prefix in @('\?\', '\??\')) {
-        if ($text.StartsWith($prefix, [StringComparison]::Ordinal)) { $text = $text.Substring($prefix.Length) }
-    }
-    return $text.TrimEnd('\')
+    return (Get-MaxstackLinkTarget -Path $Path)
 }
 
 # The folders a tree hash leaves out, by the path relative to the tree root. The legacy rule is
@@ -1119,6 +1113,7 @@ function Get-TreeLinesSha256 {
 function Get-TreeSha256 {
     param([string] $Root)
 
+    if (Test-MaxstackLink -Path $Root) { throw "Cannot hash owned folder '$Root' because it is a link." }
     return (Get-TreeLinesSha256 (Get-EntryLines (Get-TreeEntries -Root $Root -Rule 'owned')))
 }
 
@@ -1127,6 +1122,7 @@ function Get-TreeSha256 {
 function Get-LegacyTreeSha256 {
     param([string] $Root)
 
+    if (Test-MaxstackLink -Path $Root) { throw "Cannot hash owned folder '$Root' because it is a link." }
     return (Get-TreeLinesSha256 (Get-EntryLines (Get-TreeEntries -Root $Root -Rule 'legacy')))
 }
 
@@ -1227,15 +1223,17 @@ function Get-ClaudeChildState {
 
     $item = Get-Item -LiteralPath $Child -Force -ErrorAction SilentlyContinue
     if ($null -eq $item) { return 'missing' }
-    if ((Test-OrdinalEqual $Record.kind 'junction')) {
-        if (-not (Test-ClaudeJunction -Child $Child -Target $Target)) { return 'differs' }
+    if (Test-MaxstackLinkRecordKind $Record.kind) {
+        if (-not (Test-ClaudeLink -Child $Child -Target $Target -Kind $Record.kind)) { return 'differs' }
         if (-not (Test-Path -LiteralPath $Target -PathType Container)) { return 'differs' }
-    } elseif ($item.LinkType) {
+    } elseif (Test-MaxstackLink -Path $Child) {
         return 'differs'
     }
     if ($null -eq $Prior -or (-not (Test-OrdinalEqual (Get-Field $Prior 'kind') $Record.kind))) { return 'differs' }
     if ((Test-OrdinalEqual $Record.kind 'git') -and (-not (Test-OrdinalSame (Get-Field $Prior 'commit') $Record.commit))) { return 'differs' }
-    if ((-not (Test-OrdinalSame (Get-Field $Prior 'treeSha256') (Get-LegacyTreeSha256 $Child)))) { return 'differs' }
+    $treeRoot = if (Test-MaxstackLinkRecordKind $Record.kind) { $Target } else { $Child }
+    if (Test-MaxstackLink -Path $treeRoot) { return 'differs' }
+    if ((-not (Test-OrdinalSame (Get-Field $Prior 'treeSha256') (Get-LegacyTreeSha256 $treeRoot)))) { return 'differs' }
     return 'matches'
 }
 
@@ -1900,7 +1898,7 @@ function Get-OwnedPlan {
 
     foreach ($record in $ClaudeRecords) {
         $path = ".claude/plugins/$($record.plugin)"
-        if ((Test-OrdinalEqual $record.kind 'junction')) {
+        if (Test-MaxstackLinkRecordKind $record.kind) {
             $records.Add((New-OwnedRecord -Path $path -Kind 'link' -Target $record.target -Runtime 'claude' -Layers @($record.layer)))
             continue
         }
@@ -2044,7 +2042,7 @@ function Get-OwnedState {
         'link' {
             $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
             if ($null -eq $item) { return 'missing' }
-            if (-not (Test-ClaudeJunction -Child $full -Target (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $Record.target)))) { return 'modified' }
+            if (-not (Test-ClaudeLink -Child $full -Target (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $Record.target)))) { return 'modified' }
             $plannedSame = $plannedSame -and (Test-OrdinalEqual $Planned.target $Record.target)
         }
         'file' {
@@ -2055,6 +2053,7 @@ function Get-OwnedState {
         }
         'dir' {
             if (-not (Test-Path -LiteralPath $full -PathType Container)) { return 'missing' }
+            if (Test-MaxstackLink -Path $full) { return 'modified' }
             if ((-not (Test-OrdinalEqual (Get-TreeSha256 $full) $Record.sha256))) { return 'modified' }
             $plannedSame = $plannedSame -and ($Planned.sha256 -eq $Record.sha256)
         }
@@ -2171,7 +2170,7 @@ function Remove-OwnedTree {
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if ($null -eq $item) { return }
     if (Test-ReparsePoint $item.FullName) {
-        if ($item.PSIsContainer) { [IO.Directory]::Delete($item.FullName, $false) } else { [IO.File]::Delete($item.FullName) }
+        Remove-MaxstackLink -Path $item.FullName
         return
     }
     if ($item.PSIsContainer) {
@@ -2488,7 +2487,7 @@ function Get-LinkRemovalItem {
     $item = Get-EntryItem $entry.full
     if ($null -eq $item) { return New-GoneItem $Record.path @($Record) }
     if (-not (Test-ReparsePoint $entry.full)) { return New-SkipItem $Record.path 'modified by hand: a folder or file stands where the link was recorded' }
-    if (-not (Test-ClaudeJunction -Child $entry.full -Target $target.full)) { return New-SkipItem $Record.path 'modified by hand: the link no longer points at its recorded target' }
+    if (-not (Test-ClaudeLink -Child $entry.full -Target $target.full)) { return New-SkipItem $Record.path 'modified by hand: the link no longer points at its recorded target' }
     return New-RemovalItem -State DELETE -Path $Record.path -Reason 'removed as a link; its target is kept' -Action 'remove-link' -Records @($Record) -Gone @($Record.path) -Full $entry.full -ExpectTarget $Record.target
 }
 
@@ -3020,7 +3019,7 @@ function Confirm-RemovalItem {
         'write-json' { if ((-not (Test-OrdinalEqual (Get-FileSha256OrNull $entry.full) $Item.expectSha))) { throw $changed } }
         'remove-link' {
             $target = Resolve-WorkspaceEntry $Item.expectTarget
-            if (-not $target.ok -or -not (Test-ClaudeJunction -Child $entry.full -Target $target.full)) { throw $changed }
+            if (-not $target.ok -or -not (Test-ClaudeLink -Child $entry.full -Target $target.full)) { throw $changed }
         }
         'remove-dir' {
             $current = Get-EntryItem $entry.full
@@ -3836,7 +3835,7 @@ if (-not $Apply) {
         $wantedClaude = @($claudeRecords | ForEach-Object { $_.plugin })
         foreach ($record in $claudeRecords) {
             $child = Join-MaxstackPath $claudePluginsTarget $record.plugin
-            $target = if ((Test-OrdinalEqual $record.kind 'junction')) { Join-MaxstackPath $Workspace $record.target } else { $null }
+            $target = if (Test-MaxstackLinkRecordKind $record.kind) { Join-MaxstackPath $Workspace $record.target } else { $null }
             $prior = Get-Field $priorLayers[$record.layer] 'claude'
             Write-Host ("Drift:          {0}: {1}" -f $child, (Get-ClaudeChildState -Record $record -Prior $prior -Child $child -Target $target))
         }
@@ -3994,11 +3993,11 @@ if ($claudeSelected) {
     New-Item -ItemType Directory -Path $claudePluginsTarget -Force | Out-Null
     foreach ($record in $claudeRecords) {
         $child = Join-MaxstackPath $claudePluginsTarget $record.plugin
-        if ((Test-OrdinalEqual $record.kind 'junction')) {
+        if (Test-MaxstackLinkRecordKind $record.kind) {
             $target = Join-MaxstackPath $Workspace $record.target
-            if (-not (Test-ClaudeJunction -Child $child -Target $target)) {
+            if (-not (Test-ClaudeLink -Child $child -Target $target -Kind $record.kind)) {
                 Remove-ClaudeChild $child
-                New-Item -ItemType Junction -Path $child -Target $target | Out-Null
+                New-MaxstackDirectoryLink -Path $child -Target $target
                 Write-Host "Linked Claude plugin '$($record.plugin)' to $target"
             }
         } elseif ((Test-OrdinalEqual $record.kind 'copy') -and $null -ne $record.items) {
@@ -4103,12 +4102,13 @@ $layerRecords = foreach ($layer in $allLayers) {
     $record = $claudeByLayer[$layer.name]
     if ($record) {
         $child = Join-MaxstackPath $claudePluginsTarget $record.plugin
-        $treeSha = Get-LegacyTreeSha256 $child
-        if ((Test-OrdinalEqual $record.kind 'junction')) {
+        $treeRoot = if (Test-MaxstackLinkRecordKind $record.kind) { Join-MaxstackPath $Workspace $record.target } else { $child }
+        $treeSha = Get-LegacyTreeSha256 $treeRoot
+        if (Test-MaxstackLinkRecordKind $record.kind) {
             $claude = [pscustomobject]@{
                 enabled    = $true
                 plugin     = $record.plugin
-                kind       = 'junction'
+                kind       = $record.kind
                 child      = ".claude/plugins/$($record.plugin)"
                 target     = $record.target
                 treeSha256 = $treeSha
