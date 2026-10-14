@@ -3,9 +3,9 @@
 // hook definition, so this works before the project config exists and never reads the real user config.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const INITIALIZE_ID = 1;
@@ -17,30 +17,40 @@ function toForwardSlashes(value) {
   return value.replaceAll('\\', '/');
 }
 
-function resolveCommand(command) {
-  if (process.platform !== 'win32') return { file: command, shim: false };
-  const shim = /\.(cmd|bat)$/i.test(command);
-  if (isAbsolute(command) || command.includes('/') || command.includes('\\')) return { file: command, shim };
-  for (const directory of (process.env.PATH ?? '').split(delimiter).filter(Boolean)) {
-    for (const extension of ['.exe', '.cmd', '.bat', '.com', '']) {
-      const candidate = join(directory, command + extension);
-      if (existsSync(candidate)) return { file: candidate, shim: /\.(cmd|bat)$/i.test(candidate) };
+// An npm install on Windows puts a .cmd shim on PATH. Starting it needs the command shell, which rewrites
+// quotes in the -c values, so start the native codex.exe the shim wraps instead.
+function nativeFromShim(shim) {
+  const vendor = join(dirname(shim), 'node_modules', '@openai', 'codex', 'node_modules', '@openai');
+  if (!existsSync(vendor)) return null;
+  for (const platform of readdirSync(vendor).filter((name) => name.startsWith('codex-win32-'))) {
+    const vendorRoot = join(vendor, platform, 'vendor');
+    if (!existsSync(vendorRoot)) continue;
+    for (const target of readdirSync(vendorRoot)) {
+      const exe = join(vendorRoot, target, 'bin', 'codex.exe');
+      if (existsSync(exe)) return exe;
     }
   }
-  return { file: command, shim: false };
+  return null;
+}
+
+function resolveCommand(command) {
+  if (process.platform !== 'win32') return command;
+  const candidates = isAbsolute(command) || command.includes('/') || command.includes('\\')
+    ? [command]
+    : (process.env.PATH ?? '').split(delimiter).filter(Boolean).flatMap((directory) =>
+      ['.exe', '.cmd', '.bat', ''].map((extension) => join(directory, command + extension)));
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    if (!/\.(cmd|bat)$/i.test(candidate)) return candidate;
+    const native = nativeFromShim(candidate);
+    if (native) return native;
+    throw new Error(`${candidate} is a shim that needs the command shell; pass the native codex.exe instead`);
+  }
+  return command;
 }
 
 function startAppServer(command, args, options) {
-  const resolved = resolveCommand(command);
-  if (process.platform === 'win32' && resolved.shim) {
-    const quoted = [resolved.file, ...args].map((value) => `"${value.replaceAll('"', '\\"')}"`).join(' ');
-    return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${quoted}"`], {
-      ...options,
-      windowsHide: true,
-      windowsVerbatimArguments: true,
-    });
-  }
-  return spawn(resolved.file, args, { ...options, windowsHide: true });
+  return spawn(resolveCommand(command), args, { ...options, windowsHide: true });
 }
 
 function parseMessage(line) {
@@ -123,7 +133,13 @@ export async function readHookStatus({ workspace, hookCommand, command = 'codex'
     }
     throw new Error(`codex listed no hook for ${hookCommand}`);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    // Codex can hold a file in the temporary home for a moment after it exits on Windows. A leftover temp
+    // folder must not hide the hash the caller asked for.
+    try {
+      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (error) {
+      process.stderr.write(`warning: could not remove ${home}: ${error.message}\n`);
+    }
   }
 }
 
