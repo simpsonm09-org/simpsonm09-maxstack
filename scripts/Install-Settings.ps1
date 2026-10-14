@@ -42,13 +42,13 @@ function Assert-SettingsObjectKeys {
 # The settings reader's check of one layers.<name>.source. It is the shared source grammar (Read-SourceGrammar), read without
 # git, and it names the rule that failed. A settings source is validated here, before any git command can start.
 function Assert-SettingsSource {
-    param([string] $Name, $Value)
+    param([string] $Name, $Value, [string] $Platform = '')
 
     $where = "maxstack.settings.json: layers.$Name.source"
     if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace($Value) -or $Value.Length -gt $script:SettingsSourceMaxLength) {
         throw "$where must be a non-empty source string of at most $($script:SettingsSourceMaxLength) characters."
     }
-    $grammar = Read-SourceGrammar -Spec $Value -Settings -NoGit
+    $grammar = Read-SourceGrammar -Spec $Value -Settings -NoGit -Platform $Platform
     switch ($grammar.code) {
         $null { }
         'forbidden' { throw "$where$($grammar.reason)" }
@@ -193,7 +193,7 @@ function Assert-SettingsNoDuplicateKeys {
 }
 
 function Read-MaxstackSettings {
-    param([string] $Path, [string[]] $LayerNames)
+    param([string] $Path, [string[]] $LayerNames, [string] $Platform = '')
 
     $entry = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if ($null -eq $entry) {
@@ -266,7 +266,7 @@ function Read-MaxstackSettings {
         if ($value.layers.Count -eq 0) { throw 'maxstack.settings.json: layers names no layer. Omit it to use the recorded selection.' }
         foreach ($layer in $value.layers.Keys) {
             Assert-SettingsObjectKeys $value.layers[$layer] @('source') "layers.$layer"
-            if ($value.layers[$layer].Contains('source')) { Assert-SettingsSource $layer $value.layers[$layer].source }
+            if ($value.layers[$layer].Contains('source')) { Assert-SettingsSource $layer $value.layers[$layer].source $Platform }
         }
     }
     if ($value.Contains('t3')) {
