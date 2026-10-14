@@ -1,4 +1,5 @@
 # platforms: windows
+. (Join-Path $PSScriptRoot 'Install-Paths.ps1')
 Set-StrictMode -Version Latest
 # The codex runtime. Codex reads a skill from .agents\skills\<folder name>\SKILL.md, so each selected layer's skill folder
 # is copied there under its own name. The rules are the generator's, scripts/lib/layers.mjs and scripts/lib/plan.mjs: a
@@ -70,7 +71,7 @@ function Copy-CodexSkillTree {
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     foreach ($child in @(Get-ChildItem -LiteralPath $Source -Force)) {
         if (Test-OrdinalEqual $child.Name 'node_modules') { continue }
-        $target = Join-Path $Destination $child.Name
+        $target = Join-MaxstackPath $Destination $child.Name
         if ($child.PSIsContainer) { Copy-CodexSkillTree -Source $child.FullName -Destination $target }
         else { Copy-Item -LiteralPath $child.FullName -Destination $target -Force }
     }
@@ -86,7 +87,7 @@ function Get-CodexSkills {
     $claimed = [hashtable]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($layer in @($Layers | Where-Object { $_.runtimes.ContainsKey('codex') })) {
         if ($null -eq $layer.root) { continue }
-        $skillsRoot = Join-Path $layer.root 'skills'
+        $skillsRoot = Join-MaxstackPath $layer.root 'skills'
         if (-not (Test-Path -LiteralPath $skillsRoot -PathType Container)) { continue }
         if (Test-ReparsePoint $skillsRoot) { throw "Layer '$($layer.name)' has a symbolic link or junction at skills, which codex cannot read." }
         $names = [System.Collections.Generic.List[string]]::new()
@@ -103,7 +104,7 @@ function Get-CodexSkills {
         foreach ($name in (Sort-Utf8 $names.ToArray())) {
             $label = "Layer '$($layer.name)' skill '$name'"
             if (-not [regex]::IsMatch($name, '^[A-Za-z0-9][A-Za-z0-9-]*\z')) { throw "$label`: skill folder names must be letters, digits, and hyphens." }
-            $folder = Join-Path $skillsRoot $name
+            $folder = Join-MaxstackPath $skillsRoot $name
             Assert-CodexSkillFolder -Folder $folder -Label $label
             $skillFile = @(Get-ChildItem -LiteralPath $folder -File -Force | Where-Object { Test-OrdinalEqual $_.Name 'SKILL.md' })
             if ($skillFile.Count -eq 0) { throw "$label`: a file named exactly SKILL.md is required." }
@@ -132,7 +133,7 @@ function Assert-CodexSkillTargets {
 
     foreach ($skill in $Skills) {
         $relative = "$script:CodexSkillFolder/$($skill.name)"
-        $full = Join-Path $Workspace ($relative -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $relative)
         if (-not (Test-Path -LiteralPath $full)) { continue }
         $record = Get-CodexRecord -Owned $Owned -Relative $relative
         if ($null -eq $record) {
@@ -154,7 +155,7 @@ function Write-CodexSkills {
     $stale = @()
     if ($RemoveStale) { $stale = @($Owned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual (Get-Field $_ 'runtime') 'codex') -and (Test-OrdinalEqual $_.kind 'dir') -and -not (Test-OrdinalIn $_.path $wanted) }) }
     foreach ($record in $stale) {
-        $full = Join-Path $Workspace ($record.path -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $record.path)
         if (-not (Test-Path -LiteralPath $full -PathType Container)) { continue }
         if ((Test-ReparsePoint $full) -or -not (Test-OrdinalEqual (Get-TreeSha256 $full) $record.sha256)) {
             Write-Host "Kept $($record.path): it changed since the last apply, and no layer ships it now"
@@ -163,9 +164,9 @@ function Write-CodexSkills {
         Remove-OwnedTree $full
         Write-Host "Removed the codex skill $($record.path): no layer ships it now"
     }
-    $root = Join-Path $Workspace ($script:CodexSkillFolder -replace '/', '\')
+    $root = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $script:CodexSkillFolder)
     foreach ($skill in $Skills) {
-        $full = Join-Path $root $skill.name
+        $full = Join-MaxstackPath $root $skill.name
         Remove-OwnedTree $full
         Copy-CodexSkillTree -Source $skill.source -Destination $full
         Write-Host "Copied codex skill '$($skill.name)' from layer '$($skill.layer)' into $full"
@@ -176,7 +177,7 @@ function Write-CodexSkills {
 function Get-CodexGateFolder {
     param([object] $Layer)
 
-    return (Join-Path $Workspace (($script:CodexGateFolder + '/' + $Layer.name) -replace '/', '\'))
+    return (Join-MaxstackPath $Workspace ($script:CodexGateFolder + '/' + $Layer.name))
 }
 
 # The selected layers whose installed copy carries a Codex gate hook: the hook script and the codex runtime library.

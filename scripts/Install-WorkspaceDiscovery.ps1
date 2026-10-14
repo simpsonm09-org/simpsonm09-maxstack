@@ -3,6 +3,7 @@
 Set-StrictMode -Version Latest
 # The ordinal helpers, which every comparison here uses. A driver that loads this file alone still has them.
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
+. (Join-Path $PSScriptRoot 'Install-Paths.ps1')
 
 # A user value is refused by its text when it holds a control, a format character, a line or paragraph separator, or an
 # unpaired surrogate. A value of the boundary kind names the character that failed, shown escaped.
@@ -101,9 +102,7 @@ function Test-MaxstackUnder {
     param([string] $Path, [string] $Root)
 
     if ([string]::IsNullOrEmpty($Root)) { return $false }
-    $trimmedRoot = [IO.Path]::TrimEndingDirectorySeparator($Root)
-    $trimmedPath = [IO.Path]::TrimEndingDirectorySeparator($Path)
-    return (Test-OrdinalEqualIgnoreCase $trimmedPath $trimmedRoot) -or $trimmedPath.StartsWith("$trimmedRoot\", [StringComparison]::OrdinalIgnoreCase)
+    return Test-MaxstackPathInside -Child $Path -Parent $Root
 }
 
 # A maxstack checkout holds the layer manifest and this installer. Its own workspace folder is named workspace.
@@ -111,7 +110,7 @@ function Test-MaxstackCheckout {
     param([string] $Folder)
 
     if ([string]::IsNullOrEmpty($Folder)) { return $false }
-    # [IO.Path]::Combine, not Join-Path: Join-Path raises an error on a drive that is not present, and a missing drive is not a checkout.
+    # [IO.Path]::Combine, not Join-Path: Join-MaxstackPath raises an error on a drive that is not present, and a missing drive is not a checkout.
     return (Test-Path -LiteralPath ([IO.Path]::Combine($Folder, 'layers.json')) -PathType Leaf) -and
         (Test-Path -LiteralPath ([IO.Path]::Combine($Folder, 'scripts', 'Install-Workspace.ps1')) -PathType Leaf)
 }
@@ -140,17 +139,18 @@ function Get-MaxstackFinalDirectory {
 }
 
 function ConvertTo-MaxstackFullPath {
-    param([string] $Path, [string] $Name, [string] $CurrentDirectory)
+    param([string] $Path, [string] $Name, [string] $CurrentDirectory, [string] $Platform = '')
 
     Assert-MaxstackPathText $Path $Name
     $safePath = ConvertTo-SafeName $Path
-    if ([IO.Path]::IsPathRooted($Path) -and -not [IO.Path]::IsPathFullyQualified($Path)) {
+    $platformName = Get-MaxstackPathPlatform $Platform
+    if ((Test-OrdinalEqualIgnoreCase $platformName 'Windows') -and [IO.Path]::IsPathRooted($Path) -and -not [IO.Path]::IsPathFullyQualified($Path)) {
         # C:ws resolves against the process location of drive C, and \ws against the drive of the process location.
         $kind = if ($Path -match '^[A-Za-z]:') { 'drive-relative' } else { 'root-relative' }
         throw "$Name path is $kind, so it would resolve against the process location: $safePath. Give a full path with a drive letter."
     }
-    if (-not [IO.Path]::IsPathRooted($Path)) {
-        $Path = Join-Path (Get-MaxstackCurrentDirectory $CurrentDirectory $Name) $Path
+    if (-not (Test-MaxstackAbsolutePath $Path $platformName)) {
+        $Path = Join-MaxstackPath (Get-MaxstackCurrentDirectory $CurrentDirectory $Name) $Path
     }
     try {
         $full = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Path))
@@ -245,7 +245,7 @@ function Test-MaxstackDriveRoot {
     param([string] $Path)
 
     $root = [IO.Path]::GetPathRoot($Path)
-    return Test-OrdinalEqualIgnoreCase ([IO.Path]::TrimEndingDirectorySeparator($Path)) ([IO.Path]::TrimEndingDirectorySeparator($root))
+    return Test-MaxstackPathEqual ([IO.Path]::TrimEndingDirectorySeparator($Path)) ([IO.Path]::TrimEndingDirectorySeparator($root))
 }
 
 # The nearest folder from the current directory upward that holds a marker file. A marker must be a file, so a directory
@@ -260,8 +260,8 @@ function Find-MaxstackCwdMarker {
             continue
         }
         foreach ($name in $script:MaxstackMarkerNames) {
-            if (-not (Test-Path -LiteralPath (Join-Path $cursor.FullName $name) -PathType Leaf)) { continue }
-            if (Test-MaxstackLinkedPath (Join-Path $cursor.FullName $name)) { continue }
+            if (-not (Test-Path -LiteralPath (Join-MaxstackPath $cursor.FullName $name) -PathType Leaf)) { continue }
+            if (Test-MaxstackLinkedPath (Join-MaxstackPath $cursor.FullName $name)) { continue }
             $final = Get-MaxstackFinalOrNull $cursor.FullName
             if ($null -ne $final -and -not (Test-MaxstackInternalLocation $final)) {
                 return [pscustomobject]@{ Path = $cursor.FullName; Marker = $name }
@@ -327,20 +327,21 @@ function Resolve-MaxstackWorkspace {
         [switch] $ExplicitSpecified,
         [AllowNull()][string] $ExplicitValue,
         [string] $CurrentDirectory = (Get-Location).Path,
-        [string] $ScriptRoot = $PSScriptRoot
+        [string] $ScriptRoot = $PSScriptRoot,
+        [string] $Platform = ''
     )
 
     $repoRoot = Get-MaxstackRepoRoot $ScriptRoot
     if ($ExplicitSpecified) {
         if ([string]::IsNullOrWhiteSpace($ExplicitValue)) { throw '-Workspace was explicitly supplied but is empty.' }
-        $target = Assert-MaxstackWorkspaceTarget (ConvertTo-MaxstackFullPath $ExplicitValue '-Workspace' $CurrentDirectory) '-Workspace' $repoRoot
+        $target = Assert-MaxstackWorkspaceTarget (ConvertTo-MaxstackFullPath $ExplicitValue '-Workspace' $CurrentDirectory $Platform) '-Workspace' $repoRoot
         return New-MaxstackResolution $target '-Workspace' $false
     }
 
     $environmentWorkspace = [Environment]::GetEnvironmentVariable('MAXSTACK_WORKSPACE')
     if ($null -ne $environmentWorkspace) {
         if ([string]::IsNullOrWhiteSpace($environmentWorkspace)) { throw 'MAXSTACK_WORKSPACE is set but empty.' }
-        $target = Assert-MaxstackWorkspaceTarget (ConvertTo-MaxstackFullPath $environmentWorkspace 'MAXSTACK_WORKSPACE' $CurrentDirectory) 'MAXSTACK_WORKSPACE' $repoRoot
+        $target = Assert-MaxstackWorkspaceTarget (ConvertTo-MaxstackFullPath $environmentWorkspace 'MAXSTACK_WORKSPACE' $CurrentDirectory $Platform) 'MAXSTACK_WORKSPACE' $repoRoot
         return New-MaxstackResolution $target 'MAXSTACK_WORKSPACE' $false (Get-MaxstackLayoutNote $ScriptRoot $repoRoot $target 'MAXSTACK_WORKSPACE')
     }
 

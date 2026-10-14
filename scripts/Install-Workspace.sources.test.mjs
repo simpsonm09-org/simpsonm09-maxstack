@@ -45,6 +45,14 @@ withWorkspace('the pure git ref syntax check covers forbidden characters and pat
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
 }, {});
 
+test('local source grammar accepts POSIX absolute paths under the injected macOS rules', { skip: !shell }, () => {
+  const ordinal = join(repoRoot, 'scripts', 'Install-Ordinal.ps1').replaceAll("'", "''");
+  const sources = join(repoRoot, 'scripts', 'Install-LayerSources.ps1').replaceAll("'", "''");
+  const script = `. '${ordinal}'; . '${sources}'; $result = Read-LocalGrammar -Path '/Users/name/dev/plugin' -Platform 'macOS'; if (-not $result.absolute -or $result.path -cne '/Users/name/dev/plugin') { throw 'POSIX source path was not preserved as absolute' }; $fault = Get-LocalPathTextFault -Path 'C:\\Repo\\Plugin' -Platform 'Windows'; if ($fault) { throw $fault }; $fault = Get-LocalPathTextFault -Path '\\\\server\\share\\plugin' -Platform 'Windows'; if (-not $fault -or -not $fault.Contains('UNC')) { throw 'Windows UNC source rule was not retained' }`;
+  const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, encoding: 'utf8' });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+});
+
 withWorkspace('a layer source with a DEL, a C1 control, a bidi control, or NBSP is refused, and other text is not', (ctx) => {
   const refused = ['sample/repo@main\u007f', 'local:projects\u0085x', 'local:a\u00a0b', 'local:x\u202ey', 'local:x\u200fy', 'local:x\u2066y'];
   for (const source of refused) {

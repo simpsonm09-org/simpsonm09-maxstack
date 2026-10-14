@@ -4,6 +4,10 @@
 
 ## Workspace discovery
 
+## Platforms
+
+Windows is supported. macOS path rules are in progress. This step adds POSIX path handling for workspace discovery, local source overrides, path containment, and OpenCode workspace permissions. Link handling, wrapper selection, and macOS CI are later steps.
+
 The installer resolves its target in this order: `-Workspace`, `MAXSTACK_WORKSPACE`, the nearest folder from the current directory upward that holds a `maxstack.settings.json` or `stack.lock.json` file, then the script's own `projects\repos\<repo>\scripts` or `projects\worktrees\<repo>\scripts` location. If none names a workspace, it stops and lists these four choices. It prints the resolved absolute path and origin on the first line of a successful run.
 
 An explicit or environment target must already exist as a directory. An empty value, a missing folder, or a non-filesystem current location is an error, and none of them falls through to another source. Discovery never creates a folder, so `-Status` and `-Update -Check` cannot create one either. Relative explicit and environment paths resolve from the current directory. A marker must be a file, and only its name is checked. A junction or symbolic link keeps the path you gave, so the lock names the link; the folder it names is checked like any other folder. A `stack.lock.json` that is a symbolic link or a junction is refused by `-Remove` and `-Uninstall`, which would otherwise act through it in another folder. Replace it with a regular file first. A folder inside `.git`, `.claude\cache`, `projects\repos`, or `projects\worktrees` is never a workspace.
