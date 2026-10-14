@@ -148,7 +148,7 @@ $retiredOpenCodeFolders = @('pstack-opencode')
 # each record's runtime and layers, which -Remove and -Uninstall need to pick the records to delete.
 $ownedSchemaVersion = 2
 # File outputs whose creation state is recorded for uninstall. Config and Pi settings can also have backups.
-$replacedFileNames = @('opencode.jsonc', '.pi/agent/settings.json', 'AGENTS.md', 'CLAUDE.md', '.maxstack/workspace-instructions.md', '.pstack/pstack-t3-instances.json')
+$replacedFileNames = @('opencode.jsonc', '.pi/agent/settings.json', 'AGENTS.md', 'CLAUDE.md', '.maxstack/workspace-instructions.md', '.pstack/pstack-t3-instances.json', '.codex/config.toml')
 
 # The text an installed profile holds once its model line is removed, or $null when the profile
 # has no frontmatter, which leaves the copy as it is.
@@ -792,7 +792,7 @@ $runtimeArtifacts = @{
     pi       = @('.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh', '.pi/agent/settings.json')
     # The codex skill folders sit in .agents\skills, which other tools also read, so no top-level path is judged by the
     # selection. Only the records the lock holds for codex are.
-    codex    = @()
+    codex    = @('.codex/config.toml')
 }
 
 # The names a -Runtimes or -Layers value picks. A value splits on commas, and all picks every name.
@@ -952,7 +952,7 @@ function Get-OwnedRuntime {
     if ($Path.StartsWith('.claude/plugins/', [StringComparison]::Ordinal)) { return 'claude' }
     if ((Test-OrdinalIn $Path @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh'))) { return 'copilot' }
     if ($Path.StartsWith('.maxstack/bin/pi.', [StringComparison]::Ordinal) -or $Path.StartsWith('.pi/', [StringComparison]::Ordinal)) { return 'pi' }
-    if ($Path.StartsWith('.agents/skills/', [StringComparison]::Ordinal)) { return 'codex' }
+    if ($Path.StartsWith('.agents/skills/', [StringComparison]::Ordinal) -or (Test-OrdinalEqual $Path '.codex/config.toml')) { return 'codex' }
     if ((Test-OrdinalEqual $Path '.pstack/pstack-t3-instances.json')) { return 't3-gated-instances' }
     return $null
 }
@@ -1875,7 +1875,8 @@ function Get-OwnedPlan {
         [bool] $PiPending,
         [hashtable] $PiUnknown,
         [object[]] $CodexSkills = @(),
-        [object[]] $WorkspaceInstructionFiles = @()
+        [object[]] $WorkspaceInstructionFiles = @(),
+        $CodexHookConfigPlan = $null
     )
 
     $records = [System.Collections.Generic.List[object]]::new()
@@ -1954,6 +1955,20 @@ function Get-OwnedPlan {
         $records.Add((New-OwnedRecord -Path "$script:CodexSkillFolder/$($skill.name)" -Kind 'dir' -Sha256 $skill.sha256 -Runtime 'codex' -Layers @($skill.layer)))
     }
 
+    if ($null -ne $CodexHookConfigPlan -and -not (Test-IsTrue (Get-Field $CodexHookConfigPlan 'remove'))) {
+        if (Test-IsTrue (Get-Field $CodexHookConfigPlan 'preserve')) {
+            $priorHook = Get-PriorOwnedFileRecord $CodexHookConfigPlan.path
+            if ($null -ne $priorHook) {
+                $preservedHook = [pscustomobject]@{ path = $priorHook.path; kind = $priorHook.kind; sha256 = $priorHook.sha256; runtime = $priorHook.runtime; layers = @($priorHook.layers); preserve = $true; hookHash = (Get-Field $priorHook 'hookHash') }
+                $records.Add($preservedHook)
+            }
+        } else {
+            $hookRecord = New-OwnedRecord -Path $CodexHookConfigPlan.path -Kind 'file' -Sha256 $CodexHookConfigPlan.sha256 -Runtime 'codex' -Layers @($CodexHookConfigPlan.layers)
+            if ($null -ne $CodexHookConfigPlan.hookHash) { $hookRecord | Add-Member -NotePropertyName hookHash -NotePropertyValue $CodexHookConfigPlan.hookHash }
+            $records.Add($hookRecord)
+        }
+    }
+
     foreach ($file in $WorkspaceInstructionFiles) {
         $record = New-OwnedRecord -Path $file.path -Kind 'file' -Sha256 (Get-TextSha256 $file.text) -Runtime $file.runtime -Layers $file.layers
         if (Test-IsTrue (Get-Field $file 'preserve')) { $record | Add-Member -NotePropertyName preserve -NotePropertyValue $true }
@@ -1995,7 +2010,9 @@ function Get-OwnedRecords {
             'file' {
                 $disk = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
                 Assert-Written -Path $record.path -Disk $disk -Planned $record.sha256
-                New-OwnedRecord -Path $record.path -Kind 'file' -Sha256 $disk @attribution
+                $ownedFile = New-OwnedRecord -Path $record.path -Kind 'file' -Sha256 $disk @attribution
+                if ($null -ne (Get-Field $record 'hookHash')) { $ownedFile | Add-Member -NotePropertyName hookHash -NotePropertyValue $record.hookHash }
+                $ownedFile
             }
             'dir' {
                 $disk = Get-TreeSha256 $full
@@ -2195,7 +2212,7 @@ function Get-InstallerDirectories {
     foreach ($dir in @('.claude', '.claude/plugins', '.claude/cache', '.opencode', '.opencode/plugins', '.opencode/agents', '.maxstack', '.maxstack/bin', '.pi', '.pi/agent', '.pstack')) {
         $dirs.Add($dir)
     }
-    if ($Codex) { $dirs.Add('.agents'); $dirs.Add('.agents/skills') }
+    if ($Codex) { $dirs.Add('.agents'); $dirs.Add('.agents/skills'); $dirs.Add('.codex') }
     foreach ($layer in $Layers) {
         $dirs.Add(".claude/plugins/$($layer.name)")
         $dirs.Add(".claude/cache/$($layer.name)")
@@ -3535,8 +3552,10 @@ if ($removing) { $t3InstancesPlan = $null }
 
 # codex copies each selected layer's skills from the layer root, so the roots must be known. Its checks run before any write.
 $codexSkills = @()
+$codexHookConfigPlan = $null
 if ($codexSelected) {
     $codexSkills = @(Get-CodexSkills -Layers $layers)
+    if (-not ($removing -or $uninstalling)) { $codexHookConfigPlan = Get-CodexHookConfigPlan -Layers $layers }
     if ($Apply) { Assert-CodexSkillTargets -Skills $codexSkills -Owned $priorOwned }
 }
 
@@ -3743,7 +3762,7 @@ if ($Apply -or $removing -or $updating -or ($null -ne $priorOwned)) {
     $plan = Get-OwnedPlan -Document $document -Layers $layers -ClaudeRecords $claudeRecords -OpenCodeLayers $openCodeLayers `
         -OpenCodeSpecs $openCodeSpecs -CopilotCmdText $copilotCmdText -CopilotShText $copilotShText `
         -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown `
-        -CodexSkills $codexSkills -WorkspaceInstructionFiles $workspaceInstructionFiles
+        -CodexSkills $codexSkills -WorkspaceInstructionFiles $workspaceInstructionFiles -CodexHookConfigPlan $codexHookConfigPlan
     if ($null -ne $t3InstancesPlan) { $plan += [pscustomobject]@{ path = $t3InstancesPlan.path; kind = 'file'; sha256 = $t3InstancesPlan.sha256; runtime = $t3InstancesPlan.runtime; layers = @($t3InstancesPlan.layers); preserve = $t3InstancesPlan.preserve } }
 }
 
@@ -3770,7 +3789,7 @@ if ($Status) {
         Write-Host ((Format-Selection -Runtimes $selectedRuntimes -Layers $selectedLayers) + $legacyNote)
     }
     Write-SourcePinBlock -Entries (Get-RecordedSourceEntries $priorStack)
-    if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $false -OpenCodeSelected $openCodeSelected -WorkspaceInstructionPlan $workspaceInstructionPlan }
+    if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $false -OpenCodeSelected $openCodeSelected -WorkspaceInstructionPlan $workspaceInstructionPlan -HookConfigPlan $codexHookConfigPlan }
     if ($null -eq $priorOwned) {
         Write-Host 'no ownership record; run -Apply once to create it'
         if ($Strict) { exit 1 }
@@ -3798,7 +3817,7 @@ if (-not $Apply) {
     Write-Host "Workspace:      $Workspace"
     Write-Host (Format-Selection -Runtimes $selectedRuntimes -Layers $selectedLayers)
     Write-SourcePinBlock -Entries (Get-ResolvedSourceEntries -Layers $allLayers)
-    if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $false -OpenCodeSelected $openCodeSelected -WorkspaceInstructionPlan $workspaceInstructionPlan }
+    if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $false -OpenCodeSelected $openCodeSelected -WorkspaceInstructionPlan $workspaceInstructionPlan -HookConfigPlan $codexHookConfigPlan }
     foreach ($layer in $layers) {
         $where = if ($layer.root) { $layer.root } elseif ((Test-OrdinalEqual $layer.sourceKind 'local')) {
             $reason = if ($layer.folderMissing) { 'folder missing' } else { "unreadable: $(ConvertTo-SafeName ([string] $layer.unreadable))" }
@@ -4092,6 +4111,7 @@ if ($piKept) {
 
 # codex's skill folders come after the Pi wrappers, and before the lock records what was written.
 if ($Apply -and $codexSelected) { Write-CodexSkills -Skills $codexSkills -Owned $priorOwned -RemoveStale (-not $removing) }
+if ($Apply -and $codexSelected -and -not $removing) { Write-CodexHookConfig -Plan $codexHookConfigPlan }
 
 $claudeByLayer = [hashtable]::new([StringComparer]::Ordinal)
 foreach ($record in $claudeRecords) { $claudeByLayer[$record.layer] = $record }
@@ -4282,7 +4302,7 @@ Invoke-StrayReport -Known $knownNow -ConfigSha $stack.configSha256 -SettingsSha 
 Write-LockAtomically -Text ($stack | ConvertTo-Json -Depth 8)
 Write-Host "Wrote $stackTarget"
 
-if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $true -OpenCodeSelected $openCodeSelected -WorkspaceInstructionPlan $workspaceInstructionPlan }
+if ($codexSelected) { Write-CodexNotes -Layers $layers -Applying $true -OpenCodeSelected $openCodeSelected -WorkspaceInstructionPlan $workspaceInstructionPlan -HookConfigPlan $codexHookConfigPlan }
 Write-Host 'Workspace bundle installed from the layer manifest.'
 Write-Host 'Restart the running OpenCode server, then start a new T3 session to load it: T3 can reuse that server across sessions. Claude Code reads plugins when a session starts. Pi reads its settings when a session starts.'
 if ($skippedRuntimeWrappers.Count -gt 0) {

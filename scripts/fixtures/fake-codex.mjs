@@ -1,9 +1,5 @@
 #!/usr/bin/env node
-// A stand-in for `codex app-server` for the codex-hook-trust tests. It speaks just enough JSON-RPC over stdio:
-// it answers initialize, then answers hooks/list with the single hook its config overrides name. The hook's key and
-// currentHash are fixed for the definition it was started with, so the script can ask for them and trust them back.
-// FAKE_CODEX_MODE changes the answer: `untrusted` refuses trust even with a matching state, and `silent` never
-// answers hooks/list so the caller must time out. No model is called and nothing is read from disk.
+// A stand-in for `codex app-server` used by installer tests. It reports the hook definition and hash passed with -c.
 
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
@@ -19,19 +15,9 @@ for (let index = 0; index < args.length; index++) {
   if (args[index] === '-c') configs.push(args[index + 1]);
 }
 const definition = configs.find((value) => value.startsWith('hooks.PreToolUse=')) ?? '';
-const state = configs.find((value) => value.startsWith('hooks.state=')) ?? '';
 const command = /command\s*=\s*["']([^"']+)["']/.exec(definition)?.[1] ?? '';
-const currentHash = `sha256:${createHash('sha256').update(definition).digest('hex')}`;
-const key = 'C:\\<session-flags>\\config.toml:pre_tool_use:0:0';
-const mode = process.env.FAKE_CODEX_MODE ?? 'normal';
-
-// The state override is a TOML table with a literal-string key and trusted_hash. Match it only when both agree.
-function statedTrusted() {
-  if (mode === 'untrusted') return false;
-  const statedKey = /hooks\.state\s*=\s*\{\s*'([^']*)'/.exec(state)?.[1];
-  const statedHash = /trusted_hash\s*=\s*'([^']*)'/.exec(state)?.[1];
-  return statedKey === key && statedHash === currentHash;
-}
+const currentHash = `sha256:${createHash('sha256').update(`${definition}:${process.env.FAKE_CODEX_HASH_SALT ?? ''}`).digest('hex')}`;
+const key = 'C:/scratch/.codex/config.toml:pre_tool_use:0:0';
 
 const lines = createInterface({ input: process.stdin });
 lines.on('line', (line) => {
@@ -46,9 +32,8 @@ lines.on('line', (line) => {
     return;
   }
   if (message.method === 'hooks/list' && message.id !== undefined) {
-    if (mode === 'silent') return;
     const cwd = message.params?.cwds?.[0] ?? '';
-    const hook = { key, currentHash, trustStatus: statedTrusted() ? 'trusted' : 'untrusted', eventName: 'preToolUse', handlerType: 'command', command, matcher: 'Bash', timeoutSec: 30, source: 'sessionFlags' };
+    const hook = { key, currentHash, trustStatus: 'untrusted', eventName: 'preToolUse', handlerType: 'command', command, matcher: 'Bash', timeoutSec: 30, source: 'sessionFlags' };
     process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { data: [{ cwd, hooks: [hook], warnings: [], errors: [] }] } })}\n`);
   }
 });
