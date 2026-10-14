@@ -113,6 +113,8 @@ function envWithFakeCodex(base, extra = {}) {
   const env = { ...process.env, ...extra };
   const key = Object.keys(env).find((name) => name.toUpperCase() === 'PATH') ?? 'PATH';
   env[key] = `${writeFakeCodex(base)}${delimiter}${env[key] ?? ''}`;
+  // The hash probe will not start a .cmd shim, so on Windows it is pointed at the stand-in script directly.
+  if (process.platform === 'win32') env.MAXSTACK_CODEX_COMMAND = join(repoRoot, 'scripts', 'fixtures', 'fake-codex.mjs');
   return env;
 }
 

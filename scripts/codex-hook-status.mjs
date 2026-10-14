@@ -49,8 +49,12 @@ function resolveCommand(command) {
   return command;
 }
 
+// MAXSTACK_CODEX_COMMAND names the codex to run instead of the one on PATH. A .mjs or .js file runs under this node,
+// which is how the tests supply a stand-in without a shell shim.
 function startAppServer(command, args, options) {
-  return spawn(resolveCommand(command), args, { ...options, windowsHide: true });
+  const chosen = process.env.MAXSTACK_CODEX_COMMAND || command;
+  if (/\.(mjs|js)$/i.test(chosen)) return spawn(process.execPath, [chosen, ...args], { ...options, windowsHide: true });
+  return spawn(resolveCommand(chosen), args, { ...options, windowsHide: true });
 }
 
 function parseMessage(line) {
