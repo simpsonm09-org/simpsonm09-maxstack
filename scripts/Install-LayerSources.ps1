@@ -25,7 +25,7 @@ function Get-GitHubRemoteUrl {
     $testRoot = $env:MAXSTACK_TEST_GITHUB_ROOT
     if ($testRoot -and (Test-TestSeam) -and (Test-UnderTempFolder $testRoot)) {
         Write-Warning "MAXSTACK_TEST_GITHUB_ROOT is set, so $Owner/$Repo reads the local folder $testRoot, not GitHub. This is the test seam."
-        return ((Join-MaxstackPath $testRoot "$Owner\$Repo.git") -replace '//', '/')
+        return ((Join-Path $testRoot "$Owner\$Repo.git") -replace '\\', '/')
     }
     return "https://github.com/$Owner/$Repo.git"
 }
