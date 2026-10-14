@@ -1,4 +1,4 @@
-# platforms: windows
+# platforms: windows, macOS, linux
 #requires -Version 7.0
 Set-StrictMode -Version Latest
 # The ordinal helpers, which every comparison here uses. A driver that loads this file alone still has them.

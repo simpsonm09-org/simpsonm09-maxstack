@@ -1,4 +1,4 @@
-# platforms: windows
+# platforms: windows, macOS, linux
 # Filesystem link policy. Link paths are inspected and removed without walking into their targets.
 
 function Get-MaxstackLinkRecordKind {

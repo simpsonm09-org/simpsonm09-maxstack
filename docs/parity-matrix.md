@@ -267,8 +267,8 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 
 ### 2.18 macOS
 
-- Claude: **not built yet**. The installer is Windows-only; it makes junctions, and macOS needs symlinks. The hooks use POSIX paths. The org hook needs `node` on PATH. Evidence: MS-MT (Installer lifecycle), MS-INST (Claude Code), ORG (Known limits).
-- Copilot: **unverified**. The installer writes `copilot.sh`; "The macOS `copilot.sh` is untested." Evidence: MS-T3 (What works on Copilot, Not yet verified), MS-INST (Copilot CLI).
+- Claude: **unverified**. This change adds a no-login hosted macOS lifecycle fixture for apply, strict status, reapply, Copilot removal, and uninstall. It has not run on a real Mac. Real Mac hook behavior remains unverified. Evidence: this change, `scripts/Install-Workspace.macos.test.mjs`.
+- Copilot: **unverified**. The fixture checks that macOS writes and records only executable `copilot.sh`, with ordered plugin arguments and argument forwarding, without login. Hosted CI has not run for this change, and the real CLI and hook behavior remain unverified. Evidence: this change, `scripts/Install-Workspace.macos.test.mjs`.
 - OpenCode: **not built yet**. The installer's junction logic is Windows-only. Evidence: MS-MT (Installer lifecycle).
 - Pi: **unverified**. The installer writes `pi.sh`. "On macOS, nothing in this section has been run." Evidence: MS-T3 (Pi, Not verified), MS-INST (Pi).
 - Cursor: **not built yet**. Evidence: MS-MT (Runtimes).

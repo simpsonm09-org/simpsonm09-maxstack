@@ -1,4 +1,4 @@
-# platforms: windows
+# platforms: windows, macOS, linux
 Set-StrictMode -Version Latest
 # The ordinal helpers, which every comparison here uses.
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
