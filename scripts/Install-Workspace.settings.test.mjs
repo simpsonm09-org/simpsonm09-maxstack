@@ -1281,7 +1281,7 @@ withWorkspace('an upgrade apply over a real schema-1 fresh lock records the conf
 
 withWorkspace('a valid settings source replaces a malformed recorded source before apply', (ctx) => {
   servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   const lock = readJson(lockPath(ctx));
   sourceBlockIn(lock, 'pstack').url = 'ext::sh -c touch x';
   setLock(ctx, lock);

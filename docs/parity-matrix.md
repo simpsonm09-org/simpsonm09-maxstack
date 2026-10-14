@@ -24,8 +24,8 @@ Evidence rules:
 
 Pins:
 
-- maxstack pins pstack at commit `f629de81cfc9a2a9fd631cacc7567beee7b5b346` on branch `feat/opencode-runtime` [MS-LAY]. The fork worktree HEAD is the same commit [FORK].
-- The `pstack-claude` checkout at `pstack-claude` is on `main` (60ae9e2), not the pin. Where the two differ, the row says so (see G7).
+- maxstack pins pstack at commit `6558b2901d5d5ea0ac3eeb743ec476adace388b9` on branch `feat/opencode-runtime` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
+- The `pstack-max` checkout at `pstack-max` is on `feat/opencode-runtime` at the pinned commit `6558b2901d5d5ea0ac3eeb743ec476adace388b9`. Where the pin and upstream `main` differ, the row says so (see G7).
 
 Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex is a fifth runtime, opt-in, which installs the layers' skills and no plugin, and can turn on a layer's Codex gate hook through a Launch-arguments line (rows 2.1, 2.2, and 2.8). Cursor and Antigravity have no installer target.
 
@@ -45,13 +45,13 @@ Source key (short IDs used in cells):
 | PSC-PI | pstack-claude/docs/pi-equivalence.md |
 | PSC-HK | pstack-claude/plugins/pstack/hooks/hooks.json (main) |
 | PSC-CPH | pstack-claude/plugins/pstack/hooks/copilot-hooks.json (main) |
-| PSC-CXH | pstack-claude/plugins/pstack/hooks/codex-hooks.json (main; same file on the fork) |
+| PSC-CXH | pstack-claude/plugins/pstack/hooks/codex-hooks.json (main; same file on pstack-max) |
 | PSC-PRE | pstack-claude/plugins/pstack/hooks/pre-tool-use.sh and pre-tool-use.awk (main) |
 | PSC-RM | pstack-claude/plugins/pstack/README.md |
 | PSC-MAP-CP | pstack-claude/plugins/pstack/skills/poteto-mode/references/copilot-tools.md (main) |
 | PSC-MAP-CX | pstack-claude/plugins/pstack/skills/poteto-mode/references/codex-tools.md (main) |
 | PSC-MAP-PI | pstack-claude/plugins/pstack/skills/poteto-mode/references/pi-tools.md (main) |
-| FORK | pstack-claude@feat/opencode-runtime:plugins/pstack (branch feat/opencode-runtime, pin) |
+| FORK | pstack-max@feat/opencode-runtime:plugins/pstack (branch feat/opencode-runtime, pin) |
 | FORK-CPH | FORK/hooks/copilot-hooks.json (bash and powershell command keys) |
 | FORK-WIN | FORK/hooks/pre-tool-use-windows.ps1 |
 | FORK-OC | FORK/opencode/ (index.ts, load.ts, routing.ts, agents/*.md) |

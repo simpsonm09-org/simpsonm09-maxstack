@@ -383,21 +383,21 @@ withWorkspace('removing pi leaves the tree and the lock that a fresh install of 
 }, {});
 
 const REFUSED_SOURCES = [
-  ['pstack=http://github.com/simpsonm09/pstack-claude.git@feat', 'only https'],
-  ['pstack=ssh://git@github.com/simpsonm09/pstack-claude.git@feat', 'only https'],
+  ['pstack=http://github.com/simpsonm09/pstack-max.git@feat', 'only https'],
+  ['pstack=ssh://git@github.com/simpsonm09/pstack-max.git@feat', 'only https'],
   ['pstack=file:///tmp/pstack.git@feat', 'only https'],
-  ['pstack=https://user@github.com/simpsonm09/pstack-claude.git@feat', 'only https'],
-  ['pstack=simpsonm09/pstack-claude@feat..x', 'holds [.][.]'],
-  ['pstack=simpsonm09/pstack-claude@-feat', 'not a safe git ref name'],
-  ['pstack=simpsonm09/pstack-claude@feat~1', 'not a safe git ref name'],
-  ['pstack=simpsonm09/pstack-claude@feat.lock', 'not a safe git ref name'],
-  ['pstack=simpsonm09/pstack-claude@feat x', 'space or a control character'],
+  ['pstack=https://user@github.com/simpsonm09/pstack-max.git@feat', 'only https'],
+  ['pstack=simpsonm09/pstack-max@feat..x', 'holds [.][.]'],
+  ['pstack=simpsonm09/pstack-max@-feat', 'not a safe git ref name'],
+  ['pstack=simpsonm09/pstack-max@feat~1', 'not a safe git ref name'],
+  ['pstack=simpsonm09/pstack-max@feat.lock', 'not a safe git ref name'],
+  ['pstack=simpsonm09/pstack-max@feat x', 'space or a control character'],
   ['pstack=simpsonm09/pstack claude@feat', 'space or a control character'],
-  ['pstack=-simpsonm09/pstack-claude@feat', 'starts with a dash'],
-  ['pstack=simpsonm09/pstack-claude', 'needs @ref'],
+  ['pstack=-simpsonm09/pstack-max@feat', 'starts with a dash'],
+  ['pstack=simpsonm09/pstack-max', 'needs @ref'],
   ['pstack=simpsonm09/..x@feat', 'holds \\.\\.'],
   ['pstack=local:relative/checkout', 'needs an absolute path'],
-  ['nosuchlayer=simpsonm09/pstack-claude@feat', 'names an unknown layer'],
+  ['nosuchlayer=simpsonm09/pstack-max@feat', 'names an unknown layer'],
 ];
 
 withWorkspace('malformed -Source specs and unknown layers are refused before anything is written', (ctx) => {
@@ -423,7 +423,7 @@ withWorkspace('a local source is refused for the workspace itself and for each f
 withWorkspace('an https source that cannot be reached fails with the reason, and leaves the install untouched', (ctx) => {
   mustApply(ctx);
   const before = snapshotTree(ctx.workspace);
-  const run = runInstaller(shell, ctx, ['-Source', 'pstack=https://127.0.0.1:1/simpsonm09/pstack-claude.git@feat'], { env: githubEnv(ctx) });
+  const run = runInstaller(shell, ctx, ['-Source', 'pstack=https://127.0.0.1:1/simpsonm09/pstack-max.git@feat'], { env: githubEnv(ctx) });
   assert.notEqual(run.status, 0, 'an unreachable source was accepted');
   assert.match(plainOutput(run), /could not read the refs of https:\/\/127\.0\.0\.1:1/, run.stdout);
   assert.deepEqual(snapshotTree(ctx.workspace), before, 'a failed source changed the install');
@@ -431,7 +431,7 @@ withWorkspace('an https source that cannot be reached fails with the reason, and
 
 withWorkspace('-Status, -Remove, and -Uninstall refuse -Source, which only an apply or an audit takes', (ctx) => {
   for (const args of [['-Status'], ['-Remove', '-Layers', 'pstack'], ['-Uninstall']]) {
-    const run = runInstaller(shell, ctx, [...args, '-Source', 'pstack=simpsonm09/pstack-claude@feat'], { apply: false });
+    const run = runInstaller(shell, ctx, [...args, '-Source', 'pstack=simpsonm09/pstack-max@feat'], { apply: false });
     assert.notEqual(run.status, 0, `${args.join(' ')} accepted -Source`);
     assert.match(plainOutput(run), /-Source sets a layer source for an apply or an audit/, run.stdout);
   }
@@ -441,7 +441,7 @@ withWorkspace('an audit names the source it would install, and writes nothing', 
   const { featCommit } = servedFeature(ctx);
   mustApply(ctx);
   const before = snapshotTree(ctx.workspace);
-  const audit = runInstaller(shell, ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { apply: false, env: githubEnv(ctx) });
+  const audit = runInstaller(shell, ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { apply: false, env: githubEnv(ctx) });
   assertOk(audit);
   const block = sourceBlockOf(audit.stdout);
   assert.ok(block, audit.stdout);
@@ -451,7 +451,7 @@ withWorkspace('an audit names the source it would install, and writes nothing', 
 
 withWorkspace('-Update moves a branch override to its current commit and records it, and a dry run changes nothing', (ctx) => {
   const { bare, featCommit } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   const lockBefore = readFileSync(lockPath(ctx), 'utf8');
   const featTwo = moveFeat(ctx, bare);
 
@@ -468,7 +468,7 @@ withWorkspace('-Update moves a branch override to its current commit and records
 
 withWorkspace('-Update does not move a commit pin, even when its branch has moved', (ctx) => {
   const { bare, featCommit } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', `pstack=simpsonm09/pstack-claude@${featCommit}`], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', `pstack=simpsonm09/pstack-max@${featCommit}`], { env: githubEnv(ctx) });
   moveFeat(ctx, bare);
   mustApply(ctx, ['-Update'], { env: githubEnv(ctx) });
   assert.equal(sourceOf(ctx, 'pstack').commit, featCommit, 'a commit pin moved');
@@ -507,7 +507,7 @@ withWorkspace('-Update re-reads a local source, and an apply then installs what 
 
 withWorkspace('a -Update whose branch cannot be resolved fails with the reason, and leaves the install untouched', (ctx) => {
   const { bare } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   gitRun(bare, ['update-ref', '-d', 'refs/heads/feat']);
   const before = snapshotTree(ctx.workspace);
   const run = runInstaller(shell, ctx, ['-Update'], { env: githubEnv(ctx) });
@@ -535,9 +535,9 @@ withWorkspace('-Update prints the pin hint when layers.json\'s branch has moved,
 withWorkspace('-Source owner/repo@tag resolves an annotated tag to the commit it points at', (ctx) => {
   const { bare, featCommit } = servedFeature(ctx);
   gitRun(bare, ['tag', '-a', 'v1', '-m', 'release', featCommit]);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@v1'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@v1'], { env: githubEnv(ctx) });
   assert.equal(sourceOf(ctx, 'pstack').commit, featCommit, 'the annotated tag resolved to its tag object, not its commit');
-  assert.deepEqual(sourceOf(ctx, 'pstack').source, { kind: 'git', url: remoteUrl(ctx, 'simpsonm09', 'pstack-claude'), ref: 'v1', commit: featCommit, override: true });
+  assert.deepEqual(sourceOf(ctx, 'pstack').source, { kind: 'git', url: remoteUrl(ctx, 'simpsonm09', 'pstack-max'), ref: 'v1', commit: featCommit, override: true });
   assert.match(readFileSync(installedSkill(ctx), 'utf8'), /feat body/, 'the tagged content was not installed');
 }, {});
 
@@ -656,7 +656,7 @@ withWorkspace('a recorded local override whose folder is gone is reported by -St
 // Finding 3: -Update resolves only the layers it selects, so a remote the selection leaves out cannot abort it.
 withWorkspace('-Update resolves only the selected layers, so an unreachable remote of an unselected layer does not abort', (ctx) => {
   const { bare } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   const lock = readJson(lockPath(ctx));
   lock.selection.layers = lock.selection.layers.filter((name) => name !== 'pstack');
   setLock(ctx, lock);
@@ -686,7 +686,7 @@ function renameSkillOnFeat(ctx) {
 
 withWorkspace('-Update -Check counts the changed files of a rename that the partial cache must read, and does not report zero', (ctx) => {
   const { featCommit } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   const renamed = renameSkillOnFeat(ctx);
   const cache = join(ctx.workspace, '.claude', 'cache', 'pstack');
   gitRun(cache, ['fetch', '--quiet', '--filter=blob:none', 'origin', renamed]);
@@ -709,7 +709,7 @@ test('with the test-mode flag and a root under the temp folder, the shorthand na
   const root = join(tmpdir(), 'maxstack-seam-probe');
   const run = resolveShorthand({ ...process.env, MAXSTACK_TEST_MODE: '1', MAXSTACK_TEST_GITHUB_ROOT: root });
   assertOk(run);
-  assert.ok(run.stdout.split(/\r?\n/).includes(`${root.split('\\').join('/')}/simpsonm09/pstack-claude.git`), run.stdout);
+  assert.ok(run.stdout.split(/\r?\n/).includes(`${root.split('\\').join('/')}/simpsonm09/pstack-max.git`), run.stdout);
   assert.match(plainOutput(run), /MAXSTACK_TEST_GITHUB_ROOT is set/, plainOutput(run));
 }, {});
 
@@ -724,7 +724,7 @@ withWorkspace('without the test-mode flag, a -Source owner/repo at a commit is a
   const env = { ...process.env, MAXSTACK_TEST_GITHUB_ROOT: join(ctx.base, 'github') };
   delete env.MAXSTACK_TEST_MODE;
   const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-File', installer, '-Workspace', ctx.workspace, '-LayersFile', writeLayers(ctx),
-    '-CopilotCommand', ctx.fakeCopilot, '-PiCommand', ctx.fakePi, '-Source', `pstack=simpsonm09/pstack-claude@${sha}`], { windowsHide: true, encoding: 'utf8', env });
+    '-CopilotCommand', ctx.fakeCopilot, '-PiCommand', ctx.fakePi, '-Source', `pstack=simpsonm09/pstack-max@${sha}`], { windowsHide: true, encoding: 'utf8', env });
   assertOk(run);
   assert.ok(run.stdout.includes(`override, git ${SHORTHAND_URL} ref ${sha} at ${sha}`), run.stdout);
   assert.ok(!run.stdout.includes(join(ctx.base, 'github')), 'the test root was used');
@@ -736,10 +736,10 @@ const BAD_RECORDS = [
   ['ref', (block) => { block.ref = '--upload-pack=touch x'; }],
   ['ref', (block) => { block.ref = 'feat..x'; }],
   ['url', (block) => { block.url = 'ext::sh -c touch x'; }],
-  ['url', (block) => { block.url = 'https://user@github.com/simpsonm09/pstack-claude.git'; }],
+  ['url', (block) => { block.url = 'https://user@github.com/simpsonm09/pstack-max.git'; }],
   ['url', (block) => { block.url = 'https://github.com/simpsonm09/pstack claude.git'; }],
   ['url', (block) => { block.url = 'https://github.com/../x'; }],
-  ['url', (block) => { block.url = 'https://github.com/simpsonm09/pstack-claude.git\n'; }],
+  ['url', (block) => { block.url = 'https://github.com/simpsonm09/pstack-max.git\n'; }],
   ['commit', (block) => { block.commit = `${block.commit}\n`; }],
 ];
 
@@ -747,7 +747,7 @@ const BAD_RECORDS = [
 // would write the layer stops before any write, and names the one command that repairs it.
 withWorkspace('a git override the lock holds with a bad url, ref, or commit is ignored with a warning, and a plain apply refuses it', (ctx) => {
   servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   const good = readJson(lockPath(ctx));
   for (const [field, mutate] of BAD_RECORDS) {
     const lock = structuredClone(good);
@@ -778,7 +778,7 @@ withWorkspace('a git override the lock holds with a bad url, ref, or commit is i
 
 withWorkspace('an invalid recorded override is ignored by -Update, -Remove, and -Uninstall, and -Source name=default -Apply repairs it', (ctx) => {
   servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   const lock = readJson(lockPath(ctx));
   sourceBlockIn(lock, 'pstack').url = 'ext::sh -c touch x';
   setLock(ctx, lock);
@@ -837,7 +837,7 @@ test('an ls-remote that passes its time limit is stopped, and the error says so'
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
     const { port } = server.address();
-    const script = `. '${layerSourcesFile}'; Find-GitRefCommit -Url 'https://127.0.0.1:${port}/simpsonm09/pstack-claude.git' -Ref 'main' -TimeoutSeconds 2`;
+    const script = `. '${layerSourcesFile}'; Find-GitRefCommit -Url 'https://127.0.0.1:${port}/simpsonm09/pstack-max.git' -Ref 'main' -TimeoutSeconds 2`;
     const run = await runAsync(['-NoProfile', '-NonInteractive', '-Command', script], { ...process.env, GIT_TERMINAL_PROMPT: '0' });
     assert.notEqual(run.status, 0, 'a silent remote was waited for');
     assert.match(plainOutput(run), /ls-remote took longer than 2 seconds/, plainOutput(run));

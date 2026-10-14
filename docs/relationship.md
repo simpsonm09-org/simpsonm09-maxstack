@@ -12,7 +12,7 @@ The plugin layers own the skills, the agents, the entries, and the MCP servers. 
 
 | Repository | Layer | Owns |
 | --- | --- | --- |
-| `simpsonm09/pstack-claude` (fork) | `pstack`, base | The PStack plugin in `plugins/pstack`: the shared skills, the OpenCode entry and agent profiles, the Claude Code manifest, and the Copilot manifest and hooks. |
+| `simpsonm09/pstack-max` (our fork of pstack-claude) | `pstack`, base | The PStack plugin in `plugins/pstack`: the shared skills, the OpenCode entry and agent profiles, the Claude Code manifest, and the Copilot manifest and hooks. |
 | `simpsonm09-org-ai-plugin` | general and portable | MCP servers and skills that apply to any person or machine. |
 | `simpsonm09-personal-ai-plugin` | person and machine | MCP servers and skills that name one person and one machine. |
 | `simpsonm09-maxstack` | none | AI composition: the config fragment, the layer manifest, the installer, and the PStack pin. |

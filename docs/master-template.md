@@ -88,13 +88,13 @@ A layer source is one of:
 
 | Form | Example | Notes |
 | --- | --- | --- |
-| Git, by owner and repository | `simpsonm09/pstack-claude@feat/opencode-runtime` | Resolves to `https://github.com/<owner>/<repo>.git`. The ref may be a branch, a tag, or a full commit. |
+| Git, by owner and repository | `simpsonm09/pstack-max@feat/opencode-runtime` | Resolves to `https://github.com/<owner>/<repo>.git`. The ref may be a branch, a tag, or a full commit. |
 | Git, by URL | `https://github.com/michael-denyer/pstack-claude.git@main` | The same, for any host. |
-| Local | `local:<workspace>\projects\repos\pstack-claude` | A working tree. It is never fetched, and uncommitted changes are installed as they are. |
+| Local | `local:<workspace>\projects\repos\pstack-max` | A working tree. It is never fetched, and uncommitted changes are installed as they are. |
 
 The committed `layers.json` holds each layer's default source with a full commit pin, so a plain install is reproducible. An override changes the source for one run without editing `layers.json`:
 
-- `-Source pstack=simpsonm09/pstack-claude@feat/opencode-runtime` or `-Source personal=local:<path>`, repeatable, for any layer.
+- `-Source pstack=simpsonm09/pstack-max@feat/opencode-runtime` or `-Source personal=local:<path>`, repeatable, for any layer.
 - The override and the commit it resolved to are recorded in the lock, flagged as an override.
 - `status` and `update` print every override and every unpinned or local source, so a workspace never runs from a test source unnoticed.
 - `update` re-resolves a branch or tag to its current commit and records it. A local source has no commit to resolve. `update` re-reads it.

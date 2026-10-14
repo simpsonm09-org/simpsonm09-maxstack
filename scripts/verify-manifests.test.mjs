@@ -434,7 +434,7 @@ test('an ownership record at ownedSchema 1 is refused, and the message says to r
 // The source block each layer keeps in stack.lock.json. The shape check is shared with the workspace verifier, so these
 // cases run the manifest verifier's --lock check on a lock that holds one layer's source.
 const COMMIT = 'a'.repeat(40);
-const GIT_SOURCE = { kind: 'git', url: 'https://github.com/simpsonm09/pstack-claude.git', ref: 'feat', commit: COMMIT, override: true };
+const GIT_SOURCE = { kind: 'git', url: 'https://github.com/simpsonm09/pstack-max.git', ref: 'feat', commit: COMMIT, override: true };
 const LOCAL_SOURCE = { kind: 'local', url: null, ref: null, commit: COMMIT, dirty: false, override: true, path: 'projects/repos/checkout' };
 
 function lockWithSource(source) {
@@ -442,7 +442,7 @@ function lockWithSource(source) {
 }
 
 test('a git or local source block passes the lock shape check, and a legacy source string passes too', { skip }, () => {
-  for (const source of [GIT_SOURCE, LOCAL_SOURCE, 'https://github.com/simpsonm09/pstack-claude.git']) {
+  for (const source of [GIT_SOURCE, LOCAL_SOURCE, 'https://github.com/simpsonm09/pstack-max.git']) {
     const run = runVerifier({ lock: lockWithSource(source) });
     assert.equal(run.status, 0, `${JSON.stringify(source)}: ${failureOf(run)}`);
   }
@@ -455,7 +455,7 @@ test('a malformed source block is refused, with the rule it breaks', { skip }, (
     [{ ...GIT_SOURCE, commit: 'ABC' }, /commit must be a 40-character lowercase commit SHA/],
     [{ ...GIT_SOURCE, override: 'yes' }, /source override must be true or false/],
     [withoutRef, /must hold exactly/],
-    [{ ...GIT_SOURCE, url: 'https://github.com/simpsonm09/pstack-claude .git' }, /url must be a source URL with no spaces/],
+    [{ ...GIT_SOURCE, url: 'https://github.com/simpsonm09/pstack-max .git' }, /url must be a source URL with no spaces/],
     [{ ...LOCAL_SOURCE, dirty: null }, /dirty must be true or false where there is a commit/],
     [{ ...LOCAL_SOURCE, commit: null }, /dirty must be null where there is no commit/],
     [{ ...LOCAL_SOURCE, path: '' }, /path must name the checkout folder/],
