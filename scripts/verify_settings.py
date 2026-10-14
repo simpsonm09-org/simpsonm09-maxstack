@@ -306,11 +306,15 @@ def _ascii_line(text: str) -> str:
 
 
 def _main(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[1] != "--document":
-        print(_ascii_line("usage: verify_settings.py --document PATH"), file=sys.stderr)
+    if len(argv) not in (3, 5) or argv[1] != "--document" or (len(argv) == 5 and argv[3] != "--platform"):
+        print(_ascii_line("usage: verify_settings.py --document PATH [--platform Windows|POSIX]"), file=sys.stderr)
+        return 2
+    platform = argv[4] if len(argv) == 5 else None
+    if platform is not None and platform not in ("Windows", "POSIX"):
+        print(_ascii_line("--platform must be Windows or POSIX"), file=sys.stderr)
         return 2
     try:
-        read_settings_document(Path(argv[2]).read_bytes(), layer_names(REPO_ROOT))
+        read_settings_document(Path(argv[2]).read_bytes(), layer_names(REPO_ROOT), platform)
     except SettingsRefusal as error:
         print(_ascii_line(f"REFUSE: maxstack.settings.json {error}"))
         return 1

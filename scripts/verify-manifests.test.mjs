@@ -473,7 +473,7 @@ test('a malformed source block is refused, with the rule it breaks', { skip }, (
 // The differential test: one PowerShell process runs Read-MaxstackSettings on each input, and one Python process runs the
 // document reader on each input. The two must accept and refuse the same inputs. The driver is written to a temporary
 // folder and receives the scripts folder, the input folder, and the layer names as arguments.
-const SETTINGS_DRIVER = `param([string] $Scripts, [string] $Folder, [string] $LayerList)
+const SETTINGS_DRIVER = `param([string] $Scripts, [string] $Folder, [string] $LayerList, [string] $Platform)
 Set-StrictMode -Version Latest
 . (Join-Path $Scripts 'Install-Ordinal.ps1')
 . (Join-Path $Scripts 'Install-WorkspaceDiscovery.ps1')
@@ -482,7 +482,7 @@ Set-StrictMode -Version Latest
 $layers = @($LayerList -split ',')
 foreach ($file in @(Get-ChildItem -LiteralPath $Folder -Filter '*.json' | Sort-Object Name)) {
   try {
-    $null = Read-MaxstackSettings -Path $file.FullName -LayerNames $layers
+    $null = Read-MaxstackSettings -Path $file.FullName -LayerNames $layers -Platform $Platform
     $verdict = 'ACCEPT'
   } catch {
     $verdict = 'REFUSE'
@@ -642,7 +642,7 @@ function sourceGrammarInputs() {
 }
 
 // The verdict of each input from each reader: ACCEPT or REFUSE. Python exits 0 for accept and 1 for refuse.
-function runSettingsDifferential(inputs) {
+function runSettingsDifferential(inputs, platform) {
   const dir = mkdtempSync(join(tmpdir(), 'maxstack-differential-'));
   try {
     const folder = join(dir, 'inputs');
@@ -651,12 +651,12 @@ function runSettingsDifferential(inputs) {
     const driver = join(dir, 'driver.ps1');
     writeFileSync(driver, SETTINGS_DRIVER);
     const layerList = shipped('layers.json').layers.map((layer) => layer.name).join(',');
-    const ps = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', driver, '-Scripts', join(repoRoot, 'scripts'), '-Folder', folder, '-LayerList', layerList], { windowsHide: true, encoding: 'utf8' });
+    const ps = spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-File', driver, '-Scripts', join(repoRoot, 'scripts'), '-Folder', folder, '-LayerList', layerList, '-Platform', platform], { windowsHide: true, encoding: 'utf8' });
     assert.equal(ps.status, 0, `the PowerShell driver failed: ${ps.stderr}`);
     const powershell = new Map(ps.stdout.split(/\r?\n/).filter((line) => line.startsWith('DIFF|')).map((line) => line.split('|').slice(1)));
     const reader = new Map();
     for (const [name] of inputs) {
-      const run = spawnSync(python, [join(repoRoot, 'scripts', 'verify_settings.py'), '--document', join(folder, `${name}.json`)], { windowsHide: true, encoding: 'utf8' });
+      const run = spawnSync(python, [join(repoRoot, 'scripts', 'verify_settings.py'), '--document', join(folder, `${name}.json`), '--platform', platform], { windowsHide: true, encoding: 'utf8' });
       assert.ok(run.status === 0 || (run.status === 1 && run.stderr === ''), `the Python reader crashed on ${name}: ${run.stderr}`);
       reader.set(name, run.status === 0 ? 'ACCEPT' : 'REFUSE');
     }
@@ -668,19 +668,20 @@ function runSettingsDifferential(inputs) {
 
 test('the Python reader and the PowerShell reader accept and refuse the same settings files', { skip: differentialSkip }, () => {
   const inputs = settingsDifferentialInputs();
-  const { powershell, reader } = runSettingsDifferential(inputs);
-  const disagreements = inputs
-    .filter(([name]) => powershell.get(name) !== reader.get(name))
-    .map(([name]) => `${name}: PowerShell ${powershell.get(name)}, Python ${reader.get(name)}`);
-  assert.deepEqual(disagreements, [], 'the two readers disagree');
-  const verdicts = new Set(powershell.values());
-  assert.ok(verdicts.has('ACCEPT') && verdicts.has('REFUSE'), 'the differential needs both accepted and refused inputs');
+  for (const platform of ['Windows', 'POSIX']) {
+    const { powershell, reader } = runSettingsDifferential(inputs, platform);
+    const disagreements = inputs
+      .filter(([name]) => powershell.get(name) !== reader.get(name))
+      .map(([name]) => `${name}: PowerShell ${powershell.get(name)}, Python ${reader.get(name)}`);
+    assert.deepEqual(disagreements, [], `${platform}: the two readers disagree`);
+    const verdicts = new Set(powershell.values());
+    assert.ok(verdicts.has('ACCEPT') && verdicts.has('REFUSE'), `${platform}: the differential needs both accepted and refused inputs`);
+  }
 });
 
-// The inputs the review found accepted, or accepted by one reader only. Each is refused by both readers, not merely agreed on.
+// Inputs with a host-independent unsafe meaning. Host-specific path inputs are listed with the branch they must refuse below.
 const MUST_REFUSE = [
-  'local-absolute-slash', 'local-unc', 'local-unc-forward', 'local-device-prefix', 'local-device-dot', 'local-device-drive-form',
-  'local-trailing-dot', 'local-trailing-space', 'default-zero-width', 'default-soft-hyphen', 'default-zero-width-joiner',
+  'local-relative-dotdot', 'local-relative-dotdot-middle', 'default-zero-width', 'default-soft-hyphen', 'default-zero-width-joiner',
   'git-zero-width-ref', 'git-zero-width-location', 'git-soft-hyphen-location',
   'culture-default-zero-width', 'culture-default-soft-hyphen', 'culture-os-zero-width', 'culture-cli-zero-width',
   'culture-t3-defaults-soft-hyphen', 'culture-top-level-runtimes', 'culture-top-level-layers', 'culture-layer-key-zero-width',
@@ -689,10 +690,28 @@ const MUST_REFUSE = [
 
 test('the readers refuse each culture and root-relative input the review found, in both readers', { skip: differentialSkip }, () => {
   const inputs = settingsDifferentialInputs();
-  const { powershell, reader } = runSettingsDifferential(inputs);
-  const notRefused = MUST_REFUSE.filter((name) => powershell.get(name) !== 'REFUSE' || reader.get(name) !== 'REFUSE')
-    .map((name) => `${name}: PowerShell ${powershell.get(name)}, Python ${reader.get(name)}`);
-  assert.deepEqual(notRefused, [], 'a reader accepts an input it must refuse');
+  const windowsOnly = [
+    'local-absolute-slash', 'local-unc', 'local-unc-forward', 'local-device-prefix', 'local-device-dot', 'local-device-drive-form',
+    'local-drive-relative', 'local-root-relative', 'local-trailing-dot', 'local-trailing-space',
+  ];
+  const posixOnly = ['local-absolute-dotdot'];
+  const expectedAccept = {
+    Windows: ['local-absolute-drive', 'local-absolute-dotdot', 'local-relative', 'local-relative-dotdot-inside-name'],
+    POSIX: [
+      'local-absolute-slash', 'local-unc', 'local-unc-forward', 'local-device-prefix', 'local-device-dot', 'local-device-drive-form',
+      'local-drive-relative', 'local-root-relative', 'local-trailing-dot', 'local-trailing-space', 'local-relative',
+    ],
+  };
+  for (const [platform, platformOnly] of [['Windows', windowsOnly], ['POSIX', posixOnly]]) {
+    const { powershell, reader } = runSettingsDifferential(inputs, platform);
+    const notRefused = [...MUST_REFUSE, ...platformOnly]
+      .filter((name) => powershell.get(name) !== 'REFUSE' || reader.get(name) !== 'REFUSE')
+      .map((name) => `${name}: PowerShell ${powershell.get(name)}, Python ${reader.get(name)}`);
+    assert.deepEqual(notRefused, [], `${platform}: a reader accepts an input it must refuse`);
+    const notAccepted = expectedAccept[platform].filter((name) => powershell.get(name) !== 'ACCEPT' || reader.get(name) !== 'ACCEPT')
+      .map((name) => `${name}: PowerShell ${powershell.get(name)}, Python ${reader.get(name)}`);
+    assert.deepEqual(notAccepted, [], `${platform}: an ordinary host path was refused`);
+  }
 });
 
 // The decision log is read as lines, so a carriage return inside a field or a line with other than six tab-separated fields

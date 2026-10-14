@@ -1,4 +1,4 @@
-# platforms: windows
+# platforms: windows, macOS, linux
 # The ordinal helpers, which every comparison here uses.
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
 . (Join-Path $PSScriptRoot 'Install-Paths.ps1')
@@ -618,7 +618,7 @@ function New-SourceFault {
 # check. -Settings also takes a relative local path, which the caller resolves from the workspace; a path that is drive-
 # relative, root-relative, or climbs with .. is a fault there. A fault has a code and a reason that starts after the spec.
 function Read-SourceGrammar {
-    param([string] $Spec, [switch] $Settings, [switch] $NoGit)
+    param([string] $Spec, [switch] $Settings, [switch] $NoGit, [string] $Platform = '')
 
     # A format, control, or separator character, or a non-breaking space, is refused before any keyword is compared, so a
     # culture-equal keyword such as default with a soft hyphen is never read as the keyword.
@@ -628,7 +628,7 @@ function Read-SourceGrammar {
         return (New-SourceFault 'forbidden' " holds $held, which a source may not hold.")
     }
     if ((Test-OrdinalEqual $Spec 'default') -or ((Test-OrdinalEqual $Spec '') -and -not $Settings)) { return [pscustomobject]@{ kind = 'default'; code = $null } }
-    if ($Spec.StartsWith('local:', [StringComparison]::Ordinal)) { return (Read-LocalGrammar -Path $Spec.Substring(6) -Settings:$Settings) }
+    if ($Spec.StartsWith('local:', [StringComparison]::Ordinal)) { return (Read-LocalGrammar -Path $Spec.Substring(6) -Settings:$Settings -Platform $Platform) }
     $spaceFault = Get-SpecFault $Spec
     if ($spaceFault) { return (New-SourceFault 'spec' " is refused: $spaceFault. Use owner/repo@ref, https://host/path.git@ref, or local:<absolute path>.") }
     return (Read-GitGrammar -Spec $Spec -NoGit:$NoGit)

@@ -6,7 +6,9 @@
 
 ## Platforms
 
-Windows is supported. macOS support is in progress. The installer now uses POSIX path rules for workspace discovery, local source overrides, path containment, and OpenCode workspace permissions. Claude plugin folders use directory symlinks on macOS and junctions on Windows, with link-safe ownership, hashing, status, replacement, and removal. Windows lock records keep the `junction` kind; macOS records `symlink`. Wrapper selection and macOS CI are later steps.
+Windows is supported. The macOS CI job runs an informational fixture lifecycle for the `claude` and `copilot` runtimes. It does not exercise installed Mac CLIs or their hooks. Real Mac CLI and hook verification is pending. macOS and Linux installs write only POSIX wrappers (`copilot.sh`, and `pi.sh` when Pi is selected); their lock records own those files and never record `.cmd` wrappers. Windows keeps writing and recording both `.cmd` and `.sh` wrappers. Claude plugin folders use directory symlinks on macOS and junctions on Windows when shared with OpenCode, with link-safe ownership, hashing, status, replacement, and removal. Windows lock records keep the `junction` kind; macOS records `symlink`.
+
+PowerShell 7 is preinstalled on GitHub's hosted macOS runner. On a Mac without `pwsh`, install it with Microsoft's package or, if Homebrew is already installed, run `brew install powershell`. The Homebrew formula is community maintained.
 
 The installer resolves its target in this order: `-Workspace`, `MAXSTACK_WORKSPACE`, the nearest folder from the current directory upward that holds a `maxstack.settings.json` or `stack.lock.json` file, then the script's own `projects\repos\<repo>\scripts` or `projects\worktrees\<repo>\scripts` location. If none names a workspace, it stops and lists these four choices. It prints the resolved absolute path and origin on the first line of a successful run.
 

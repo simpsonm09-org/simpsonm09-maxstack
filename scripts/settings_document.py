@@ -9,6 +9,7 @@ is shown with those characters escaped as \\uXXXX.
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -29,7 +30,7 @@ SOURCE_SHAPE = re.compile(
     r"^(?:[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+|https://[^/@\s]+/[^@\s]+)@[^@\s]+$",
     re.IGNORECASE,
 )
-ABSOLUTE_PATH = re.compile(r"[A-Za-z]:[\\/]")
+WINDOWS_ABSOLUTE_PATH = re.compile(r"[A-Za-z]:[\\/]")
 ROOTED_RELATIVE_PATH = re.compile(r"[A-Za-z]:|[\\/]")
 UNC_OR_DEVICE_PATH = re.compile(r"[\\/]{2}")
 PARENT_SEGMENT = re.compile(r"(^|[\\/])\.\.([\\/]|$)")
@@ -180,25 +181,32 @@ def _spec_ok(value: str) -> bool:
     return bool(valid_location) and _safe_ref(ref)
 
 
-def _local_fault(local: str) -> str | None:
+def _local_fault(local: str, platform: str | None = None) -> str | None:
     """The reason a settings local path is refused, or None. The order is the installer's: the text rules first, then the
     settings form, where a drive-relative or root-relative path and a relative path with .. are unsafe."""
-    if UNC_OR_DEVICE_PATH.match(local):
+    windows = (platform or ("Windows" if os.name == "nt" else "POSIX")).lower() == "windows"
+    absolute = bool(
+        WINDOWS_ABSOLUTE_PATH.match(local) or re.match(r"[\\/]{2}[^\\/]", local)
+        if windows
+        else local.startswith("/")
+    )
+    if windows and UNC_OR_DEVICE_PATH.match(local):
         return "has a UNC or device path, which cannot be a layer source."
     for segment in SEGMENT_SPLIT.split(local):
         if segment in ("", ".", ".."):
             continue
-        if segment.endswith((".", " ")):
+        if windows and segment.endswith((".", " ")):
             return "has a folder name with a trailing dot or space, which cannot be a layer source."
     if not local.strip():
         return "has an unsafe local path. Use local:<workspace-relative-path>."
-    if not ABSOLUTE_PATH.match(local):
-        if ROOTED_RELATIVE_PATH.match(local) or PARENT_SEGMENT.search(local):
-            return "has an unsafe local path. Use local:<workspace-relative-path>."
+    if windows and not absolute and ROOTED_RELATIVE_PATH.match(local):
+        return "has an unsafe local path. Use local:<workspace-relative-path>."
+    if not absolute and PARENT_SEGMENT.search(local):
+        return "has an unsafe local path. Use local:<workspace-relative-path>."
     return None
 
 
-def _check_source(name: str, value: object) -> None:
+def _check_source(name: str, value: object, platform: str | None = None) -> None:
     where = f"layers.{_escape(name)}.source"
     too_long = (
         isinstance(value, str)
@@ -215,7 +223,7 @@ def _check_source(name: str, value: object) -> None:
     if value == "default":
         return
     if value.startswith("local:"):
-        reason = _local_fault(value[len("local:") :])
+        reason = _local_fault(value[len("local:") :], platform)
         if reason is not None:
             raise SettingsRefusal(f"{where} {reason}")
         return
@@ -233,14 +241,14 @@ def _check_runtimes(runtimes: object) -> None:
             raise SettingsRefusal(f"runtimes.{_escape(name)}.cli must be detect or install.")
 
 
-def _check_layers(layers: object, names: tuple) -> None:
+def _check_layers(layers: object, names: tuple, platform: str | None = None) -> None:
     _keys_only(layers, names, "layers")
     if not layers:
         raise SettingsRefusal("layers names no layer.")
     for name, entry in layers.items():
         _keys_only(entry, ("source",), f"layers.{_escape(name)}")
         if "source" in entry:
-            _check_source(name, entry["source"])
+            _check_source(name, entry["source"], platform)
 
 
 def _check_t3(t3: object) -> None:
@@ -268,7 +276,7 @@ def _check_t3(t3: object) -> None:
             all_instances.add(instance)
 
 
-def validate_settings(value: object, names: tuple) -> None:
+def validate_settings(value: object, names: tuple, platform: str | None = None) -> None:
     """Applies the field rules of Read-MaxstackSettings to a parsed object. Raises SettingsRefusal on the first failure."""
     _check_text_tree(value, "maxstack.settings.json")
     _keys_only(value, TOP_KEYS, "the top level")
@@ -285,19 +293,19 @@ def validate_settings(value: object, names: tuple) -> None:
     if "runtimes" in value:
         _check_runtimes(value["runtimes"])
     if "layers" in value:
-        _check_layers(value["layers"], names)
+        _check_layers(value["layers"], names, platform)
     if "t3" in value:
         _check_t3(value["t3"])
 
 
-def read_settings_document(data: bytes, names: tuple) -> None:
+def read_settings_document(data: bytes, names: tuple, platform: str | None = None) -> None:
     """Refuses what the installer's reader refuses, and returns when it would accept the file."""
     if len(data) > MAX_BYTES:
         raise SettingsRefusal(f"is larger than the {MAX_BYTES} byte limit.")
     value = strict_json(data)
     if not isinstance(value, dict):
         raise SettingsRefusal("must hold one JSON object.")
-    validate_settings(value, names)
+    validate_settings(value, names, platform)
 
 
 def layer_names(root: Path) -> tuple:

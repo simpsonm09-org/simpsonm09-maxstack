@@ -1,4 +1,4 @@
-# platforms: windows
+# platforms: windows, macOS, linux
 # Ordinal text rules for the installer. In PowerShell 7 the operators -eq, -ne, -in, -contains, -like, -ceq, -cne, -cin,
 # -ccontains, Sort-Object -Unique, and Select-Object -Unique compare with culture rules: a zero-width character, a soft
 # hyphen, or a canonically equivalent string compares EQUAL to the plain text. So a name can pass validation and then miss

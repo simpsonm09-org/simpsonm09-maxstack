@@ -1,4 +1,4 @@
-# platforms: windows
+# platforms: windows, macOS, linux
 # Platform path rules. Text identifiers still use Install-Ordinal.ps1; only filesystem paths use these helpers.
 # On macOS and Linux identity is ordinal and case-sensitive. A macOS volume may still be case-insensitive.
 

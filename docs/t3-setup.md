@@ -58,13 +58,13 @@ The pstack folder is a copy, not a junction. It is not a junction because the Op
 
 ## Copilot
 
-The Copilot provider does not take plugin folders from the instance's arguments. T3 ignores `commandArgs` for registry ACP agents. So the installer writes a wrapper, `.maxstack\bin\copilot.cmd`, and the `copilotSimpsonm09` instance starts the wrapper instead of `copilot`. The default `copilot` instance starts the registry `copilot.exe` and needs no wrapper.
+The Copilot provider does not take plugin folders from the instance's arguments. T3 ignores `commandArgs` for registry ACP agents. So the installer writes `.maxstack\bin\copilot.cmd` and `.maxstack\bin\copilot.sh` on Windows, and `.maxstack/bin/copilot.sh` on macOS and Linux. The `copilotSimpsonm09` instance starts the wrapper instead of `copilot`. The default `copilot` instance starts the registry `copilot.exe` on Windows and needs no wrapper.
 
 1. Generate the wrapper: `pwsh -File scripts/Install-Workspace.ps1 -Apply`. It needs the Copilot CLI installed. If Copilot is not on `PATH`, the installer keeps the wrappers it already wrote, as they are, and warns; with none recorded, it skips them and says so. Install Copilot, then run it again.
-2. In T3, select the `copilotSimpsonm09` instance, Copilot (maxstack). Its `config.commandPath` is `<workspace>/.maxstack/bin/copilot.cmd`. To set it up again, copy the registry `copilot` instance and set the copy's `config.commandPath` to `<workspace>/.maxstack/bin/copilot.cmd`. On macOS, use `copilot.sh` in the same folder.
+2. In T3, select the `copilotSimpsonm09` instance, Copilot (maxstack). Its `config.commandPath` is `<workspace>/.maxstack/bin/copilot.cmd` on Windows and `<workspace>/.maxstack/bin/copilot.sh` on macOS. To set it up again, copy the registry `copilot` instance and set the copy's `config.commandPath` to the wrapper for that platform.
 3. Fleet projects select that instance through the project's default model.
 
-The wrapper runs the Copilot CLI with one `--plugin-dir` for each layer that lists `copilot`, in layer order: pstack, then the org layer, then the personal layer. Each folder is the same `.claude\plugins` folder Claude Code uses. The wrapper then passes its own arguments through. The installer writes the Copilot executable's absolute path into the wrapper. If you move or reinstall Copilot, run the installer again.
+The wrapper runs the Copilot CLI with one `--plugin-dir` for each layer that lists `copilot`, in layer order: pstack, then the org layer, then the personal layer. Each folder is the same `.claude\plugins` folder Claude Code uses. The wrapper then passes its own arguments through. Windows `copilot.cmd` records the executable's absolute path; macOS and Linux `copilot.sh` resolve `copilot` from `PATH` when launched.
 
 ### The ask switch
 
@@ -80,7 +80,7 @@ The variable is set in the wrapper, not in the T3 instance, so other Copilot run
 
 ### What works on Copilot
 
-On Windows, pstack's PreToolUse hook is a no-op stub under Copilot, so its file-read and subagent-model checks do not run there. The SessionStart context, the skills, and the org gate work on Copilot. The macOS `copilot.sh` is untested. Copilot does not receive the generated workspace instruction file in a session inside a repository. This is a known gap.
+On Windows, pstack's PreToolUse hook is a no-op stub under Copilot, so its file-read and subagent-model checks do not run there. The SessionStart context, the skills, and the org gate work on Copilot. Hosted macOS CI checks wrapper generation and the no-login installer lifecycle; the real Mac CLI and hook behavior remain unverified. Copilot does not receive the generated workspace instruction file in a session inside a repository. This is a known gap.
 
 ## Pi (maxstack)
 
