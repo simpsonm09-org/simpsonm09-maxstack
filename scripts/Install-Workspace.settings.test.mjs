@@ -234,7 +234,7 @@ withWorkspace('a malformed settings file stops apply before changing the workspa
 }, {});
 
 withWorkspace('each optional settings key may be omitted, with no strict-mode read of a missing member', (ctx) => {
-  // Each variant leaves out one optional key, or a member under one (t3.cli, t3.snapshot, t3.defaults, t3.gatedInstances), so every read of
+  // Each variant leaves out one optional key, or a member under one (t3.cli, t3.snapshot, t3.defaults, t3.gatedInstances, t3.readOnlyInstances), so every read of
   // an optional member must check it exists first. An audit reads the file on every run.
   const variants = [
     { version: 1 },
@@ -249,6 +249,7 @@ withWorkspace('each optional settings key may be omitted, with no strict-mode re
     { version: 1, t3: { snapshot: false } },
     { version: 1, t3: { defaults: 'leave-alone' } },
     { version: 1, t3: { gatedInstances: [] } },
+    { version: 1, t3: { readOnlyInstances: [] } },
     { version: 1, t3: { cli: 'detect', snapshot: true } },
   ];
   for (const value of variants) {
@@ -313,6 +314,10 @@ withWorkspace('settings accept a UTF-8 BOM and reject invalid keys, values, and 
     [{ version: 1, t3: { gatedInstances: 'instance' } }, /t3\.gatedInstances must be an array/],
     [{ version: 1, t3: { gatedInstances: ['duplicate', 'duplicate'] } }, /t3\.gatedInstances must contain unique/],
     [{ version: 1, t3: { gatedInstances: ['bad.id'] } }, /t3\.gatedInstances must contain unique/],
+    [{ version: 1, t3: { readOnlyInstances: 'instance' } }, /t3\.readOnlyInstances must be an array/],
+    [{ version: 1, t3: { readOnlyInstances: ['duplicate', 'duplicate'] } }, /t3\.readOnlyInstances must contain unique/],
+    [{ version: 1, t3: { readOnlyInstances: ['bad.id'] } }, /t3\.readOnlyInstances must contain unique/],
+    [{ version: 1, t3: { gatedInstances: ['shared'], readOnlyInstances: ['shared'] } }, /id 'shared' cannot appear in both/],
   ];
   for (const [value, message] of invalidCases) {
     writeFileSync(bomPath, typeof value === 'string' ? value : JSON.stringify(value));

@@ -244,28 +244,28 @@ def _check_layers(layers: object, names: tuple) -> None:
 
 
 def _check_t3(t3: object) -> None:
-    _keys_only(t3, ("cli", "snapshot", "defaults", "gatedInstances"), "t3")
+    _keys_only(t3, ("cli", "snapshot", "defaults", "gatedInstances", "readOnlyInstances"), "t3")
     if "cli" in t3 and not _enum_value(t3["cli"], CLI_MODES):
         raise SettingsRefusal("t3.cli must be detect or install.")
     if "snapshot" in t3 and type(t3["snapshot"]) is not bool:
         raise SettingsRefusal("t3.snapshot must be true or false.")
     if "defaults" in t3 and not _enum_value(t3["defaults"], T3_DEFAULTS):
         raise SettingsRefusal("t3.defaults must be leave-alone or apply-defaults.")
-    if "gatedInstances" in t3:
-        instances = t3["gatedInstances"]
+    all_instances: set[str] = set()
+    for list_name in ("gatedInstances", "readOnlyInstances"):
+        if list_name not in t3:
+            continue
+        instances = t3[list_name]
         if type(instances) is not list:
-            raise SettingsRefusal("t3.gatedInstances must be an array of unique instance ids.")
+            raise SettingsRefusal(f"t3.{list_name} must be an array of unique instance ids.")
         seen: set[str] = set()
         for instance in instances:
-            if (
-                not isinstance(instance, str)
-                or re.fullmatch(r"[A-Za-z0-9_-]+", instance, flags=re.ASCII) is None
-                or instance in seen
-            ):
-                raise SettingsRefusal(
-                    "t3.gatedInstances must contain unique non-empty ids made only of letters, digits, hyphens, and underscores."
-                )
+            if not isinstance(instance, str) or re.fullmatch(r"[A-Za-z0-9_-]+", instance, flags=re.ASCII) is None or instance in seen:
+                raise SettingsRefusal(f"t3.{list_name} must contain unique non-empty ids made only of letters, digits, hyphens, and underscores.")
+            if instance in all_instances:
+                raise SettingsRefusal(f"T3 instance id '{instance}' cannot appear in both t3.gatedInstances and t3.readOnlyInstances.")
             seen.add(instance)
+            all_instances.add(instance)
 
 
 def validate_settings(value: object, names: tuple) -> None:

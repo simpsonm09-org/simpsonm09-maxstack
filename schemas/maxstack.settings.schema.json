@@ -48,6 +48,11 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
+        },
+        "readOnlyInstances": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
         }
       }
     }

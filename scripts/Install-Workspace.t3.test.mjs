@@ -8,6 +8,7 @@ import { lockPath, plainOutput, readJson, runInstaller, runStatus, shell, withWo
 const ids = ['instance_one', 'instance-two'];
 const instancesPath = (ctx) => join(ctx.workspace, '.pstack', 'pstack-t3-instances.json');
 const settings = (gatedInstances = ids) => ({ version: 1, t3: { gatedInstances } });
+const readOnlySettings = (gatedInstances = [], readOnlyInstances = ids) => ({ version: 1, t3: { gatedInstances, readOnlyInstances } });
 const install = (ctx, extra = [], options = {}) => runInstaller(shell, ctx, extra, options);
 
 function addGateHooks(ctx) {
@@ -59,6 +60,53 @@ test('the list marks the gate when the selected layer source has both gate hooks
     const run = install(ctx);
     assert.equal(run.status, 0, plainOutput(run));
     assert.equal(readJson(instancesPath(ctx)).instances[ids[0]].gate, true);
+  });
+});
+
+test('the list writes gated entries followed by read-only entries in the fixed shape', () => {
+  withWorkspace('gated and read-only list', (ctx) => {
+    writeWorkspaceSettings(ctx, readOnlySettings(['gated_one'], ['read_only_one']));
+    const applied = install(ctx);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.deepEqual(readJson(instancesPath(ctx)).instances, {
+      gated_one: { layers: ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin'], gate: false },
+      read_only_one: { layers: [], gate: false, readOnly: true },
+    });
+  });
+});
+
+test('read-only ids alone write the fixed read-only shape', () => {
+  withWorkspace('read-only list only', (ctx) => {
+    writeWorkspaceSettings(ctx, readOnlySettings([], ['read_only_one']));
+    const applied = install(ctx);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.deepEqual(readJson(instancesPath(ctx)).instances, {
+      read_only_one: { layers: [], gate: false, readOnly: true },
+    });
+  });
+});
+
+test('empty gated and read-only lists remove the generated file', () => {
+  withWorkspace('empty T3 lists remove file', (ctx) => {
+    writeWorkspaceSettings(ctx, readOnlySettings(['gated_one'], ['read_only_one']));
+    assert.equal(install(ctx).status, 0);
+    writeWorkspaceSettings(ctx, readOnlySettings([], []));
+    const applied = install(ctx);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.equal(existsSync(instancesPath(ctx)), false);
+  });
+});
+
+test('a read-only generated list is owned and strict status is clean', () => {
+  withWorkspace('read-only list ownership status', (ctx) => {
+    writeWorkspaceSettings(ctx, readOnlySettings([], ['read_only_one']));
+    const applied = install(ctx);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    const record = readJson(lockPath(ctx)).owned.find((item) => item.path === '.pstack/pstack-t3-instances.json');
+    assert.ok(record);
+    const status = runStatus(ctx, ['-Strict']);
+    assert.equal(status.status, 0, plainOutput(status));
+    assert.match(status.stdout, /matching\s+\.pstack\/pstack-t3-instances\.json/);
   });
 });
 
@@ -154,5 +202,6 @@ test('the settings template contains no machine id', () => {
   const path = fileURLToPath(new URL('../workspace/maxstack.settings.json', import.meta.url));
   const template = JSON.parse(readFileSync(path, 'utf8'));
   assert.deepEqual(template.t3.gatedInstances, []);
+  assert.deepEqual(template.t3.readOnlyInstances, []);
   assert.doesNotMatch(readFileSync(path, 'utf8'), /instance_one|instance-two/);
 });

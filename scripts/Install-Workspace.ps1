@@ -228,10 +228,12 @@ function Get-T3InstancesPlan {
     $prior = Get-PriorOwnedFileRecord $relative
     $full = Join-Path $Workspace ($relative -replace '/', '\')
     $instances = @()
-    if ($Settings.present -and $Settings.value.Contains('t3') -and $Settings.value.t3.Contains('gatedInstances')) {
-        $instances = @($Settings.value.t3.gatedInstances)
+    $readOnlyInstances = @()
+    if ($Settings.present -and $Settings.value.Contains('t3')) {
+        if ($Settings.value.t3.Contains('gatedInstances')) { $instances = @($Settings.value.t3.gatedInstances) }
+        if ($Settings.value.t3.Contains('readOnlyInstances')) { $readOnlyInstances = @($Settings.value.t3.readOnlyInstances) }
     }
-    if ($instances.Count -gt 0) {
+    if ($instances.Count -gt 0 -or $readOnlyInstances.Count -gt 0) {
         $selectedModels = @($Layers | Where-Object { Test-OrdinalIn $_.name $SelectedLayers })
         $selectedNames = @($selectedModels | ForEach-Object { $_.name })
         $gate = $false
@@ -240,8 +242,9 @@ function Get-T3InstancesPlan {
             $hooks = Join-Path $layer.root 'hooks'
             if ((Test-Path -LiteralPath (Join-Path $hooks 'pre-tool-use.mjs') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $hooks 'lib/codex.mjs') -PathType Leaf)) { $gate = $true; break }
         }
-        $entries = [ordered]@{}
-        foreach ($instance in $instances) { $entries[$instance] = [ordered]@{ layers = @($selectedNames); gate = $gate } }
+        $entries = [System.Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
+        foreach ($instance in $instances) { $entries.Add($instance, [ordered]@{ layers = @($selectedNames); gate = $gate }) }
+        foreach ($instance in $readOnlyInstances) { $entries.Add($instance, [ordered]@{ layers = @(); gate = $false; readOnly = $true }) }
         $text = ConvertTo-Json -InputObject ([ordered]@{ instances = $entries }) -Depth 8
         $text = $text.Replace("`r`n", "`n").Replace("`r", "`n") + "`n"
         if ((Test-Path -LiteralPath $full) -and $null -eq $prior) {
@@ -277,7 +280,7 @@ function Write-T3InstancesFile {
             return
         }
         Remove-Item -LiteralPath $full -Force
-        Write-Host 'Removed .pstack/pstack-t3-instances.json: no gated instances are listed.'
+        Write-Host 'Removed .pstack/pstack-t3-instances.json: no T3 instances are listed.'
         return
     }
     if (Test-IsTrue $Plan.preserve) { return }

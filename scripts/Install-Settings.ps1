@@ -270,20 +270,24 @@ function Read-MaxstackSettings {
     }
     if ($value.Contains('t3')) {
         if ($value.t3 -isnot [System.Collections.IDictionary]) { throw 'maxstack.settings.json: t3 must be an object.' }
-        Assert-SettingsObjectKeys $value.t3 @('cli', 'snapshot', 'defaults', 'gatedInstances') 't3'
+        Assert-SettingsObjectKeys $value.t3 @('cli', 'snapshot', 'defaults', 'gatedInstances', 'readOnlyInstances') 't3'
         if ($value.t3.Contains('cli') -and (-not (Test-OrdinalIn $value.t3.cli $script:SettingsCliModes))) { throw 'maxstack.settings.json: t3.cli must be detect or install.' }
         if ($value.t3.Contains('snapshot') -and $value.t3.snapshot -isnot [bool]) { throw 'maxstack.settings.json: t3.snapshot must be true or false.' }
         if ($value.t3.Contains('defaults') -and (-not (Test-OrdinalIn $value.t3.defaults $script:SettingsT3Defaults))) {
             throw 'maxstack.settings.json: t3.defaults must be leave-alone or apply-defaults.'
         }
         if ($value.t3.Contains('defaults') -and (Test-OrdinalEqual $value.t3.defaults 'apply-defaults')) { Write-Warning 't3.defaults apply-defaults is reserved and unsupported in this release; T3 settings are left alone.' }
-        if ($value.t3.Contains('gatedInstances')) {
-            if ($value.t3.gatedInstances -isnot [array]) { throw 'maxstack.settings.json: t3.gatedInstances must be an array of unique instance ids.' }
+        $allT3Instances = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($listName in @('gatedInstances', 'readOnlyInstances')) {
+            if (-not $value.t3.Contains($listName)) { continue }
+            $list = $value.t3[$listName]
+            if ($list -isnot [array]) { throw "maxstack.settings.json: t3.$listName must be an array of unique instance ids." }
             $seenInstances = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-            foreach ($instance in $value.t3.gatedInstances) {
+            foreach ($instance in $list) {
                 if ($instance -isnot [string] -or $instance -cnotmatch '^[A-Za-z0-9_-]+$' -or -not $seenInstances.Add($instance)) {
-                    throw 'maxstack.settings.json: t3.gatedInstances must contain unique non-empty ids made only of letters, digits, hyphens, and underscores.'
+                    throw "maxstack.settings.json: t3.$listName must contain unique non-empty ids made only of letters, digits, hyphens, and underscores."
                 }
+                if (-not $allT3Instances.Add($instance)) { throw "maxstack.settings.json: T3 instance id '$instance' cannot appear in both t3.gatedInstances and t3.readOnlyInstances." }
             }
         }
     }
