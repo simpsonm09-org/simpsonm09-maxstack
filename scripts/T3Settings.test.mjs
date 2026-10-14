@@ -590,7 +590,7 @@ test('an inaccessible source handle is reported without exposing the I/O error',
     const escapedHelper = helper.replaceAll("'", "''");
     const escapedInput = input.replaceAll("'", "''");
     const escapedWorkspace = workspace.replaceAll("'", "''");
-    const command = `. '${escapedHelper}'; $held = [IO.File]::Open('${escapedInput}', 'Open', 'ReadWrite', 'None'); try { Get-T3SettingsReport -Path '${escapedInput}' -Workspace '${escapedWorkspace}' | ConvertTo-Json -Depth 64 -Compress } finally { $held.Dispose() }`;
+    const command = `. '${ordinal.replaceAll("'", "''")}'; . '${escapedHelper}'; $held = [IO.File]::Open('${escapedInput}', 'Open', 'ReadWrite', 'None'); try { Get-T3SettingsReport -Path '${escapedInput}' -Workspace '${escapedWorkspace}' | ConvertTo-Json -Depth 64 -Compress } finally { $held.Dispose() }`;
     const env = { ...process.env };
     delete env.MAXSTACK_T3_SETTINGS;
     delete env.T3CODE_HOME;
@@ -736,7 +736,7 @@ test('plugin path parsing rejects invalid syntax and returns stale on snapshot r
     const snapshot = join(workspace, '.maxstack', 't3', 'settings.snapshot.json');
     mkdirSync(join(workspace, '.maxstack', 't3'), { recursive: true });
     writeFileSync(snapshot, '{}\n');
-    const code = `. '${helper.replaceAll("'", "''")}'; $held = [IO.File]::Open('${snapshot.replaceAll("'", "''")}', 'Open', 'ReadWrite', 'None'); try { Get-T3SettingsReport -Path '${input.replaceAll("'", "''")}' -Workspace '${workspace.replaceAll("'", "''")}' | ConvertTo-Json -Depth 64 -Compress } finally { $held.Dispose() }`;
+    const code = `. '${ordinal.replaceAll("'", "''")}'; . '${helper.replaceAll("'", "''")}'; $held = [IO.File]::Open('${snapshot.replaceAll("'", "''")}', 'Open', 'ReadWrite', 'None'); try { Get-T3SettingsReport -Path '${input.replaceAll("'", "''")}' -Workspace '${workspace.replaceAll("'", "''")}' | ConvertTo-Json -Depth 64 -Compress } finally { $held.Dispose() }`;
     const env = { ...process.env };
     delete env.MAXSTACK_T3_SETTINGS;
     delete env.T3CODE_HOME;
@@ -846,7 +846,7 @@ test('snapshot temp path cannot be preplanted and escaping plugin junctions are 
     const helperPath = helper.replaceAll("'", "''");
     const inputPath = input.replaceAll("'", "''");
     const workspacePath = workspace.replaceAll("'", "''");
-    const code = `. '${helperPath}'; $report = Get-T3SettingsReport -Path '${inputPath}' -Workspace '${workspacePath}'; try { $null = Write-T3Snapshot -Workspace '${workspacePath}' -Report $report; 'unexpected' } catch { 'refused' }`;
+    const code = `. '${ordinal.replaceAll("'", "''")}'; . '${helperPath}'; $report = Get-T3SettingsReport -Path '${inputPath}' -Workspace '${workspacePath}'; try { $null = Write-T3Snapshot -Workspace '${workspacePath}' -Report $report; 'unexpected' } catch { 'refused' }`;
     const env = { ...process.env };
     delete env.MAXSTACK_T3_SETTINGS;
     delete env.T3CODE_HOME;
