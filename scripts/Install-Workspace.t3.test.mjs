@@ -53,6 +53,80 @@ test('the list writes selected layers and a false gate when the gate hook is abs
   });
 });
 
+test('no explicit T3 source leaves the snapshot path and output untouched', () => {
+  withWorkspace('T3 source omitted', (ctx) => {
+    const env = { ...process.env };
+    delete env.MAXSTACK_T3_SETTINGS;
+    const run = install(ctx, [], { env });
+    assert.equal(run.status, 0, plainOutput(run));
+    assert.doesNotMatch(plainOutput(run), /T3 settings:|Snapshot:/);
+    assert.equal(existsSync(join(ctx.workspace, '.maxstack', 't3')), false);
+  });
+});
+
+test('an explicit source wins over the environment and writes only the sanitized snapshot', () => {
+  withWorkspace('T3 explicit source', (ctx) => {
+    const source = join(ctx.base, 'selected-settings.json');
+    const ignored = join(ctx.base, 'environment-settings.json');
+    const canary = `private-${String.fromCharCode(116, 111, 107, 101, 110)}-value`;
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: true, github: { token: canary }, unknownSetting: canary }));
+    writeFileSync(ignored, JSON.stringify({ defaultAutoPull: false }));
+    const env = { ...process.env, MAXSTACK_T3_SETTINGS: ignored };
+    const run = install(ctx, ['-T3Settings', source], { env });
+    assert.equal(run.status, 0, plainOutput(run));
+    assert.doesNotMatch(plainOutput(run), new RegExp(canary));
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    const snapshot = readJson(snapshotPath);
+    assert.equal(snapshot.defaultAutoPull, true);
+    assert.equal(Object.hasOwn(snapshot, 'github'), false);
+    assert.equal(Object.hasOwn(snapshot, 'unknownSetting'), false);
+    assert.equal(readJson(lockPath(ctx)).owned.some((item) => item.path === '.maxstack/t3/settings.snapshot.json'), true);
+  });
+});
+
+test('snapshot false ignores a selected malformed source without output or side effects', () => {
+  withWorkspace('T3 snapshot disabled', (ctx) => {
+    writeWorkspaceSettings(ctx, { version: 1, t3: { snapshot: false } });
+    const source = join(ctx.base, 'malformed-settings.json');
+    writeFileSync(source, '{');
+    const run = install(ctx, ['-T3Settings', source]);
+    assert.equal(run.status, 0, plainOutput(run));
+    assert.doesNotMatch(plainOutput(run), /T3 settings:|Snapshot:/);
+    assert.equal(existsSync(join(ctx.workspace, '.maxstack', 't3')), false);
+  });
+});
+
+test('remove preserves the snapshot and uninstall deletes only an unchanged owned snapshot', () => {
+  withWorkspace('T3 snapshot ownership lifecycle', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    const removed = install(ctx, ['-Remove', '-Runtimes', 'pi']);
+    assert.equal(removed.status, 0, plainOutput(removed));
+    assert.equal(existsSync(snapshotPath), true);
+    const uninstalled = install(ctx, ['-Uninstall']);
+    assert.equal(uninstalled.status, 0, plainOutput(uninstalled));
+    assert.equal(existsSync(snapshotPath), false);
+  });
+});
+
+test('strict status fails for malformed explicitly selected T3 settings while plain status reports it', () => {
+  withWorkspace('T3 malformed strict source', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    assert.equal(install(ctx, ['-T3Settings', source]).status, 0);
+    writeFileSync(source, '{');
+    const env = { ...process.env, MAXSTACK_T3_SETTINGS: source };
+    const plain = install(ctx, ['-Status'], { apply: false, env });
+    assert.equal(plain.status, 0, plainOutput(plain));
+    const strict = install(ctx, ['-Status', '-Strict'], { apply: false, env });
+    assert.equal(strict.status, 1, plainOutput(strict));
+    assert.match(plainOutput(strict), /T3 settings: source is malformed/);
+  });
+});
+
 test('the list marks the gate when the selected layer source has both gate hooks', () => {
   withWorkspace('gated list with gate', (ctx) => {
     addGateHooks(ctx);

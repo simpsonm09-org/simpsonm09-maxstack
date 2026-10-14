@@ -42,11 +42,16 @@ function runVerifier({ layers = (manifest) => manifest, pinLock = null, omitPinL
     copyFileSync(join(repoRoot, 'workspace', 'maxstack.settings.json'), join(root, 'workspace', 'maxstack.settings.json'));
     mkdirSync(join(root, 'schemas'));
     copyFileSync(join(repoRoot, 'schemas', 'maxstack.settings.schema.json'), join(root, 'schemas', 'maxstack.settings.schema.json'));
+    mkdirSync(join(root, 't3'));
+    copyFileSync(join(repoRoot, 't3', 'allowlist.json'), join(root, 't3', 'allowlist.json'));
+    copyFileSync(join(repoRoot, 't3', 'defaults.json'), join(root, 't3', 'defaults.json'));
     copyFileSync(join(repoRoot, 'README.md'), join(root, 'README.md'));
     mkdirSync(join(root, 'docs'));
     copyFileSync(join(repoRoot, 'docs', 'layout.md'), join(root, 'docs', 'layout.md'));
     writeFileSync(join(root, 'docs', 'plugin-publishing.md'), '# plugin publishing\n');
     mkdirSync(join(root, 'scripts'));
+    mkdirSync(join(root, 'scripts', 'fixtures', 't3'), { recursive: true });
+    copyFileSync(join(repoRoot, 'scripts', 'fixtures', 't3', 'server-settings-keys.json'), join(root, 'scripts', 'fixtures', 't3', 'server-settings-keys.json'));
     writeFileSync(join(root, 'scripts', 'Install-Workspace.ps1'), '# installer\n');
     copyFileSync(join(repoRoot, 'scripts', 'Install-Settings.ps1'), join(root, 'scripts', 'Install-Settings.ps1'));
     copyFileSync(verifier, join(root, 'scripts', 'verify-manifests.py'));

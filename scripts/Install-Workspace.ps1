@@ -4,6 +4,8 @@
 param(
     [string] $Workspace = '',
     [string] $LayersFile = '',
+    # Explicit T3 settings source. MAXSTACK_T3_SETTINGS is the only fallback; no profile is guessed.
+    [string] $T3Settings = '',
     [string[]] $LayerSource = @(),
     # Per-run layer sources: name=owner/repo@ref, name=https://host/path.git@ref, name=local:<absolute path>, or
     # name=default to drop an override. Repeatable, and comma-separable like -LayerSource.
@@ -116,6 +118,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-MaxstackPath $PSScriptRoot 'Install-LayerSources.ps1')
 . (Join-MaxstackPath $PSScriptRoot 'Install-Settings.ps1')
 . (Join-MaxstackPath $PSScriptRoot 'Install-Codex.ps1')
+. (Join-MaxstackPath $PSScriptRoot 'Install-T3Settings.ps1')
 $layersPath = if ($LayersFile) { $LayersFile } else { Join-MaxstackPath $repoRoot 'layers.json' }
 $workspaceSettingsPath = Join-MaxstackPath $Workspace 'maxstack.settings.json'
 $baseConfigFile = Join-MaxstackPath $repoRoot 'workspace/opencode.jsonc'
@@ -3438,6 +3441,17 @@ if ($removing) {
     $selectedLayers = @(Merge-Selected -Recorded $recordedLayers -All $layerNames -Named $allNamedLayers -HasNames $hasLayerNames -Label 'layers')
     Assert-SelectionRuntimes -Runtimes $selectedRuntimes -FromSettings $settingsRuntimes
 }
+$t3SnapshotEnabled = -not ($workspaceSettings.present -and $workspaceSettings.value.Contains('t3') -and $workspaceSettings.value.t3.Contains('snapshot') -and -not $workspaceSettings.value.t3.snapshot)
+$t3SourceSpecified = $PSBoundParameters.ContainsKey('T3Settings') -or -not [string]::IsNullOrWhiteSpace($env:MAXSTACK_T3_SETTINGS)
+$t3SourcePath = if ($PSBoundParameters.ContainsKey('T3Settings')) { $T3Settings } else { $env:MAXSTACK_T3_SETTINGS }
+$t3Report = $null
+if (-not ($removing -or $uninstalling) -and $t3SnapshotEnabled -and $t3SourceSpecified) {
+    if ([string]::IsNullOrWhiteSpace($t3SourcePath)) { throw '-T3Settings needs a file path.' }
+    $t3SourcePath = [IO.Path]::GetFullPath($t3SourcePath)
+    $t3Report = Get-T3SettingsReport -Path $t3SourcePath -Workspace $Workspace -RuntimeNames $selectedRuntimes -LayerNames $layerNames
+    Write-T3SettingsReport -Report $t3Report -Workspace $Workspace -SnapshotEnabled $true
+    if ($Apply -and (Test-OrdinalEqual $t3Report.sourceState 'present')) { [void](Assert-T3SnapshotDestination $Workspace) }
+}
 if (-not ($removing -or $uninstalling)) {
     $claudeAvailable = (Test-OrdinalIn 'claude' @(@($recordedRuntimes) + @(Get-SettingsNames -Settings $workspaceSettings -Key 'runtimes')))
     Write-PendingSettingsNotes -Runtimes $pendingRuntimes -Layers $pendingLayers -ClaudeAvailable $claudeAvailable -Applying ([bool] $Apply) -Updating $updating
@@ -3519,6 +3533,7 @@ foreach ($layer in $layers) {
 # settings file, and its Pi keys. The ownership record then tells the paths this install created from
 # the paths that were there first, so an uninstall never removes what it did not create.
 $installerDirs = @(Get-InstallerDirectories -Layers $layers -Codex:$codexSelected)
+if ($Apply -and $null -ne $t3Report -and (Test-OrdinalEqual $t3Report.sourceState 'present')) { $installerDirs += @('.maxstack', '.maxstack/t3') }
 $existedBefore = @()
 $existedBeforeFiles = @()
 $settingsKeysBefore = @()
@@ -3760,6 +3775,11 @@ if ($Apply -or $removing -or $updating -or ($null -ne $priorOwned)) {
         -CodexSkills $codexSkills -WorkspaceInstructionFiles $workspaceInstructionFiles -CodexHookConfigPlan $codexHookConfigPlan
     if ($null -ne $t3InstancesPlan) { $plan += [pscustomobject]@{ path = $t3InstancesPlan.path; kind = 'file'; sha256 = $t3InstancesPlan.sha256; runtime = $t3InstancesPlan.runtime; layers = @($t3InstancesPlan.layers); preserve = $t3InstancesPlan.preserve } }
 }
+$priorT3Snapshot = @($priorOwned | Where-Object { (Test-OrdinalEqual (Get-Field $_ 'path') '.maxstack/t3/settings.snapshot.json') -and (Test-OrdinalEqual (Get-Field $_ 'kind') 'file') })
+$preserveT3SnapshotRecord = $priorT3Snapshot.Count -gt 0 -and ($null -eq $t3Report -or (-not (Test-OrdinalEqual $t3Report.sourceState 'present')))
+if ($null -ne $t3Report -and (Test-OrdinalEqual $t3Report.sourceState 'present')) {
+    $plan += [pscustomobject]@{ path = '.maxstack/t3/settings.snapshot.json'; kind = 'file'; sha256 = $t3Report.snapshotSha256; runtime = $null; layers = @() }
+} elseif ($preserveT3SnapshotRecord) { $plan += $priorT3Snapshot[0] }
 
 # The Claude plugin folders, and the OpenCode folders that no unselected layer owns. An unselected
 # runtime's folders and files are left alone, so neither apply nor audit touches them.
@@ -3804,7 +3824,8 @@ if ($Status) {
         "$(@($results | Where-Object { (Test-OrdinalEqual $_.state $state) }).Count) $state"
     }
     Write-Host ('Summary: ' + ($counts -join ', '))
-    if ($Strict -and (@($results | Where-Object { (-not (Test-OrdinalIn $_.state @('matching', 'not selected', 'skipped'))) }).Count -gt 0 -or $settingsInvalid -or $settingsChanged -or @($pendingRuntimes).Count -gt 0 -or @($pendingLayers).Count -gt 0 -or @($unlistedRuntimes).Count -gt 0 -or @($unlistedLayers).Count -gt 0)) { exit 1 }
+    $t3Strict = $null -ne $t3Report -and @($t3Report.strictFailures).Count -gt 0
+    if ($Strict -and (@($results | Where-Object { (-not (Test-OrdinalIn $_.state @('matching', 'not selected', 'skipped'))) }).Count -gt 0 -or $settingsInvalid -or $settingsChanged -or @($pendingRuntimes).Count -gt 0 -or @($pendingLayers).Count -gt 0 -or @($unlistedRuntimes).Count -gt 0 -or @($unlistedLayers).Count -gt 0 -or $t3Strict)) { exit 1 }
     return
 }
 
@@ -4273,12 +4294,19 @@ foreach ($key in @('packages', 'skills')) {
     $createdHere = $settingsFileBefore -and -not ((Test-OrdinalIn $key $settingsKeysBefore))
     $createdKeys[$key] = [bool]($presentNow -and ($createdHere -or ((Test-OrdinalIn $key $priorCreatedKeys))))
 }
+$t3SnapshotSha = $null
+if ($Apply -and $null -ne $t3Report -and (Test-OrdinalEqual $t3Report.sourceState 'present')) {
+    $t3SnapshotSha = Write-T3Snapshot -Workspace $Workspace -Report $t3Report
+    if ((-not (Test-OrdinalEqualIgnoreCase $t3SnapshotSha $t3Report.snapshotSha256))) { throw 'T3 snapshot hash changed while it was written.' }
+}
 $createdDirs = @(Get-CreatedPaths -Candidates $installerDirs -Prior $priorCreatedDirs -ExistedBefore $existedBefore -Kind 'dir')
 $createdFiles = @(Get-CreatedPaths -Candidates $replacedFileNames -Prior $priorCreatedFiles -ExistedBefore $existedBeforeFiles -Kind 'file')
 
 # The ownership record: every path this apply wrote, after the writes, so -Status and a later
 # remove or uninstall know what is theirs. It holds no path outside the workspace and not the lock.
-$owned = Get-OwnedRecords -Plan $plan -CreatedKeys $createdKeys
+$ownedPlan = if ($preserveT3SnapshotRecord) { @($plan | Where-Object { -not (Test-OrdinalEqual (Get-Field $_ 'path') '.maxstack/t3/settings.snapshot.json') }) } else { $plan }
+$owned = Get-OwnedRecords -Plan $ownedPlan -CreatedKeys $createdKeys
+if ($preserveT3SnapshotRecord) { $owned += $priorT3Snapshot[0] }
 # A kept quarantine keeps its journal on the folder's new record, so a later removal knows which quarantine is the removal's.
 foreach ($keptPath in @($keptJournals.Keys)) {
     foreach ($record in @($owned | Where-Object { (Test-OrdinalEqual $_.path $keptPath) -and (Test-OrdinalEqual $_.kind 'dir') })) {
