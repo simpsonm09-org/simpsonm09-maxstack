@@ -24,8 +24,8 @@ Evidence rules:
 
 Pins:
 
-- maxstack pins pstack at commit `9f55adbe039cdfb533434aabb791e2a74e06fb98` on branch `feat/opencode-runtime` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
-- The `pstack-max` checkout at `pstack-max` is on `feat/opencode-runtime` at the pinned commit `9f55adbe039cdfb533434aabb791e2a74e06fb98`. Where the pin and upstream `main` differ, the row says so (see G7).
+- maxstack pins pstack at commit `61654b660a7ede152b28de7c765b4e4d59bd2a4e` on branch `feat/opencode-runtime` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
+- The `pstack-max` checkout at `pstack-max` is on `feat/opencode-runtime` at the pinned commit `61654b660a7ede152b28de7c765b4e4d59bd2a4e`. Where the pin and upstream `main` differ, the row says so (see G7).
 
 Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex is a fifth runtime, opt-in, which installs the layers' skills and no plugin, and can turn on a layer's Codex gate hook through a Launch-arguments line (rows 2.1, 2.2, and 2.8). Cursor and Antigravity have no installer target.
 
