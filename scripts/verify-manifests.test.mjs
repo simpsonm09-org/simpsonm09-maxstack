@@ -137,6 +137,26 @@ test('the manifest verifier reports malformed settings schema shapes without a t
   }
 });
 
+test('the T3 verifier rejects missing version and provider envelope data without a traceback', { skip }, () => {
+  const allowlist = shipped('t3/allowlist.json');
+  delete allowlist.verifiedAgainst;
+  const missingVersion = runVerifier({
+    extraFiles: { 't3/allowlist.json': JSON.stringify(allowlist) },
+  });
+  assert.equal(missingVersion.status, 1, failureOf(missingVersion));
+  assert.match(failureOf(missingVersion), /allowlist needs a verifiedAgainst\.t3 version/);
+  assert.doesNotMatch(failureOf(missingVersion), /Traceback/);
+
+  const defaults = shipped('t3/defaults.json');
+  delete defaults.instances['claude{Workspace}'].envelope;
+  const missingEnvelope = runVerifier({
+    extraFiles: { 't3/defaults.json': JSON.stringify(defaults) },
+  });
+  assert.equal(missingEnvelope.status, 1, failureOf(missingEnvelope));
+  assert.match(failureOf(missingEnvelope), /claude\{Workspace\}\.envelope must be an object/);
+  assert.doesNotMatch(failureOf(missingEnvelope), /Traceback/);
+});
+
 test('the manifest verifier reports invalid UTF-8 settings files without a traceback', { skip }, () => {
   const run = runVerifier({ extraFiles: { 'schemas/maxstack.settings.schema.json': Buffer.from([0xff]) } });
   assert.equal(run.status, 1, failureOf(run));
