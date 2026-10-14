@@ -6,7 +6,7 @@
 
 ## Platforms
 
-Windows is supported. macOS path rules are in progress. This step adds POSIX path handling for workspace discovery, local source overrides, path containment, and OpenCode workspace permissions. Link handling, wrapper selection, and macOS CI are later steps.
+Windows is supported. macOS support is in progress. The installer now uses POSIX path rules for workspace discovery, local source overrides, path containment, and OpenCode workspace permissions. Claude plugin folders use directory symlinks on macOS and junctions on Windows, with link-safe ownership, hashing, status, replacement, and removal. Windows lock records keep the `junction` kind; macOS records `symlink`. Wrapper selection and macOS CI are later steps.
 
 The installer resolves its target in this order: `-Workspace`, `MAXSTACK_WORKSPACE`, the nearest folder from the current directory upward that holds a `maxstack.settings.json` or `stack.lock.json` file, then the script's own `projects\repos\<repo>\scripts` or `projects\worktrees\<repo>\scripts` location. If none names a workspace, it stops and lists these four choices. It prints the resolved absolute path and origin on the first line of a successful run.
 
@@ -165,7 +165,7 @@ python scripts/verify-workspace-install.py
 
 ## Claude Code
 
-The same install also builds `.claude/plugins` at the workspace root: one child folder per Claude plugin. The org and personal folders are junctions to the installed OpenCode copies, and pstack is a copy of its pinned folder in the fork. Without the `opencode` runtime there is no OpenCode copy, so a local folder is a copy of its items instead. Claude Code reads the folder when a session starts, so a new session is enough. A T3 Claude provider instance passes `--plugin-dir <workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
+The same install also builds `.claude/plugins` at the workspace root: one child folder per Claude plugin. The org and personal folders are directory links to the installed OpenCode copies, using junctions on Windows and symbolic links on macOS. Pstack is a copy of its pinned folder in the fork. Without the `opencode` runtime there is no OpenCode copy, so a local folder is a copy of its items instead. Claude Code reads the folder when a session starts, so a new session is enough. A T3 Claude provider instance passes `--plugin-dir <workspace>\.claude\plugins`. See [T3 setup](t3-setup.md).
 
 ## Codex
 
@@ -330,6 +330,8 @@ Without `-Apply`, `-Update` prints the report and writes nothing. That is alread
   - `X.bak.N`, role `edited`: a hand edit, or a change to a file the installer created. When an earlier backup already holds the same bytes, no copy is written, and the apply says where those bytes are kept.
   - Role `user`: a backup the installer did not write. No removal restores or deletes it.
   A lock from before roles names no role. Its plain `X.bak` is the original, and a numbered copy has no role and is never restored.
+
+The `claude` layer record keeps the link kind as `junction` on Windows and `symlink` on macOS. A prior Windows `junction` record remains readable. The top-level `owned` record stays `kind: link` on both platforms, so existing Windows ownership records are unchanged. Link targets are compared with the platform path rules. Hashing lists a link and its target without walking through it, and removal deletes the link itself only when it still points at the recorded target.
 
 A `json-entries` record for a key the installer created in a settings file that already existed carries `createdKey: true`. The top-level `createdDirs` lists each directory an apply created, and `createdFiles` each file it created: `opencode.jsonc` and `.pi\agent\settings.json` when the apply created them, and not when they already existed. Both are sorted, and both lists name only what was not there before the first apply. The `pi` section records `settingsSha256`, the SHA-256 the last apply wrote to the Pi settings, so a backup can be put back only while the file still holds it.
 

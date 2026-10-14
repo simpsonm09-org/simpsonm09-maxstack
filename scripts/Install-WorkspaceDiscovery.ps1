@@ -4,6 +4,7 @@ Set-StrictMode -Version Latest
 # The ordinal helpers, which every comparison here uses. A driver that loads this file alone still has them.
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
 . (Join-Path $PSScriptRoot 'Install-Paths.ps1')
+. (Join-Path $PSScriptRoot 'Install-Links.ps1')
 
 # A user value is refused by its text when it holds a control, a format character, a line or paragraph separator, or an
 # unpaired surrogate. A value of the boundary kind names the character that failed, shown escaped.
@@ -133,7 +134,7 @@ function Get-MaxstackFinalDirectory {
     param([string] $Path)
 
     $item = Get-Item -LiteralPath $Path -Force
-    $linked = $item.ResolveLinkTarget($true)
+    $linked = if (Test-MaxstackLink -Path $Path) { $item.ResolveLinkTarget($true) } else { $null }
     $final = if ($null -ne $linked) { $linked.FullName } else { $item.FullName }
     return [IO.Path]::TrimEndingDirectorySeparator($final)
 }
@@ -237,8 +238,7 @@ function Get-MaxstackFinalOrNull {
 function Test-MaxstackLinkedPath {
     param([string] $Path)
 
-    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-    return ($null -ne $item) -and (([int] $item.Attributes -band [int] [IO.FileAttributes]::ReparsePoint) -ne 0)
+    return (Test-MaxstackLink -Path $Path)
 }
 
 function Test-MaxstackDriveRoot {

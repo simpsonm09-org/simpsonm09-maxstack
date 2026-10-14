@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync, existsSync, lstatSync, symlinkSync, writeFileSync, appendFileSync, rmSync, statSync, renameSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, lstatSync, symlinkSync, writeFileSync, appendFileSync, rmSync, statSync, renameSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -194,6 +194,21 @@ withWorkspace('removing the claude runtime removes only its link and keeps the i
 
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   assert.equal(lock.layers.find((record) => record.name === 'simpsonm09-org-ai-plugin').claude.enabled, false);
+}, {});
+
+withWorkspace('uninstall refuses an escaped Claude link and leaves its outside target untouched', (ctx) => {
+  mustApply(ctx);
+  const outside = join(ctx.base, 'outside-link-target');
+  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
+  writeFile(outside, 'keep.txt', 'outside bytes');
+  rmdirSync(child);
+  symlinkSync(outside, child, 'junction');
+
+  const run = runInstaller(shell, ctx, ['-Uninstall', '-Strict'], { apply: true });
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /link no longer points at its recorded target|modified by hand/);
+  assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf8'), 'outside bytes', 'uninstall changed the escaped target');
+  assert.ok(lstatSync(child, { throwIfNoEntry: false }), 'uninstall removed the escaped link despite refusing its target');
 }, {});
 
 // A layer that stops declaring its runtimes leaves its installed folder behind. The first

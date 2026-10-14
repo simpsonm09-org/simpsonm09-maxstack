@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os';
 import { join, parse as parsePath } from 'node:path';
 import { ALL_RUNTIMES, EXISTING_SHORT_FOLDER, LOCAL_LAYERS, MISSING_COPILOT, ORG_FOLDER, ORG_SOURCE, RLO, SKILL_PATH, ZWSP, assertOk, buildWorkspace, escapedChar, gitRun, githubEnv, installedSkill, isLink, localCheckout, lockPath, lockText, mustApply, plainOutput, problemRows, python, readJson, runInstaller, runStatus, runWorkspaceDiscovery, selectionOf, setLock, shell, short83Available, snapshotTree, sourceOf, testEnvironment, verifyManifestsScript, verifyWorkspaceScript, withWorkspace, withWorkspaceNeeding, workspaceFiles, writeFile, writeLayerStub, writeLayers, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
 
+const expectedClaudeLinkKind = process.platform === 'win32' ? 'junction' : 'symlink';
+
 withWorkspace('-InitSettings prints a migrated seed and writes it only with -Apply', (ctx) => {
   const applied = runInstaller(shell, ctx);
   assertOk(applied);
@@ -630,7 +632,7 @@ withWorkspace('a later -Runtimes opencode replaces the claude copies with links 
   mustApply(ctx, ['-Runtimes', 'opencode']);
   assert.ok(isLink(child), 'the copy was not replaced by a link');
   assert.ok(existsSync(join(child, '.claude-plugin', 'plugin.json')), 'the link does not reach the manifest');
-  assert.equal(readJson(lockPath(ctx)).layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin').claude.kind, 'junction');
+  assert.equal(readJson(lockPath(ctx)).layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin').claude.kind, expectedClaudeLinkKind);
 }, {});
 
 // The review fixes. A recorded name that layers.json no longer names is dropped with a warning, a new layer
