@@ -11,25 +11,25 @@ test('platform path helpers cover roots, separators, containment, and case rules
   const helper = join(root, 'scripts', 'Install-Paths.ps1').replaceAll("'", "''");
   const ordinal = join(root, 'scripts', 'Install-Ordinal.ps1').replaceAll("'", "''");
   const script = `. '${ordinal}'; . '${helper}'; $cases = @(
-    (Test-MaxstackAbsolutePath 'C:\\work\\repo' Windows),
-    (Test-MaxstackAbsolutePath '\\\\server\\share\\repo' Windows),
-    (Test-MaxstackAbsolutePath '/Users/name/dev/x' macOS),
-    (-not (Test-MaxstackAbsolutePath 'relative/path' macOS)),
-    ((ConvertTo-MaxstackPath 'C:/work\\repo/' Windows) -ceq 'C:\\work\\repo\\'),
-    ((ConvertTo-MaxstackPath '/Users/name/dev/x/' macOS) -ceq '/Users/name/dev/x/'),
-    ((Join-MaxstackPath 'C:\\work' 'repo/mixed' Windows) -ceq 'C:\\work\\repo\\mixed'),
-    ((Join-MaxstackPath '/work' 'repo\\literal' macOS) -ceq '/work/repo\\literal'),
-    ((Get-MaxstackRelativePath 'C:\\work\\repo' 'C:\\work\\repo\\child\\file' Windows) -ceq 'child/file'),
-    ((Get-MaxstackRelativePath '/work/Name' '/work/name/child' macOS) -ceq '../name/child'),
-    ((ConvertTo-MaxstackLockPath 'C:\\work\\repo\\x') -ceq 'C:/work/repo/x'),
-    (Test-MaxstackPathInside '/a/b/c/' '/a/b/' macOS),
-    (-not (Test-MaxstackPathInside '/a/bc' '/a/b' macOS)),
-    (-not (Test-MaxstackPathInside 'C:\\a\\bc' 'C:\\a\\b' Windows)),
-    (Test-MaxstackPathInside 'C:\\a\\b\\c' 'C:\\a\\b\\' Windows),
-    (Test-MaxstackPathEqual 'C:\\A\\b' 'c:\\a\\B' Windows),
-    (-not (Test-MaxstackPathEqual '/A/b' '/a/b' macOS)),
-    (Test-MaxstackPathEqual '/a/b' '/a/b' Linux)
-  ); if ($cases -contains $false) { throw 'path helper table had a failing case' }`;
+    @{ name = 'Windows drive paths are absolute'; passed = (Test-MaxstackAbsolutePath 'C:\\work\\repo' Windows) },
+    @{ name = 'Windows UNC paths are absolute'; passed = (Test-MaxstackAbsolutePath '\\\\server\\share\\repo' Windows) },
+    @{ name = 'POSIX paths are absolute for macOS'; passed = (Test-MaxstackAbsolutePath '/Users/name/dev/x' macOS) },
+    @{ name = 'relative POSIX paths are not absolute'; passed = (-not (Test-MaxstackAbsolutePath 'relative/path' macOS)) },
+    @{ name = 'Windows separators normalize'; passed = ((ConvertTo-MaxstackPath 'C:/work\\repo/' Windows) -ceq 'C:\\work\\repo\\') },
+    @{ name = 'macOS separators remain POSIX'; passed = ((ConvertTo-MaxstackPath '/Users/name/dev/x/' macOS) -ceq '/Users/name/dev/x/') },
+    @{ name = 'Windows joins normalize child separators'; passed = ((Join-MaxstackPath 'C:\\work' 'repo/mixed' Windows) -ceq 'C:\\work\\repo\\mixed') },
+    @{ name = 'macOS joins preserve literal backslashes'; passed = ((Join-MaxstackPath '/work' 'repo\\literal' macOS) -ceq '/work/repo\\literal') },
+    @{ name = 'Windows relative paths use lock separators'; passed = ((Get-MaxstackRelativePath 'C:\\work\\repo' 'C:\\work\\repo\\child\\file' Windows) -ceq 'child/file') },
+    @{ name = 'macOS relative paths are case-sensitive'; passed = ((Get-MaxstackRelativePath '/work/Name' '/work/name/child' macOS) -ceq '../name/child') },
+    @{ name = 'Windows lock paths use POSIX separators'; passed = ((ConvertTo-MaxstackLockPath 'C:\\work\\repo\\x' Windows) -ceq 'C:/work/repo/x') },
+    @{ name = 'macOS containment includes descendants'; passed = (Test-MaxstackPathInside '/a/b/c/' '/a/b/' macOS) },
+    @{ name = 'macOS containment rejects matching prefixes'; passed = (-not (Test-MaxstackPathInside '/a/bc' '/a/b' macOS)) },
+    @{ name = 'Windows containment rejects matching prefixes'; passed = (-not (Test-MaxstackPathInside 'C:\\a\\bc' 'C:\\a\\b' Windows)) },
+    @{ name = 'Windows containment includes descendants'; passed = (Test-MaxstackPathInside 'C:\\a\\b\\c' 'C:\\a\\b\\' Windows) },
+    @{ name = 'Windows path equality ignores case'; passed = (Test-MaxstackPathEqual 'C:\\A\\b' 'c:\\a\\B' Windows) },
+    @{ name = 'macOS path equality preserves case'; passed = (-not (Test-MaxstackPathEqual '/A/b' '/a/b' macOS)) },
+    @{ name = 'Linux path equality matches identical paths'; passed = (Test-MaxstackPathEqual '/a/b' '/a/b' Linux) }
+  ); $failed = @($cases | Where-Object { -not $_.passed }); if ($failed.Count) { throw ('path helper cases failed: ' + (($failed | ForEach-Object { $_.name }) -join ', ')) }`;
   const result = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, encoding: 'utf8' });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
