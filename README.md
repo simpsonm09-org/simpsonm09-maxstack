@@ -8,7 +8,7 @@ The original lives in `simpsonm09-org/simpsonm09-maxstack`; work happens on the 
 
 `maxstack` owns AI composition for the `<workspace>` workspace. It holds the workspace config fragment, the ordered layer manifest, and the installer. `simpsonm09-dev-setup` owns the machine and the human tool set, including a self-hosted Infisical Agent Vault that brokers service credentials for the agent. A wrapper is the entry point: `with-secrets [--require NAMES] <tool>` for the human path, and `with-vault --role human <tool>` or `with-vault --role agent <tool>` for the vault path. See [`docs/relationship.md`](docs/relationship.md).
 
-PStack comes from one source: the `plugins/pstack` folder of [`simpsonm09/pstack-claude`](https://github.com/simpsonm09/pstack-claude), at the commit in [`pstack.lock.json`](pstack.lock.json). `layers.json` lists it once, with its runtimes. The installer builds each runtime from that pin:
+PStack comes from one source: the `plugins/pstack` folder of [pstack-max, our fork of pstack-claude](https://github.com/simpsonm09/pstack-max), at the commit in [`pstack.lock.json`](pstack.lock.json). `layers.json` lists it once, with its runtimes. The installer builds each runtime from that pin:
 
 - OpenCode: `.opencode\plugins\pstack`, with the agent profiles in `.opencode\agents`.
 - Claude Code: `.claude\plugins\pstack`.
@@ -22,7 +22,7 @@ The org and personal layers are local checkouts. They install for the same four 
 
 - Never commit API keys, OAuth tokens, OpenCode auth storage, session databases, or local app state.
 - Keep PStack scoped to `<workspace>`. Do not install it globally.
-- Edit the plugin in the fork, `simpsonm09/pstack-claude` under `plugins/pstack`, never the installed copies.
+- Edit the plugin in `pstack-max` under `plugins/pstack`, never the installed copies.
 - Test changes in a disposable project before relying on them.
 
 ## Quick start
@@ -59,7 +59,7 @@ MIT. See [`LICENSE`](LICENSE).
 
 ## Related repositories
 
-- [`simpsonm09/pstack-claude`](https://github.com/simpsonm09/pstack-claude) (fork) owns the PStack plugin in `plugins/pstack`, for all four runtimes.
+- [`simpsonm09/pstack-max`](https://github.com/simpsonm09/pstack-max) (fork) owns the PStack plugin in `plugins/pstack`, for all four runtimes.
 - [`org-ai-plugin`](https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin) owns the shared MCP servers and skills.
 - [`personal-ai-plugin`](https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin) owns the personal MCP servers and skills.
 - [`simpsonm09-dev-setup`](https://github.com/simpsonm09-org/simpsonm09-dev-setup) owns the machine and app setup.

@@ -4,9 +4,9 @@
       "name": "pstack",
       "kind": "plugin",
       "source": {
-        "url": "https://github.com/simpsonm09/pstack-claude.git",
+        "url": "https://github.com/simpsonm09/pstack-max.git",
         "path": "plugins/pstack",
-        "commit": "f629de81cfc9a2a9fd631cacc7567beee7b5b346",
+        "commit": "6558b2901d5d5ea0ac3eeb743ec476adace388b9",
         "ref": "feat/opencode-runtime"
       },
       "runtimes": {

@@ -1,6 +1,6 @@
 # Plugin publishing
 
-This repository does not own the PStack plugin. [`simpsonm09/pstack-claude`](https://github.com/simpsonm09/pstack-claude), branch `feat/opencode-runtime`, is the source of truth. Its `plugins/pstack` folder holds the plugin for three runtimes: Claude Code (`.claude-plugin`), GitHub Copilot CLI (`.github/plugin`), and OpenCode (`opencode/`, with the shared `skills/` tree beside it). `maxstack` pins one commit of that folder and assembles the bundle each runtime loads.
+This repository does not own the PStack plugin. [pstack-max, our fork of pstack-claude](https://github.com/simpsonm09/pstack-max), branch `feat/opencode-runtime`, is the source of truth. Its `plugins/pstack` folder holds the plugin for three runtimes: Claude Code (`.claude-plugin`), GitHub Copilot CLI (`.github/plugin`), and OpenCode (`opencode/`, with the shared `skills/` tree beside it). `maxstack` pins one commit of that folder and assembles the bundle each runtime loads.
 
 ## Inputs
 
@@ -68,7 +68,7 @@ The generated files live at the workspace root, which is not a git repository, s
 
 ## Publishing a new bundle
 
-1. Merge the plugin change in `simpsonm09/pstack-claude` and note the commit on `feat/opencode-runtime`.
+1. Merge the plugin change in `simpsonm09/pstack-max` and note the commit on `feat/opencode-runtime`.
 2. Update `commit` in the pstack layer's `source` in `layers.json`, and `commit` in `pstack.lock.json`. Update `ref` too, if the branch moved. Run `python scripts/verify-manifests.py`.
 3. Run `pwsh -File scripts/Install-Workspace.ps1 -Apply`.
 4. Restart the running OpenCode server, then start a new T3 session. T3 can reuse an OpenCode server across sessions, so a new session alone does not reliably reload plugins or skills. Claude Code reads `.claude/plugins` when it starts, and Copilot reads its plugin folders when it starts. Then run `pwsh -File scripts/verify-opencode-workspace.ps1` and `python scripts/verify-workspace-install.py`.

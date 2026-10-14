@@ -44,7 +44,7 @@ The alternative is an instance environment entry, `CLAUDE_CODE_PLUGIN_DIRS`, wit
 
 | Plugin | Folder | Source | Skills appear as |
 | --- | --- | --- | --- |
-| `pstack` | `.claude\plugins\pstack` | a copy of `plugins/pstack` from `simpsonm09/pstack-claude`, at the commit in `pstack.lock.json` | `pstack:poteto-mode`, and the other `pstack:*` skills |
+| `pstack` | `.claude\plugins\pstack` | a copy of `plugins/pstack` from pstack-max, our fork of pstack-claude, at the commit in `pstack.lock.json` | `pstack:poteto-mode`, and the other `pstack:*` skills |
 | `simpsonm09-org-ai-plugin` | `.claude\plugins\simpsonm09-org-ai-plugin` | a junction to `.opencode\plugins\simpsonm09-org-ai-plugin` | `simpsonm09-org-ai-plugin:repo-standard`, and the other `simpsonm09-org-ai-plugin:*` skills |
 | `simpsonm09-personal-ai-plugin` | `.claude\plugins\simpsonm09-personal-ai-plugin` | a junction to `.opencode\plugins\simpsonm09-personal-ai-plugin` | `simpsonm09-personal-ai-plugin:dev-tools`, and the other `simpsonm09-personal-ai-plugin:*` skills |
 

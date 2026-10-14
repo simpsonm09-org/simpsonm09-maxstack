@@ -14,7 +14,7 @@ Device prefixes (`\\?\` and `\\.\`), UNC paths (`\\server\share`), 8.3 short nam
 
 You need PowerShell 7, Git, Node.js and npm. The first apply needs network access to fetch the pinned PStack source and install npm dependencies for layers that have a `package.json`. Each such layer can add about 140 MB under `.opencode/plugins/<layer>/node_modules`; npm runs with `--ignore-scripts`.
 
-Choose an empty workspace folder and clone the two local layers to the paths declared in `layers.json`. The installer fetches PStack itself at the recorded commit from [`simpsonm09/pstack-claude`](https://github.com/simpsonm09/pstack-claude).
+Choose an empty workspace folder and clone the two local layers to the paths declared in `layers.json`. The installer fetches PStack itself at the recorded commit from [pstack-max, our fork of pstack-claude](https://github.com/simpsonm09/pstack-max).
 
 ```powershell
 $Workspace = '<absolute workspace path>'
@@ -213,7 +213,7 @@ A layer that stops naming a runtime leaves its folder behind. `-Apply` removes a
 A layer installs from one source. `layers.json` gives each layer its default source: `pstack` is a git pin with a commit, and the org and personal layers are local checkouts. `-Source` changes one layer's source for a run, and the lock records the change. Each `-Source` entry is `name=spec`, and the entries may be repeated or comma-separated:
 
 ```powershell
-pwsh -File scripts/Install-Workspace.ps1 -Source pstack=simpsonm09/pstack-claude@feat/opencode-runtime -Apply
+pwsh -File scripts/Install-Workspace.ps1 -Source pstack=simpsonm09/pstack-max@feat/opencode-runtime -Apply
 pwsh -File scripts/Install-Workspace.ps1 -Source simpsonm09-personal-ai-plugin=local:<absolute path> -Apply
 pwsh -File scripts/Install-Workspace.ps1 -Source pstack=default -Apply
 ```
@@ -222,7 +222,7 @@ The spec forms:
 
 | Form | Example | Meaning |
 | --- | --- | --- |
-| `owner/repo@ref` | `simpsonm09/pstack-claude@feat/opencode-runtime` | GitHub, at `https://github.com/<owner>/<repo>.git`. |
+| `owner/repo@ref` | `simpsonm09/pstack-max@feat/opencode-runtime` | GitHub, at `https://github.com/<owner>/<repo>.git`. |
 | `https://host/path.git@ref` | `https://example.com/team/layer.git@v2` | Any host, over HTTPS only. |
 | `local:<absolute path>` | `local:<absolute path>` | A working tree. It is never fetched, and uncommitted changes install as they are. The layer's own folder inside the repository still applies, so `pstack` reads `plugins/pstack` in its checkout. |
 | `name=default`, or `name=` | `pstack=default` | Drops the override, and the layer returns to its `layers.json` source. |
@@ -267,7 +267,7 @@ The rules:
 The lock records each layer's source as an object. A git source records its URL, its ref, the full commit it resolved to, and `override`:
 
 ```json
-"source": { "kind": "git", "url": "https://github.com/simpsonm09/pstack-claude.git", "ref": "feat/opencode-runtime", "commit": "<40 hex characters>", "override": true }
+"source": { "kind": "git", "url": "https://github.com/simpsonm09/pstack-max.git", "ref": "feat/opencode-runtime", "commit": "<40 hex characters>", "override": true }
 ```
 
 A local source records HEAD and the dirty flag of its checkout. It never records a commit it cannot read, so a folder that is not a git checkout has `commit` and `dirty` set to `null`:

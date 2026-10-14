@@ -811,7 +811,7 @@ withWorkspace('-Update needs a lock with a selection, and refuses the flags it d
     [['-Update', '-Remove', '-Layers', 'pstack'], /-Update re-resolves the recorded sources/],
     [['-Update', '-Uninstall'], /-Update re-resolves the recorded sources/],
     [['-Update', '-Status'], /-Update re-resolves the recorded sources/],
-    [['-Update', '-Source', 'pstack=simpsonm09/pstack-claude@feat'], /Set a source with -Source and an apply/],
+    [['-Update', '-Source', 'pstack=simpsonm09/pstack-max@feat'], /Set a source with -Source and an apply/],
     [['-Update', '-Layers', 'pstack'], /applies the recorded selection/],
     [['-Check'], /-Check applies to -Update/],
     [['-Update', '-Check', '-Apply'], /-Check writes nothing/],

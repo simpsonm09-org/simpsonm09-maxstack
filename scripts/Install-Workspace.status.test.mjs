@@ -637,18 +637,18 @@ withWorkspace('a record whose sha256 is null is skipped, and the file is kept', 
 
 withWorkspace('-Source owner/repo@branch installs the branch commit, and the lock records it as an override', (ctx) => {
   const { featCommit } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   assert.match(readFileSync(installedSkill(ctx), 'utf8'), /feat body/, 'the branch content was not installed');
 
   const pstack = sourceOf(ctx, 'pstack');
-  assert.deepEqual(pstack.source, { kind: 'git', url: remoteUrl(ctx, 'simpsonm09', 'pstack-claude'), ref: 'feat', commit: featCommit, override: true });
+  assert.deepEqual(pstack.source, { kind: 'git', url: remoteUrl(ctx, 'simpsonm09', 'pstack-max'), ref: 'feat', commit: featCommit, override: true });
   assert.equal(pstack.commit, featCommit, 'the layer commit is the resolved branch commit');
   assert.equal(sourceOf(ctx, 'simpsonm09-org-ai-plugin').source.override, false, 'a layer no flag names is not an override');
 }, {});
 
 withWorkspace('a recorded override persists across a plain apply, and -Source name=default drops it', (ctx) => {
   const { featCommit } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   mustApply(ctx, [], { env: githubEnv(ctx) });
   assert.equal(sourceOf(ctx, 'pstack').source.override, true, 'the plain apply dropped the override');
   assert.equal(sourceOf(ctx, 'pstack').commit, featCommit, 'the plain apply moved the recorded commit');
@@ -678,7 +678,7 @@ withWorkspace('a local source installs the working tree as it is, and the lock r
 
 withWorkspace('-Status prints the layer-source block above the state rows, with each override and each local source', (ctx) => {
   const { featCommit } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false, env: githubEnv(ctx) });
   assertOk(status);
 
@@ -705,7 +705,7 @@ withWorkspace('a default workspace lists its local layers in the block and no gi
 
 withWorkspace('-Update -Check writes nothing, not even the cache, and reports the move and the drift', (ctx) => {
   const { bare, featCommit } = servedFeature(ctx);
-  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-claude@feat'], { env: githubEnv(ctx) });
+  mustApply(ctx, ['-Source', 'pstack=simpsonm09/pstack-max@feat'], { env: githubEnv(ctx) });
   const featTwo = moveFeat(ctx, bare);
   const before = snapshotTree(ctx.workspace);
   const lockBefore = readFileSync(lockPath(ctx));
@@ -918,7 +918,7 @@ withWorkspace('item N8: a lock override that is the string "true", not a boolean
   mustApply(ctx);
   const lock = readJson(lockPath(ctx));
   const record = lock.layers.find((layer) => layer.name === 'pstack');
-  record.source = { kind: 'git', url: 'https://github.com/simpsonm09/pstack-claude.git', ref: 'main', commit: 'a'.repeat(40), dirty: null, override: 'true' };
+  record.source = { kind: 'git', url: 'https://github.com/simpsonm09/pstack-max.git', ref: 'main', commit: 'a'.repeat(40), dirty: null, override: 'true' };
   writeFileSync(lockPath(ctx), JSON.stringify(lock));
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
   assert.doesNotMatch(plainOutput(status), /pstack: override, git/, plainOutput(status));

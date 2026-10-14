@@ -100,7 +100,7 @@ export function writeLayerStub(root, { claudePlugin = null, manifestName = claud
   }
 }
 
-// A git repository standing in for simpsonm09/pstack-claude at the fork's layout: the
+// A git repository standing in for simpsonm09/pstack-max at the fork's layout: the
 // plugin folder carries a Claude manifest, the OpenCode entry and its agent profiles, and
 // the shared skills tree the entry reads. A file outside the folder must not come along.
 // With npm, the OpenCode package declares a dependency and ships no node_modules, so the installer runs npm in the
@@ -690,9 +690,9 @@ export const SKILL_FEAT = '---\nname: poteto-mode\ndescription: fixture\n---\nfe
 
 export const installedSkill = (ctx) => join(ctx.workspace, '.opencode', 'plugins', 'pstack', 'skills', 'poteto-mode', 'SKILL.md');
 
-// pstack served as simpsonm09/pstack-claude, with a feat branch that changes its skill.
+// pstack served as simpsonm09/pstack-max, with a feat branch that changes its skill.
 export function servedFeature(ctx) {
-  const bare = serveRepo(ctx, 'simpsonm09', 'pstack-claude', ctx.fixture.dir);
+  const bare = serveRepo(ctx, 'simpsonm09', 'pstack-max', ctx.fixture.dir);
   const featCommit = commitToBranch(ctx, bare, 'feat', SKILL_PATH, SKILL_FEAT);
   return { bare, featCommit };
 }
@@ -728,10 +728,10 @@ export function moveFeat(ctx, bare) {
 // These call the resolver in a child that dot-sources the module, so nothing here reaches the network.
 export const layerSourcesFile = join(repoRoot, 'scripts', 'Install-LayerSources.ps1');
 
-export const SHORTHAND_URL = 'https://github.com/simpsonm09/pstack-claude.git';
+export const SHORTHAND_URL = 'https://github.com/simpsonm09/pstack-max.git';
 
 export function resolveShorthand(env) {
-  const script = `. '${layerSourcesFile}'; Get-GitHubRemoteUrl -Owner 'simpsonm09' -Repo 'pstack-claude'`;
+  const script = `. '${layerSourcesFile}'; Get-GitHubRemoteUrl -Owner 'simpsonm09' -Repo 'pstack-max'`;
   return spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, encoding: 'utf8', env });
 }
 
