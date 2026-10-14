@@ -22,6 +22,8 @@ Nothing to configure. OpenCode walks up from the session directory to the filesy
 
 The installer lists the PStack entry in the workspace `opencode.jsonc`, as `./.opencode/plugins/pstack/opencode`. That path is relative to the config. The `permissions` entries allow OpenCode's `external_directory` and `read` actions under the workspace's `.opencode` directory; the installer fills in the current Windows workspace path and its corresponding WSL path. OpenCode v2 documents this `permissions` array shape and its external-directory behavior in the [v2 permission reference](https://dev.opencode.ai/v2/docs/permissions/).
 
+When a selected layer declares workspace instructions, the config also names `./AGENTS.md` or `./.maxstack/workspace-instructions.md` in its `instructions` list. The path is relative to `opencode.jsonc`, so it works from the Windows and WSL views. OpenCode stops walking up at a repository root, so maxstack writes this explicit entry for nested repositories. The [OpenCode v2 instructions page](https://dev.opencode.ai/v2/docs/instructions/) says v2 accepts this config field but does not currently resolve its files. Installer tests verify the entry, but loading the file into an OpenCode session is not verified.
+
 ### Models
 
 OpenCode uses the providers you have connected in OpenCode itself, with `opencode auth` and its global config under your user profile. maxstack sets no model and no provider, and the workspace `opencode.jsonc` holds neither a `model` nor a `providers` entry. Pick a model in the T3 model picker. While an OpenCode Console OAuth login is stored, OpenCode lists only its own `opencode` and `opencode-go` providers and hides third-party providers, even when their keys are configured; connecting a provider with its own API key instead lets both appear (measured on OpenCode 2.0.27).
@@ -35,6 +37,8 @@ Claude Code does not walk up for plugins. The installer therefore builds one fol
 3. Fleet projects select that instance through the project's default model.
 
 Plain `claude` outside T3 takes the same flag, so `claude --plugin-dir <workspace>\.claude\plugins` gives the same plugins.
+
+Claude Code reads `CLAUDE.md` from the session folder and its parent folders. When instructions are generated, maxstack writes a root `CLAUDE.md` that imports `AGENTS.md`. If a user root instruction file blocks generation, maxstack keeps it and writes the shared text under `.maxstack` instead.
 
 The alternative is an instance environment entry, `CLAUDE_CODE_PLUGIN_DIRS`, with the child folders listed and separated by `;`. The installer does not generate that list; it is the same folders as the `--plugin-dir` route.
 
@@ -72,7 +76,7 @@ The variable is set in the wrapper, not in the T3 instance, so other Copilot run
 
 ### What works on Copilot
 
-On Windows, pstack's PreToolUse hook is a no-op stub under Copilot, so its file-read and subagent-model checks do not run there. The SessionStart context, the skills, and the org gate work on Copilot. The macOS `copilot.sh` is untested.
+On Windows, pstack's PreToolUse hook is a no-op stub under Copilot, so its file-read and subagent-model checks do not run there. The SessionStart context, the skills, and the org gate work on Copilot. The macOS `copilot.sh` is untested. Copilot does not receive the generated workspace instruction file in a session inside a repository. This is a known gap.
 
 ## Pi (maxstack)
 
@@ -84,6 +88,8 @@ T3's native Pi provider runs `<binaryPath> --mode rpc <launchArgs>`. The install
 
 What Pi loads:
 
+- Pi reads `AGENTS.md` and `CLAUDE.md` from the session folder and its parent folders. The generated workspace `AGENTS.md` therefore applies to repositories under the workspace. Pi gets the fallback file only if your own instructions reference it.
+
 - `packages` lists each layer whose repository-root `package.json` has a `pi` key. For pinned PStack, this is the root of `.claude\cache\pstack`; for local PStack, it is the local checkout root. Both load its Pi extension (`/loop`) and package resources.
 - `skills` lists each layer's installed skills folder under `.claude\plugins`, keeping them in sync with Claude Code.
 - The org layer's Pi tool-call gate is on its `main` branch, and its `package.json` has a `pi` key, so the installer lists the org layer as a package. The installer refuses a `pi` key that names a file, or a `package.json`, that the installed copy does not carry. The org layer's `files` list must therefore include its `pi` folder and `package.json`.
@@ -93,7 +99,7 @@ The wrapper sets `AGENT_ACCESS_PI_ASK=allow`, as the Copilot wrapper does, and t
 Known limits:
 
 - `PI_CODING_AGENT_DIR` does not isolate skills. Pi also loads `%USERPROFILE%\.agents\skills`, which the spike found held 40 skills on this machine. The wrapper does not redirect `USERPROFILE`, because that would also move the login.
-- Pi reads `AGENTS.md` and `CLAUDE.md` from the session folder and its parents. Pi needs an `AGENTS.md` at the workspace root only if one already exists there. The installer does not create one.
+- Pi reads `AGENTS.md` and `CLAUDE.md` from the session folder and its parents. A generated workspace `AGENTS.md` applies to repository sessions under the workspace. Pi gets the fallback file only when your own instructions reference it.
 
 The Pi harness asks RPC `get_commands` for loaded commands and checks that `/loop` is registered with source `extension`. Its stand-in test reports this check as unverified because the stand-in cannot establish that Pi executed a real extension. Pi documents `get_commands` as listing loaded extension commands. Installer tests cover pinned and local package paths.
 
@@ -152,14 +158,14 @@ A layer's hook lives inside the layer's installed copy under `.opencode\plugins`
 What Codex receives:
 
 - Skills: each selected layer's skills, as folders under `.agents\skills`. The lock owns each folder.
-- Instructions: the workspace root `AGENTS.md`, if you keep one there. maxstack writes no `AGENTS.md`, and it never overwrites one.
+- Instructions: the generated workspace root `AGENTS.md`, or an existing user `AGENTS.md` that maxstack kept. Codex reads it only when the launch arguments name `stack.lock.json`. If a root collision sends the shared text to `.maxstack/workspace-instructions.md`, Codex does not load that fallback automatically.
 - The access gate: the org layer's PreToolUse hook, when the gate line is set. MCP servers and custom agents are not delivered yet.
 
-Verified: with codex-cli 0.162.1, `codex debug prompt-input` run from a repository under a scratch workspace lists the installed skills, and the workspace `AGENTS.md`, only with the marker. That check needs no login and no model call. Separately, `scripts/codex-hook-trust.mjs` reads `hooks/list` and reports the emitted hook trusted with an empty temporary `CODEX_HOME`, no login, and no model call. A T3 Codex session and a live turn with the trusted line are not verified.
+Verified: `codex debug prompt-input` from a nested repository reads the generated workspace `AGENTS.md` when the launch arguments name the marker. This probe needs no login and makes no model call. The installer tests cover generated files, collision handling, and OpenCode's entry. A T3 Codex session and a live turn with the trusted line are not verified.
 
 ## Cursor and Antigravity
 
-Selecting the `codex` runtime also puts the selected layers' skills in `.agents\skills`, which Cursor and Antigravity read when a session opens at the workspace root. A session opened inside a repository does not see skills stored at the workspace root. These harnesses get no gate, layer agents, or workspace instructions from maxstack. They are second-class harnesses, and this is the supported level.
+Selecting the `codex` runtime also puts the selected layers' skills in `.agents\skills`, which Cursor and Antigravity read when a session opens at the workspace root. A session opened inside a repository does not see skills or the generated workspace instruction file above that repository. These harnesses get no gate, layer agents, or workspace instructions in repository sessions. They are second-class harnesses, and this is the supported level.
 
 Measured: documentation and T3 source show that both check the active project or working directory and home paths, without walking up to the parent workspace. A Cursor turn was attempted once and stopped at a usage limit. No Antigravity session was authenticated or run. Skill loading and instructions were not verified in a live session.
 

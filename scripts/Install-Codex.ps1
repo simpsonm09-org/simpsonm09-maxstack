@@ -9,7 +9,6 @@ Set-StrictMode -Version Latest
 
 $script:CodexSkillFolder = '.agents/skills'
 $script:CodexLaunchLine = 'Codex: start the T3 Codex (maxstack) instance with Launch arguments: -c ''project_root_markers=["stack.lock.json"]''. See docs/t3-setup.md#codex-maxstack.'
-$script:CodexAgentsNote = 'Codex: this installer writes no workspace AGENTS.md. Codex reads the workspace AGENTS.md when the launch arguments name stack.lock.json, if you keep one there.'
 # A layer's installed copy is its opencode plugin folder. A Codex gate hook lives inside that copy, so the gate line can
 # only be generated when the opencode runtime is selected too. The rule for a Codex gate hook is the two files below, which
 # is how the org layer's adapter ships. scripts/codex-hook-trust.mjs reads the hook key, hash, and trust from Codex itself.
@@ -200,19 +199,34 @@ function Get-CodexGateLayers {
 # itself by scripts/codex-hook-trust.mjs. Any failure, or a path the line cannot carry, falls back to the plain marker line,
 # and the install still succeeds. A run without -Apply says only that a gate line would be generated, and starts no Codex.
 function Write-CodexNotes {
-    param([object[]] $Layers, [bool] $Applying, [bool] $OpenCodeSelected)
+    param([object[]] $Layers, [bool] $Applying, [bool] $OpenCodeSelected, $WorkspaceInstructionPlan)
+
+    if ($null -ne $WorkspaceInstructionPlan -and $WorkspaceInstructionPlan.text) {
+        $agentsFile = @($WorkspaceInstructionPlan.files | Where-Object { Test-OrdinalEqual $_.path 'AGENTS.md' }) | Select-Object -First 1
+        if ($null -ne $agentsFile) {
+            if (Test-IsTrue (Get-Field $agentsFile 'preserve')) { $agentsNote = 'Codex: workspace AGENTS.md was kept because it changed by hand.' }
+            else { $agentsNote = 'Codex: workspace AGENTS.md was generated from the selected layers.' }
+        } elseif (Test-OrdinalIn 'AGENTS.md' $WorkspaceInstructionPlan.collisionNames) {
+            $agentsNote = 'Codex: workspace AGENTS.md was kept because it was not written by maxstack.'
+        } else {
+            $agentsNote = 'Codex: no workspace AGENTS.md was generated; shared instructions were written to .maxstack/workspace-instructions.md.'
+        }
+    } else {
+        $agentsNote = 'Codex: no workspace AGENTS.md was generated. Any existing one is read only when the launch arguments name stack.lock.json.'
+    }
+    $agentsNote += ' Codex reads it only with the marker launch argument.'
 
     $gateLayers = @(Get-CodexGateLayers -Layers $Layers)
     if ($gateLayers.Count -gt 1) { Write-Host $script:CodexGateOneNote }
     if (-not $Applying) {
         if ($gateLayers.Count -gt 0) { Write-Host $script:CodexGateAuditNote } else { Write-Host $script:CodexLaunchLine }
-        Write-Host $script:CodexAgentsNote
+        Write-Host $agentsNote
         return
     }
     if ($gateLayers.Count -eq 0) {
         if (-not $OpenCodeSelected) { Write-Host $script:CodexGateRuntimeNote }
         Write-Host $script:CodexLaunchLine
-        Write-Host $script:CodexAgentsNote
+        Write-Host $agentsNote
         return
     }
     $hook = Join-Path (Get-CodexGateFolder -Layer $gateLayers[0]) ($script:CodexGateHookRelative -replace '/', '\')
@@ -236,5 +250,5 @@ function Write-CodexNotes {
         $reason = if (Test-NonEmptyString $text) { $text } else { "the gate generator exited with code $code" }
         Write-Warning "Codex: the gate Launch-arguments line could not be generated, so the plain marker line is printed: $reason"
     }
-    Write-Host $script:CodexAgentsNote
+    Write-Host $agentsNote
 }
