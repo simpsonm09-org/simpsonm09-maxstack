@@ -42,7 +42,7 @@ function Get-MaxstackLinkTarget {
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
     $target = [string] (@($item.Target)[0])
     if (-not $target) { $target = [string] $item.LinkTarget }
-    foreach ($prefix in @('\?\', '\??\')) {
+    foreach ($prefix in @('\\?\', '\??\')) {
         if ($target.StartsWith($prefix, [StringComparison]::Ordinal)) { $target = $target.Substring($prefix.Length) }
     }
     return $target.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
@@ -55,12 +55,17 @@ function Test-MaxstackLinkTarget {
     if ($Kind -and -not (Test-OrdinalEqual (Get-MaxstackLinkKind -Path $Path -Platform $Platform) $Kind)) { return $false }
     $linked = Get-MaxstackLinkTarget -Path $Path
     if (-not $linked) { return $false }
-    if (-not (Test-MaxstackAbsolutePath $linked $Platform)) {
-        $linked = Join-MaxstackPath ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))) $linked $Platform
+    $pathPlatform = Get-MaxstackPathPlatform
+    if (-not (Test-MaxstackAbsolutePath $linked $pathPlatform)) {
+        $linked = Join-MaxstackPath ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))) $linked $pathPlatform
     }
-    $expected = [IO.Path]::GetFullPath($Target)
-    $actual = [IO.Path]::GetFullPath($linked)
-    return (Test-MaxstackPathEqual $actual $expected $Platform)
+    $expectedPath = $Target
+    foreach ($prefix in @('\\?\', '\??\')) {
+        if ($expectedPath.StartsWith($prefix, [StringComparison]::Ordinal)) { $expectedPath = $expectedPath.Substring($prefix.Length) }
+    }
+    $expected = [IO.Path]::GetFullPath((ConvertTo-MaxstackPath $expectedPath $pathPlatform))
+    $actual = [IO.Path]::GetFullPath((ConvertTo-MaxstackPath $linked $pathPlatform))
+    return (Test-MaxstackPathEqual $actual $expected $pathPlatform)
 }
 
 function New-MaxstackDirectoryLink {

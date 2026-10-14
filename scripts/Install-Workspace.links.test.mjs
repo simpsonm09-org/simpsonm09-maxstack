@@ -26,7 +26,7 @@ test('a symbolic link retargeted outside the workspace is reported, safely repla
 
     const drift = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
     assert.notEqual(drift.status, 0, plainOutput(drift));
-    assert.match(plainOutput(drift), /\.claude\/plugins\/simpsonm09-org-ai-plugin: differs|\.claude\\plugins\\simpsonm09-org-ai-plugin: differs/);
+    assert.match(plainOutput(drift), /\.claude\/plugins\/simpsonm09-org-ai-plugin: modified|\.claude\\plugins\\simpsonm09-org-ai-plugin: modified/);
     assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf8'), 'outside bytes', 'status changed the escaped target');
 
     const reapplied = runInstaller(shell, ctx, [], { apply: true });
