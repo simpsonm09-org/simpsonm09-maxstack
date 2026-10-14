@@ -6,7 +6,7 @@
       "source": {
         "url": "https://github.com/simpsonm09/pstack-max.git",
         "path": "plugins/pstack",
-        "commit": "6558b2901d5d5ea0ac3eeb743ec476adace388b9",
+        "commit": "4b5894a967eaa41f16cfd5590cded264624336a3",
         "ref": "feat/opencode-runtime"
       },
       "runtimes": {
