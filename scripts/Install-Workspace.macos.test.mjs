@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { buildWorkspace, lockPath, readJson, removal, repoRoot, runInstaller, runStatus, shell, skip, snapshotTree, statusRows, writeLayers } from './lib/installer-test-kit.mjs';
+import { MISSING_COPILOT, buildWorkspace, lockPath, readJson, removal, repoRoot, runInstaller, runStatus, shell, skip, snapshotTree, statusRows, writeLayers } from './lib/installer-test-kit.mjs';
 
 const posix = process.platform !== 'win32';
 const bash = posix ? 'bash' : join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'usr', 'bin', 'bash.exe');
@@ -63,6 +63,34 @@ test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owne
     assert.equal(existsSync(lockPath(ctx)), false);
   } finally {
     // The kit's workspace is under the OS temp directory and is removed by the test kit's documented helper.
+    rmSync(ctx.base, { recursive: true, force: true });
+  }
+});
+
+test('POSIX missing Copilot CLI keeps recorded wrapper arrays and reports a changed shell wrapper', { skip: process.platform === 'win32' ? 'POSIX wrapper behavior' : skip }, () => {
+  const ctx = buildWorkspace();
+  try {
+    const copilot = join(ctx.base, 'copilot');
+    writeFileSync(copilot, '#!/bin/sh\nexit 0\n');
+    chmodSync(copilot, 0o755);
+    const layers = writeLayers(ctx);
+    const args = ['-CopilotCommand', copilot, '-Runtimes', 'claude,copilot', '-Layers', 'pstack,simpsonm09-org-ai-plugin'];
+    const installed = runInstaller(shell, ctx, args, { layersFile: layers });
+    assert.equal(installed.status, 0, `${installed.stdout}\n${installed.stderr}`);
+    assert.deepEqual(readJson(lockPath(ctx)).copilot.wrappers, ['.maxstack/bin/copilot.sh']);
+
+    const missing = runInstaller(shell, ctx, ['-CopilotCommand', MISSING_COPILOT, '-Runtimes', 'claude,copilot', '-Layers', 'pstack,simpsonm09-org-ai-plugin'], { layersFile: layers });
+    assert.equal(missing.status, 0, `${missing.stdout}\n${missing.stderr}`);
+    assert.match(`${missing.stdout}\n${missing.stderr}`, /Kept .*copilot\.sh because Copilot was not found/);
+    assert.deepEqual(readJson(lockPath(ctx)).copilot.wrappers, ['.maxstack/bin/copilot.sh']);
+
+    const wrapper = join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh');
+    writeFileSync(wrapper, '#!/bin/sh\n# edited by user\n');
+    const changed = runInstaller(shell, ctx, ['-CopilotCommand', MISSING_COPILOT, '-Runtimes', 'claude,copilot', '-Layers', 'pstack,simpsonm09-org-ai-plugin'], { layersFile: layers });
+    assert.equal(changed.status, 0, `${changed.stdout}\n${changed.stderr}`);
+    assert.match(`${changed.stdout}\n${changed.stderr}`, /Kept .*copilot\.sh: it is not the installer's recorded copy/);
+    assert.ok(existsSync(wrapper), 'the changed shell wrapper was removed');
+  } finally {
     rmSync(ctx.base, { recursive: true, force: true });
   }
 });

@@ -6,7 +6,7 @@
 
 ## Platforms
 
-Windows is supported. The `claude` and `copilot` runtimes are supported on macOS by a hosted CI lifecycle job. They have not yet been verified on the owner's real Mac. macOS and Linux installs write only POSIX wrappers (`copilot.sh`, and `pi.sh` when Pi is selected); their lock records own those files and never record `.cmd` wrappers. Windows keeps writing and recording both `.cmd` and `.sh` wrappers. Claude plugin folders use directory symlinks on macOS and junctions on Windows when shared with OpenCode, with link-safe ownership, hashing, status, replacement, and removal. Windows lock records keep the `junction` kind; macOS records `symlink`.
+Windows is supported. The macOS CI job runs an informational fixture lifecycle for the `claude` and `copilot` runtimes. It does not exercise installed Mac CLIs or their hooks. Real Mac CLI and hook verification is pending. macOS and Linux installs write only POSIX wrappers (`copilot.sh`, and `pi.sh` when Pi is selected); their lock records own those files and never record `.cmd` wrappers. Windows keeps writing and recording both `.cmd` and `.sh` wrappers. Claude plugin folders use directory symlinks on macOS and junctions on Windows when shared with OpenCode, with link-safe ownership, hashing, status, replacement, and removal. Windows lock records keep the `junction` kind; macOS records `symlink`.
 
 PowerShell 7 is preinstalled on GitHub's hosted macOS runner. On a Mac without `pwsh`, install it with Microsoft's package or, if Homebrew is already installed, run `brew install powershell`. The Homebrew formula is community maintained.
 

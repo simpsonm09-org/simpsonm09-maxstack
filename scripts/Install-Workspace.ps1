@@ -135,8 +135,12 @@ $copilotShTarget = Join-MaxstackPath $copilotBinTarget 'copilot.sh'
 # The Pi wrappers share .maxstack\bin. They name the agent folder, where Pi reads its settings.
 $piCmdTarget = Join-MaxstackPath $copilotBinTarget 'pi.cmd'
 $piShTarget = Join-MaxstackPath $copilotBinTarget 'pi.sh'
-$copilotWrapperPaths = if ($IsWindows) { @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh') } else { @('.maxstack/bin/copilot.sh') }
-$piWrapperPaths = if ($IsWindows) { @('.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh') } else { @('.maxstack/bin/pi.sh') }
+$copilotWrapperPaths = [string[]]@('.maxstack/bin/copilot.sh')
+$piWrapperPaths = [string[]]@('.maxstack/bin/pi.sh')
+if ($IsWindows) {
+    $copilotWrapperPaths = [string[]]@('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh')
+    $piWrapperPaths = [string[]]@('.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh')
+}
 $copilotWrapperDisplay = if ($IsWindows) { "$copilotCmdTarget and $copilotShTarget" } else { $copilotShTarget }
 $piWrapperDisplay = if ($IsWindows) { "$piCmdTarget and $piShTarget" } else { $piShTarget }
 $piAgentDir = Join-MaxstackPath $Workspace '.pi/agent'
@@ -1851,10 +1855,12 @@ function Get-KeptWrapperPair {
 
     $cmdText = if ($IsWindows) { Get-RecordedWrapperText $CmdRelative } else { 'kept-shell-only' }
     $shText = Get-RecordedWrapperText $ShRelative
-    $entries = if ($IsWindows) { @(@($CmdRelative, $cmdText), @($ShRelative, $shText)) } else { @(@($ShRelative, $shText)) }
+    $entries = [System.Collections.Generic.List[object]]::new()
+    if ($IsWindows) { $entries.Add([pscustomobject]@{ Path = $CmdRelative; Text = $cmdText }) }
+    $entries.Add([pscustomobject]@{ Path = $ShRelative; Text = $shText })
     foreach ($entry in $entries) {
-        $full = Join-MaxstackPath $Workspace $entry[0]
-        if ($null -eq $entry[1] -and (Test-Path -LiteralPath $full -PathType Leaf)) {
+        $full = Join-MaxstackPath $Workspace $entry.Path
+        if ($null -eq $entry.Text -and (Test-Path -LiteralPath $full -PathType Leaf)) {
             Write-Host "Kept ${full}: it is not the installer's recorded copy (changed by hand, or never recorded)"
         }
     }
