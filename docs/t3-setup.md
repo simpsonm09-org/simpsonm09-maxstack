@@ -138,11 +138,11 @@ The opt-in `codex` runtime installs selected layer skills and makes the workspac
 
 Set up a Codex provider instance in T3 Code:
 
-1. Add a Codex instance named `Codex (maxstack)`. Keep CODEX_HOME path and Shadow home path at their defaults. On Windows, use the package's native `codex.exe` as Binary path when T3 would start the npm `codex.cmd` shim through a shell. The fixed argument contains brackets and quotes that shell parsing can alter.
+1. Add a Codex instance named `Codex (maxstack)`. Keep CODEX_HOME path and Shadow home path at their defaults. On Windows, use the package's native `codex.exe` as Binary path when T3 would start the npm `codex.cmd` shim through a shell. The fixed argument contains brackets and quotes that shell parsing can alter. The line uses single quotes inside double quotes because Windows PowerShell 5.1 drops double quotes nested inside single quotes when it starts a program.
 2. Set Launch arguments to this fixed line. The installer prints it every time. It never changes.
 
    ```text
-   -c 'project_root_markers=["stack.lock.json"]'
+   -c "project_root_markers=['stack.lock.json']"
    ```
 
 Codex normally uses the repository root as its project root. The marker makes the workspace the project root, so repositories under it can read its skills and `AGENTS.md`.
