@@ -16,6 +16,10 @@ T3 keeps its provider instances in `%USERPROFILE%\.t3\userdata\settings.json`. T
 
 The maxstack instances apply only to the workspace named in their paths. The default instances need no folder and no wrapper.
 
+## T3 model sheet and gated instances
+
+`t3.gatedInstances` lists the ids allowed to receive delegated work. The list is per machine. Add only ids for instances that load this workspace's layers and access gate. maxstack writes the allow-list beside the model sheet under `.pstack`. Run `setup-pstack` inside T3 to write the model sheet there.
+
 ## OpenCode
 
 Nothing to configure. OpenCode walks up from the session directory to the filesystem root and merges each `opencode.jsonc` and `.opencode` it finds. The workspace `opencode.jsonc` and `.opencode` apply to repositories and git worktrees under that workspace.

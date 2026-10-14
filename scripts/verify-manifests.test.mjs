@@ -93,7 +93,7 @@ test('the shipped manifests pass the verifier', { skip }, () => {
 test('the settings seed is valid and schema keys match the PowerShell validator', { skip }, () => {
   const run = spawnSync(python, [verifier], { windowsHide: true, encoding: 'utf8' });
   assert.equal(run.status, 0, failureOf(run));
-  assert.deepEqual(shipped('workspace/maxstack.settings.json'), { version: 1 });
+  assert.deepEqual(shipped('workspace/maxstack.settings.json'), { version: 1, t3: { gatedInstances: [] } });
 });
 
 test('the manifest verifier rejects settings schema and validator key drift', { skip }, () => {
@@ -120,6 +120,7 @@ test('the manifest verifier reports malformed settings schema shapes without a t
     [(schema) => { schema.properties.runtimes.additionalProperties.properties.cli.enum = 'detect'; }, /SettingsCliModes enum must have an enum list/],
     [(schema) => { schema.properties.layers.additionalProperties = 'object'; }, /settings schema layer entries must be objects/],
     [(schema) => { schema.properties.t3.properties = []; }, /settings schema T3 entries need an object properties field/],
+    [(schema) => { schema.properties.t3.properties.gatedInstances.uniqueItems = false; }, /t3\.gatedInstances must match the installer id rules/],
   ];
   for (const [mutate, expected] of cases) {
     const schema = shipped('schemas/maxstack.settings.schema.json');
