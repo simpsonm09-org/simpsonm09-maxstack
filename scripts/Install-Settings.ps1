@@ -2,6 +2,7 @@
 Set-StrictMode -Version Latest
 # The ordinal helpers, which every comparison here uses.
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
+. (Join-Path $PSScriptRoot 'Install-Paths.ps1')
 
 $script:SettingsTopLevelKeys = @('$schema', 'version', 'os', 'runtimes', 'layers', 't3')
 $script:SettingsRuntimeIds = @('claude', 'codex', 'copilot', 'opencode', 'pi')
@@ -77,13 +78,13 @@ function Get-SettingsLocalSource {
     param([string] $Name, [string] $Path, [bool] $Absolute, [string] $WorkspaceRoot, [string] $RepoRoot)
 
     # The 8.3 rule reads the path as the user wrote it: .NET expands a short name when it normalises a path, so the check runs first.
-    $written = if ($Absolute) { $Path } else { [IO.Path]::Combine($WorkspaceRoot, ($Path -replace '/', '\')) }
+    $written = if ($Absolute) { $Path } else { [IO.Path]::Combine($WorkspaceRoot, (ConvertTo-MaxstackPath $Path)) }
     $fault = Get-LocalPathFault $written
     $candidate = Get-FullFolderPath $written
     if ($fault) { return (New-SettingsLocalChoice -Path $candidate -Reason "local path $fault") }
     if (-not $Absolute) {
         $normal = Get-NormalPath $candidate
-        if (-not $normal.StartsWith((Get-NormalPath $WorkspaceRoot) + '\', [StringComparison]::Ordinal)) {
+        if (-not (Test-MaxstackPathInside $normal (Get-NormalPath $WorkspaceRoot))) {
             return (New-SettingsLocalChoice -Path $candidate -Reason 'local path resolves outside the workspace through a link, which cannot be a layer source.')
         }
         if (Test-MaxstackCheckoutLocation -Path $normal -RepoRoot $RepoRoot) {
@@ -385,12 +386,12 @@ function ConvertTo-InitSettingsSpec {
         return "$url@$($Source.ref)"
     }
     $path = [IO.Path]::GetFullPath([string] $Source.path)
-    $root = [IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd('\', '/')
-    if ($path.Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
+    $root = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($WorkspaceRoot))
+    if (Test-MaxstackPathEqual $path $root) {
         throw "-InitSettings cannot represent layer '$Name' as a local source at the workspace root."
     }
-    if ($path.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) {
-        return 'local:' + [IO.Path]::GetRelativePath($root, $path).Replace('\', '/')
+    if (Test-MaxstackPathInside $path $root) {
+        return 'local:' + (Get-MaxstackRelativePath $root $path)
     }
     return "local:$path"
 }
@@ -573,7 +574,7 @@ function Invoke-InitSettings {
         if ($entry.PSIsContainer) { throw "-InitSettings cannot write because $shown is a directory." }
         if ($Write) { throw "-InitSettings refuses to overwrite existing $shown." }
     }
-    $stackPath = Join-Path $WorkspaceRoot 'stack.lock.json'
+    $stackPath = Join-MaxstackPath $WorkspaceRoot 'stack.lock.json'
     if (Test-MaxstackLinkedPath $stackPath) { throw '-InitSettings refuses stack.lock.json: it is a symbolic link or junction.' }
     if (-not (Test-Path -LiteralPath $stackPath -PathType Leaf)) {
         [Console]::Error.WriteLine('-InitSettings needs stack.lock.json. Copy workspace/maxstack.settings.json to the workspace, or run Install-Workspace.ps1 -Apply first.')

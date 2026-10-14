@@ -49,6 +49,7 @@ $ErrorActionPreference = 'Stop'
 
 $workspaceWasSpecified = $PSBoundParameters.ContainsKey('Workspace')
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
+. (Join-Path $PSScriptRoot 'Install-Paths.ps1')
 . (Join-Path $PSScriptRoot 'Install-WorkspaceDiscovery.ps1')
 $workspaceResolutionArguments = @{
     ExplicitSpecified = $workspaceWasSpecified
@@ -72,8 +73,8 @@ $sourceNamed = $PSBoundParameters.ContainsKey('SourceOverrides') -or $PSBoundPar
 if ($UpdatePi -and ($Update -or $Remove -or $Uninstall -or $Status -or $InitSettings -or $namesRequested -or $sourceNamed -or $Check -or $Strict -or $PSBoundParameters.ContainsKey('LayersFile') -or $PSBoundParameters.ContainsKey('PiCommand') -or $PSBoundParameters.ContainsKey('CopilotCommand'))) { throw '-UpdatePi only accepts -Workspace, optional -PiVersion, and optional -Apply.' }
 if ($PiVersion -and -not $UpdatePi) { throw '-PiVersion applies only to -UpdatePi.' }
 if ($UpdatePi) {
-    $piPrefix = Join-Path $Workspace '.maxstack\npm'
-    $piManifest = Join-Path $piPrefix 'node_modules\@earendil-works\pi-coding-agent\package.json'
+    $piPrefix = Join-MaxstackPath $Workspace '.maxstack/npm'
+    $piManifest = Join-MaxstackPath $piPrefix 'node_modules/@earendil-works/pi-coding-agent/package.json'
     if (-not (Test-Path -LiteralPath $piPrefix -PathType Container) -or -not (Test-Path -LiteralPath $piManifest -PathType Leaf)) {
         Write-Error 'No workspace Pi package was found under .maxstack\npm. Install it with npm install --prefix <workspace>/.maxstack/npm --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent'
         exit 1
@@ -111,32 +112,32 @@ $uninstalling = [bool] $Uninstall
 $updating = [bool] $Update
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-. (Join-Path $PSScriptRoot 'Install-LayerSources.ps1')
-. (Join-Path $PSScriptRoot 'Install-Settings.ps1')
-. (Join-Path $PSScriptRoot 'Install-Codex.ps1')
-$layersPath = if ($LayersFile) { $LayersFile } else { Join-Path $repoRoot 'layers.json' }
-$workspaceSettingsPath = Join-Path $Workspace 'maxstack.settings.json'
-$baseConfigFile = Join-Path $repoRoot 'workspace\opencode.jsonc'
-$configTarget = Join-Path $Workspace 'opencode.jsonc'
-$stackTarget = Join-Path $Workspace 'stack.lock.json'
+. (Join-MaxstackPath $PSScriptRoot 'Install-LayerSources.ps1')
+. (Join-MaxstackPath $PSScriptRoot 'Install-Settings.ps1')
+. (Join-MaxstackPath $PSScriptRoot 'Install-Codex.ps1')
+$layersPath = if ($LayersFile) { $LayersFile } else { Join-MaxstackPath $repoRoot 'layers.json' }
+$workspaceSettingsPath = Join-MaxstackPath $Workspace 'maxstack.settings.json'
+$baseConfigFile = Join-MaxstackPath $repoRoot 'workspace/opencode.jsonc'
+$configTarget = Join-MaxstackPath $Workspace 'opencode.jsonc'
+$stackTarget = Join-MaxstackPath $Workspace 'stack.lock.json'
 # A linked lock is refused by the destructive modes: they would read and remove through the link, in another folder.
 if (($removing -or $uninstalling) -and (Test-MaxstackLinkedPath $stackTarget)) {
     throw 'stack.lock.json is a symbolic link or junction, so -Remove and -Uninstall refuse to act through it. Replace it with a regular file first.'
 }
-$agentsTarget = Join-Path $Workspace '.opencode\agents'
-$opencodePluginsTarget = Join-Path $Workspace '.opencode\plugins'
-$claudePluginsTarget = Join-Path $Workspace '.claude\plugins'
-$claudeCacheTarget = Join-Path $Workspace '.claude\cache'
-$copilotBinTarget = Join-Path $Workspace '.maxstack\bin'
-$copilotCmdTarget = Join-Path $copilotBinTarget 'copilot.cmd'
-$copilotShTarget = Join-Path $copilotBinTarget 'copilot.sh'
+$agentsTarget = Join-MaxstackPath $Workspace '.opencode/agents'
+$opencodePluginsTarget = Join-MaxstackPath $Workspace '.opencode/plugins'
+$claudePluginsTarget = Join-MaxstackPath $Workspace '.claude/plugins'
+$claudeCacheTarget = Join-MaxstackPath $Workspace '.claude/cache'
+$copilotBinTarget = Join-MaxstackPath $Workspace '.maxstack/bin'
+$copilotCmdTarget = Join-MaxstackPath $copilotBinTarget 'copilot.cmd'
+$copilotShTarget = Join-MaxstackPath $copilotBinTarget 'copilot.sh'
 # The Pi wrappers share .maxstack\bin. They name the agent folder, where Pi reads its settings.
-$piCmdTarget = Join-Path $copilotBinTarget 'pi.cmd'
-$piShTarget = Join-Path $copilotBinTarget 'pi.sh'
-$piAgentDir = Join-Path $Workspace '.pi\agent'
-$piSettingsTarget = Join-Path $piAgentDir 'settings.json'
+$piCmdTarget = Join-MaxstackPath $copilotBinTarget 'pi.cmd'
+$piShTarget = Join-MaxstackPath $copilotBinTarget 'pi.sh'
+$piAgentDir = Join-MaxstackPath $Workspace '.pi/agent'
+$piSettingsTarget = Join-MaxstackPath $piAgentDir 'settings.json'
 # The Pi the workspace installs for itself. npm puts its bin here, and the installer looks here before PATH.
-$piLocalBinTarget = Join-Path $Workspace '.maxstack\npm\node_modules\.bin'
+$piLocalBinTarget = Join-MaxstackPath $Workspace '.maxstack/npm/node_modules/.bin'
 # codex is opt-in. A lock with no selection, and a new workspace with no runtime named, select defaultRuntimeNames only, so
 # an existing install is unchanged until codex is named by -Runtimes, the settings file, or all.
 $runtimeNames = @('claude', 'opencode', 'copilot', 'pi', 'codex')
@@ -226,7 +227,7 @@ function Get-T3InstancesPlan {
 
     $relative = '.pstack/pstack-t3-instances.json'
     $prior = Get-PriorOwnedFileRecord $relative
-    $full = Join-Path $Workspace ($relative -replace '/', '\')
+    $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $relative)
     $instances = @()
     $readOnlyInstances = @()
     if ($Settings.present -and $Settings.value.Contains('t3')) {
@@ -239,8 +240,8 @@ function Get-T3InstancesPlan {
         $gate = $false
         foreach ($layer in $selectedModels) {
             if ($null -eq $layer.root) { continue }
-            $hooks = Join-Path $layer.root 'hooks'
-            if ((Test-Path -LiteralPath (Join-Path $hooks 'pre-tool-use.mjs') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $hooks 'lib/codex.mjs') -PathType Leaf)) { $gate = $true; break }
+            $hooks = Join-MaxstackPath $layer.root 'hooks'
+            if ((Test-Path -LiteralPath (Join-MaxstackPath $hooks 'pre-tool-use.mjs') -PathType Leaf) -and (Test-Path -LiteralPath (Join-MaxstackPath $hooks 'lib/codex.mjs') -PathType Leaf)) { $gate = $true; break }
         }
         $entries = [System.Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal)
         foreach ($instance in $instances) { $entries.Add($instance, [ordered]@{ layers = @($selectedNames); gate = $gate }) }
@@ -271,7 +272,7 @@ function Write-T3InstancesFile {
     param($Plan)
 
     $relative = '.pstack/pstack-t3-instances.json'
-    $full = Join-Path $Workspace ($relative -replace '/', '\')
+    $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $relative)
     $prior = Get-PriorOwnedFileRecord $relative
     if ($null -eq $Plan) {
         if ($null -eq $prior -or -not (Test-Path -LiteralPath $full -PathType Leaf)) { return }
@@ -305,14 +306,14 @@ function Read-WorkspaceInstruction {
         throw "$label must be a relative Markdown file path inside the layer folder."
     }
     $root = [IO.Path]::GetFullPath($Layer.root).TrimEnd('\', '/')
-    $full = [IO.Path]::GetFullPath((Join-Path $root ($relative -replace '/', '\')))
-    if (-not $full.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) {
+    $full = [IO.Path]::GetFullPath((Join-MaxstackPath $root (ConvertTo-MaxstackPath $relative)))
+    if (-not (Test-MaxstackPathInside $full $root)) {
         throw "$label escapes the layer folder."
     }
     $current = $root
     $segments = @($relative -split '[\\/]')
     for ($index = 0; $index -lt $segments.Count; $index++) {
-        $current = Join-Path $current $segments[$index]
+        $current = Join-MaxstackPath $current $segments[$index]
         if (Test-Path -LiteralPath $current) {
             if (Test-ReparsePoint $current) { throw "$label is a symbolic link or junction at '$($segments[$index])'." }
         } elseif ($index -eq ($segments.Count - 1)) {
@@ -344,7 +345,7 @@ function Get-WorkspaceInstructionPlan {
     if ($sources.Count -eq 0 -or $SelectedRuntimes.Count -eq 0) {
         $retained = [System.Collections.Generic.List[object]]::new()
         foreach ($record in @($priorOwned | Where-Object { (Test-OrdinalEqual (Get-Field $_ 'runtime') $script:WorkspaceInstructionRuntime) })) {
-            $full = Join-Path $Workspace ($record.path -replace '/', '\')
+            $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $record.path)
             if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
             if (Test-ReparsePoint $full) {
                 $retained.Add([pscustomobject]@{ path = $record.path; text = ''; runtime = $script:WorkspaceInstructionRuntime; layers = @($record.layers); preserve = $true })
@@ -373,7 +374,7 @@ function Get-WorkspaceInstructionPlan {
     if ($ValidateOnly) { return [pscustomobject]@{ text = $composed; files = @(); sourceLayers = @($sources | ForEach-Object { $_.layer }) } }
     $collisionNames = @()
     foreach ($name in @('AGENTS.md', 'CLAUDE.md')) {
-        $path = Join-Path $Workspace $name
+        $path = Join-MaxstackPath $Workspace $name
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $record = Get-PriorWorkspaceInstructionRecord $name
         if ($null -eq $record -or (Test-ReparsePoint $path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { $collisionNames += $name }
@@ -384,7 +385,7 @@ function Get-WorkspaceInstructionPlan {
         foreach ($name in $collisionNames) {
             Write-Host "Kept workspace $name`: not written by maxstack. Wrote .maxstack/workspace-instructions.md; reference it from your own instructions to load the shared agreements."
         }
-        $fallback = Join-Path $Workspace ($instructionPath -replace '/', '\')
+        $fallback = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $instructionPath)
         if ((Test-Path -LiteralPath $fallback) -and $null -eq (Get-PriorWorkspaceInstructionRecord $instructionPath)) {
             throw "$instructionPath already exists and maxstack did not write it, so nothing was written. Move it aside, then rerun -Apply."
         }
@@ -398,7 +399,7 @@ function Get-WorkspaceInstructionPlan {
         $files.Add([pscustomobject]@{ path = 'CLAUDE.md'; text = $script:WorkspaceClaudeHeader + "@AGENTS.md`n"; runtime = $script:WorkspaceInstructionRuntime; layers = @($sources | ForEach-Object { $_.layer }) })
     }
     foreach ($file in $files) {
-        $full = Join-Path $Workspace ($file.path -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $file.path)
         $prior = Get-PriorWorkspaceInstructionRecord $file.path
         if ((Test-Path -LiteralPath $full) -and $null -eq $prior) {
             throw "$($file.path) already exists and maxstack did not write it, so nothing was written. Move it aside, then rerun -Apply."
@@ -414,7 +415,7 @@ function Get-WorkspaceInstructionPlan {
         (Test-OrdinalEqual (Get-Field $_ 'runtime') $script:WorkspaceInstructionRuntime) -and
         -not (Test-OrdinalIn $_.path $wanted)
     })) {
-        $full = Join-Path $Workspace ($record.path -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $record.path)
         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
         if (Test-ReparsePoint $full) {
             $files.Add([pscustomobject]@{ path = $record.path; text = ''; runtime = $script:WorkspaceInstructionRuntime; layers = @($record.layers); preserve = $true })
@@ -432,7 +433,7 @@ function Write-WorkspaceInstructionFiles {
 
     $wanted = @($Files | ForEach-Object { $_.path })
     foreach ($record in @($PriorOwned | Where-Object { (Test-OrdinalEqual (Get-Field $_ 'runtime') $script:WorkspaceInstructionRuntime) -and -not (Test-OrdinalIn $_.path $wanted) })) {
-        $full = Join-Path $Workspace ($record.path -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $record.path)
         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
         if ((Test-ReparsePoint $full) -or (-not (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $record.sha256))) {
             Write-Host "Kept $($record.path): it changed since the last apply, so it was not removed."
@@ -442,7 +443,7 @@ function Write-WorkspaceInstructionFiles {
         }
     }
     foreach ($file in $Files) {
-        $full = Join-Path $Workspace ($file.path -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $file.path)
         if (Test-IsTrue (Get-Field $file 'preserve')) {
             Write-Host "Kept $($file.path): it changed since the last apply, so it was not overwritten."
             continue
@@ -470,7 +471,7 @@ function Get-DriftState {
 function Read-LayerJson {
     param([string] $Root)
 
-    $layerJson = Join-Path $Root 'layer.json'
+    $layerJson = Join-MaxstackPath $Root 'layer.json'
     if (-not (Test-Path -LiteralPath $layerJson -PathType Leaf)) { return $null }
     return (Get-Content -LiteralPath $layerJson -Raw | ConvertFrom-Json)
 }
@@ -576,7 +577,7 @@ function Get-OpenCodeSpec {
     if (-not (Test-RelativePath $entry) -or $entry -notmatch '\.(ts|js)$') {
         throw "Layer '$($Layer.name)' opencode.entry must be a relative .ts or .js file."
     }
-    $entry = $entry.Replace('\', '/')
+    $entry = ConvertTo-MaxstackLockPath $entry
     $slash = $entry.LastIndexOf('/')
     $dir = if ($slash -lt 0) { '' } else { $entry.Substring(0, $slash) }
     if ((Test-OrdinalEqual $dir '') -and (-not (Test-OrdinalEqual $entry 'index.ts'))) {
@@ -635,7 +636,7 @@ function Get-ClaudeRecord {
         }
         return [pscustomobject]@{ layer = $Layer.name; plugin = $Layer.name; kind = 'copy'; items = $null }
     }
-    $manifestPath = Join-Path $Layer.root '.claude-plugin\plugin.json'
+    $manifestPath = Join-MaxstackPath $Layer.root '.claude-plugin/plugin.json'
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw "Layer '$($Layer.name)' has a claude runtime but no .claude-plugin\plugin.json at $($Layer.root). Add the manifest to that repository or remove its claude runtime."
     }
@@ -722,14 +723,14 @@ function Test-TreeFolderExcluded {
 function Get-TreeEntries {
     param([string] $Root, [string] $Rule)
 
-    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $rootFull = Trim-MaxstackPathEndingSeparator ([IO.Path]::GetFullPath($Root))
     $pending = [System.Collections.Generic.Stack[string]]::new()
     $pending.Push($rootFull)
     $entries = [System.Collections.Generic.List[object]]::new()
     while ($pending.Count -gt 0) {
         $directory = $pending.Pop()
         foreach ($child in [IO.Directory]::GetDirectories($directory)) {
-            $relative = $child.Substring($rootFull.Length + 1).Replace('\', '/')
+            $relative = Get-MaxstackRelativePath $rootFull $child
             if (Test-ReparsePoint $child) {
                 $entries.Add([pscustomobject]@{ relative = $relative; full = $child; link = (Get-LinkTargetText $child) })
             } elseif (-not (Test-TreeFolderExcluded -Relative $relative -Rule $Rule)) {
@@ -737,7 +738,7 @@ function Get-TreeEntries {
             }
         }
         foreach ($file in [IO.Directory]::GetFiles($directory)) {
-            $relative = $file.Substring($rootFull.Length + 1).Replace('\', '/')
+            $relative = Get-MaxstackRelativePath $rootFull $file
             if (Test-ReparsePoint $file) {
                 $entries.Add([pscustomobject]@{ relative = $relative; full = $file; link = (Get-LinkTargetText $file) })
             } else {
@@ -965,7 +966,7 @@ function Get-NotSelectedPaths {
     foreach ($runtime in $runtimeNames) {
         if (Test-OrdinalIn $runtime $SelectedRuntimes) { continue }
         foreach ($path in $runtimeArtifacts[$runtime]) {
-            if (Test-Path -LiteralPath (Join-Path $Workspace ($path -replace '/', '\'))) { $found.Add($path) }
+            if (Test-Path -LiteralPath (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $path))) { $found.Add($path) }
         }
     }
     return (Sort-Utf8 $found.ToArray())
@@ -984,7 +985,7 @@ function Get-ShippedLocks {
     $shipped = @{}
     foreach ($name in $npmLockNames) {
         $shipped[$name] = $null
-        $path = Join-Path $Folder $name
+        $path = Join-MaxstackPath $Folder $name
         if (Test-Path -LiteralPath $path -PathType Leaf) { $shipped[$name] = [IO.File]::ReadAllBytes($path) }
     }
     return $shipped
@@ -1011,7 +1012,7 @@ function Resolve-NpmLocks {
     param([string] $Folder, [hashtable] $Shipped)
 
     foreach ($name in $npmLockNames) {
-        $path = Join-Path $Folder $name
+        $path = Join-MaxstackPath $Folder $name
         if ($null -ne $Shipped[$name]) {
             Set-ShippedFile -Path $path -Bytes $Shipped[$name]
             continue
@@ -1029,12 +1030,12 @@ function Write-IgnoredScriptWarning {
     param([string] $Name, [string] $Folder)
 
     $declared = @()
-    $package = Join-Path $Folder 'package.json'
+    $package = Join-MaxstackPath $Folder 'package.json'
     if (Test-Path -LiteralPath $package -PathType Leaf) {
         $scripts = Get-Field (Get-Content -LiteralPath $package -Raw | ConvertFrom-Json) 'scripts'
         $declared = @(@('preinstall', 'install', 'postinstall') | Where-Object { $null -ne (Get-Field $scripts $_) } | ForEach-Object { "scripts.$_" })
     }
-    if (Test-Path -LiteralPath (Join-Path $Folder 'binding.gyp') -PathType Leaf) { $declared += 'binding.gyp' }
+    if (Test-Path -LiteralPath (Join-MaxstackPath $Folder 'binding.gyp') -PathType Leaf) { $declared += 'binding.gyp' }
     if ($declared.Count -gt 0) {
         Write-Warning "npm ran with --ignore-scripts for layer '$Name': its $($declared -join ', ') did not run, so what it would build or install is missing."
     }
@@ -1089,9 +1090,9 @@ function Copy-LayerItems {
 
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     foreach ($item in $Items) {
-        $source = Join-Path $Root ($item -replace '/', '\')
+        $source = Join-MaxstackPath $Root (ConvertTo-MaxstackPath $item)
         if (-not (Test-Path -LiteralPath $source)) { throw "Layer item missing: $source" }
-        $target = Join-Path $Destination ($item -replace '/', '\')
+        $target = Join-MaxstackPath $Destination (ConvertTo-MaxstackPath $item)
         New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $target -Recurse -Force
     }
@@ -1102,7 +1103,7 @@ function Copy-WholeFolder {
     param([string] $Root, [string] $Destination)
 
     Copy-Item -LiteralPath $Root -Destination $Destination -Recurse -Force
-    $git = Join-Path $Destination '.git'
+    $git = Join-MaxstackPath $Destination '.git'
     if (Test-Path -LiteralPath $git) { Remove-OwnedTree $git }
 }
 
@@ -1136,9 +1137,9 @@ function Get-ItemsTreeSha256 {
 
     $lines = [System.Collections.Generic.List[string]]::new()
     foreach ($item in $Items) {
-        $name = $item.Replace('\', '/')
+        $name = ConvertTo-MaxstackLockPath $item
         if (Test-TreeFolderExcluded -Relative $name -Rule 'owned') { continue }
-        $source = Join-Path $Root ($item -replace '/', '\')
+        $source = Join-MaxstackPath $Root (ConvertTo-MaxstackPath $item)
         if (Test-Path -LiteralPath $source -PathType Leaf) {
             $lines.AddRange([string[]] (Get-EntryLines @([pscustomobject]@{ relative = $name; full = $source; link = $null })))
         } elseif (Test-Path -LiteralPath $source -PathType Container) {
@@ -1157,8 +1158,8 @@ function Get-ItemsTreeSha256 {
 function Sync-GitPlugin {
     param($Layer)
 
-    $cache = Join-Path $claudeCacheTarget $Layer.name
-    if (-not (Test-Path -LiteralPath (Join-Path $cache '.git'))) {
+    $cache = Join-MaxstackPath $claudeCacheTarget $Layer.name
+    if (-not (Test-Path -LiteralPath (Join-MaxstackPath $cache '.git'))) {
         New-Item -ItemType Directory -Path $claudeCacheTarget -Force | Out-Null
         Write-Host "Cloning $($Layer.url) (partial, sparse) into $cache"
         # A clone names no tree, so it runs from an empty folder. Its target is an absolute path, since a relative one would resolve there.
@@ -1203,8 +1204,8 @@ function Sync-GitPlugin {
 function Test-CacheAtPin {
     param($Layer)
 
-    $cache = Join-Path $claudeCacheTarget $Layer.name
-    if (-not (Test-Path -LiteralPath (Join-Path $cache '.git'))) { return $false }
+    $cache = Join-MaxstackPath $claudeCacheTarget $Layer.name
+    if (-not (Test-Path -LiteralPath (Join-MaxstackPath $cache '.git'))) { return $false }
     $run = Invoke-GitGuarded -Dir $cache -Arguments @('-C', $cache, 'rev-parse', 'HEAD')
     return ($run.code -eq 0 -and (Get-GitLine $run) -eq $Layer.commit)
 }
@@ -1216,7 +1217,7 @@ function Get-LayerRoot {
 
     if ($null -eq $Layer.url) { return $Layer.root }
     if (-not (Test-CacheAtPin $Layer)) { return $null }
-    return (Join-SourceSub (Join-Path $claudeCacheTarget $Layer.name) $Layer.sourcePath)
+    return (Join-SourceSub (Join-MaxstackPath $claudeCacheTarget $Layer.name) $Layer.sourcePath)
 }
 
 # Whether a claude child is missing, differs from what the last apply recorded, or
@@ -1270,7 +1271,7 @@ function Find-WrappedExecutable {
 # PATH outside .maxstack\bin. The installed copy is pi.cmd on Windows and pi elsewhere, as npm names it.
 function Find-PiExecutable {
     $localName = if ($IsWindows) { 'pi.cmd' } else { 'pi' }
-    $local = Join-Path $piLocalBinTarget $localName
+    $local = Join-MaxstackPath $piLocalBinTarget $localName
     if (Test-Path -LiteralPath $local -PathType Leaf) { return $local }
     return Find-WrappedExecutable $PiCommand
 }
@@ -1409,7 +1410,7 @@ function Get-PiLayerRecord {
 
     if (-not $Layer.runtimes.ContainsKey('pi')) { return $null }
     $pinned = $null -ne $Layer.url
-    $repo = if ($pinned) { Join-Path $claudeCacheTarget $Layer.name } else { $Layer.repoRoot }
+    $repo = if ($pinned) { Join-MaxstackPath $claudeCacheTarget $Layer.name } else { $Layer.repoRoot }
     $pluginSource = Join-SourceSub $repo $Layer.sourcePath
     $manifest = [IO.Path]::Combine($repo, 'package.json')
     $piKey = $null
@@ -1420,15 +1421,15 @@ function Get-PiLayerRecord {
     $packageEntry = $null
     $package = if ($pinned) { ".claude/cache/$($Layer.name)" } else { $installed }
     if ($null -ne $piKey -and -not $pinned) {
-        $agentRoot = Join-Path $Workspace '.pi/agent'
-        $packageEntry = [IO.Path]::GetRelativePath($agentRoot, $repo).Replace('\', '/')
-        $package = [IO.Path]::GetRelativePath($Workspace, $repo).Replace('\', '/')
+        $agentRoot = Join-MaxstackPath $Workspace '.pi/agent'
+        $packageEntry = Get-MaxstackRelativePath $agentRoot $repo
+        $package = Get-MaxstackRelativePath $Workspace $repo
     }
     return [pscustomobject]@{
         layer   = $Layer.name
         pi      = $piKey
         package = $(if ($null -ne $piKey) { $package } else { $null })
-        packageRoot = $(if ($null -ne $piKey -and -not $pinned) { $repo } elseif ($pinned) { Join-Path $claudeCacheTarget $Layer.name } else { $null })
+        packageRoot = $(if ($null -ne $piKey -and -not $pinned) { $repo } elseif ($pinned) { Join-MaxstackPath $claudeCacheTarget $Layer.name } else { $null })
         packageEntry = $(if ($pinned) { '../../' + ".claude/cache/$($Layer.name)" } else { $packageEntry })
         skills  = $(if (Test-Path -LiteralPath ([IO.Path]::Combine($pluginSource, 'skills')) -PathType Container) { "$installed/skills" } else { $null })
         # The package and skills are unknown while the layer has no root: a git cache not at its pin, or a missing folder.
@@ -1444,13 +1445,13 @@ function Assert-PiKeyInstalled {
     param($Record)
 
     $installed = $Record.packageRoot
-    if (-not (Test-Path -LiteralPath (Join-Path $installed 'package.json') -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath (Join-MaxstackPath $installed 'package.json') -PathType Leaf)) {
         throw "Layer '$($Record.layer)' has a pi key in its package.json, but its installed copy at $installed has no package.json. Add package.json to the layer's files list."
     }
     foreach ($kind in @('extensions', 'skills', 'prompts', 'themes')) {
         foreach ($entry in @(Get-Field $Record.pi $kind)) {
             if (-not (Test-NonEmptyString $entry)) { continue }
-            if (-not (Test-Path -LiteralPath (Join-Path $installed ($entry -replace '/', '\')))) {
+            if (-not (Test-Path -LiteralPath (Join-MaxstackPath $installed (ConvertTo-MaxstackPath $entry)))) {
                 throw "Layer '$($Record.layer)' names the $kind entry $entry in its package.json pi key, but $installed does not carry it. Add the folder to the layer's files list."
             }
         }
@@ -1696,7 +1697,7 @@ function Get-NextBackupPath {
 function Get-BackupRecordsFor {
     param([string] $Relative, $Target, [string] $Runtime)
 
-    $full = Join-Path $Workspace ($Relative -replace '/', '\')
+    $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $Relative)
     $folder = Split-Path -Parent $full
     $leaf = Split-Path -Leaf $full
     $paths = [System.Collections.Generic.List[string]]::new()
@@ -1710,7 +1711,7 @@ function Get-BackupRecordsFor {
     if ($null -ne $targetPath -and -not $paths.Contains($targetPath)) { $paths.Add($targetPath) }
     $records = [System.Collections.Generic.List[object]]::new()
     foreach ($backupPath in $paths) {
-        $relativeBackup = $backupPath.Substring($Workspace.Length + 1).Replace('\', '/')
+        $relativeBackup = Get-MaxstackRelativePath $Workspace $backupPath
         if (Test-OrdinalEqual $backupPath $targetPath) {
             $role = if ((Test-OrdinalEqual $Target.action 'original')) { 'original' } else { 'edited' }
             $sha = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
@@ -1833,7 +1834,7 @@ function Remove-WrapperIfRecorded {
 function Get-RecordedWrapperText {
     param([string] $Relative)
 
-    $full = Join-Path $Workspace ($Relative -replace '/', '\')
+    $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $Relative)
     $record = Get-WrapperRecord $Relative
     if ($null -eq $record -or -not (Test-RecordedFile -Full $full -Sha256 $record.sha256)) { return $null }
     return [IO.File]::ReadAllText($full)
@@ -1847,7 +1848,7 @@ function Get-KeptWrapperPair {
     $cmdText = Get-RecordedWrapperText $CmdRelative
     $shText = Get-RecordedWrapperText $ShRelative
     foreach ($entry in @(@($CmdRelative, $cmdText), @($ShRelative, $shText))) {
-        $full = Join-Path $Workspace ($entry[0] -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace $entry[0]
         if ($null -eq $entry[1] -and (Test-Path -LiteralPath $full -PathType Leaf)) {
             Write-Host "Kept ${full}: it is not the installer's recorded copy (changed by hand, or never recorded)"
         }
@@ -1912,7 +1913,7 @@ function Get-OwnedPlan {
 
     foreach ($layer in @($Layers | Where-Object { $null -ne $_.url })) {
         $sha = $null
-        if (Test-CacheAtPin $layer) { $sha = Get-TreeSha256 (Join-Path $claudeCacheTarget $layer.name) }
+        if (Test-CacheAtPin $layer) { $sha = Get-TreeSha256 (Join-MaxstackPath $claudeCacheTarget $layer.name) }
         $records.Add((New-OwnedRecord -Path ".claude/cache/$($layer.name)" -Kind 'dir' -Sha256 $sha -Layers @($layer.name)))
     }
 
@@ -1927,7 +1928,7 @@ function Get-OwnedPlan {
             $sha = Get-ItemsTreeSha256 -Root $root -Items $items
             $spec = $OpenCodeSpecs[$layer.name]
             $agentsSource = $null
-            if ($spec.agents) { $agentsSource = Join-Path $root ($spec.agents -replace '/', '\') }
+            if ($spec.agents) { $agentsSource = Join-MaxstackPath $root (ConvertTo-MaxstackPath $spec.agents) }
             if ($agentsSource -and (Test-Path -LiteralPath $agentsSource -PathType Container)) {
                 foreach ($agent in @(Get-ChildItem -LiteralPath $agentsSource -Filter '*.md')) {
                     $text = Get-AgentProfileText $agent.FullName
@@ -1976,7 +1977,7 @@ function Get-OwnedPlan {
     }
 
     if ($null -ne $PiSettings) {
-        $settingsPath = Join-Path $Workspace '.pi\agent\settings.json'
+        $settingsPath = Join-MaxstackPath $Workspace '.pi/agent/settings.json'
         foreach ($backup in @(Get-BackupRecordsFor -Relative '.pi/agent/settings.json' -Target $settingsBackupTarget -Runtime 'pi')) { $records.Add($backup) }
 
         # The layers a Pi settings list may hold an entry of: every selected layer that declares pi.
@@ -1997,7 +1998,7 @@ function Get-OwnedRecords {
     param([object[]] $Plan, [hashtable] $CreatedKeys)
 
     $records = foreach ($record in $Plan) {
-        $full = Join-Path $Workspace ($record.path -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $record.path)
         # A planned backup is recorded once the apply has written it, and not before.
         if ((Get-Field $record 'backup') -and -not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
         if (Test-IsTrue (Get-Field $record 'preserve')) {
@@ -2037,13 +2038,13 @@ function Get-OwnedRecords {
 function Get-OwnedState {
     param($Record, $Planned)
 
-    $full = Join-Path $Workspace ($Record.path -replace '/', '\')
+    $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $Record.path)
     $plannedSame = ($null -ne $Planned) -and ($Planned.kind -eq $Record.kind)
     switch ($Record.kind) {
         'link' {
             $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
             if ($null -eq $item) { return 'missing' }
-            if (-not (Test-ClaudeJunction -Child $full -Target (Join-Path $Workspace ($Record.target -replace '/', '\')))) { return 'modified' }
+            if (-not (Test-ClaudeJunction -Child $full -Target (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $Record.target)))) { return 'modified' }
             $plannedSame = $plannedSame -and (Test-OrdinalEqual $Planned.target $Record.target)
         }
         'file' {
@@ -2101,7 +2102,7 @@ function Get-OwnershipReport {
             $results.Add([pscustomobject]@{ state = $state; label = $record.path })
             continue
         }
-        $settingsPath = Join-Path $Workspace ($record.path -replace '/', '\')
+        $settingsPath = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $record.path)
         $settings = $null
         if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
             try { $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json } catch { $settings = $null }
@@ -2130,7 +2131,7 @@ function Get-OwnershipReport {
     foreach ($planned in @($Plan)) {
         if ((-not (Test-OrdinalEqual $planned.kind 'json-entries'))) {
             # A backup that the next apply would write is not reported until it exists.
-            if ((Get-Field $planned 'backup') -and -not (Test-Path -LiteralPath (Join-Path $Workspace ($planned.path -replace '/', '\')) -PathType Leaf)) { continue }
+            if ((Get-Field $planned 'backup') -and -not (Test-Path -LiteralPath (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $planned.path)) -PathType Leaf)) { continue }
             if (-not $recordedKeys.Contains((Get-OwnedKey $planned))) {
                 $results.Add([pscustomobject]@{ state = 'drifted'; label = $planned.path })
             }
@@ -2146,7 +2147,7 @@ function Get-OwnershipReport {
     }
 
     # A file in .maxstack\bin that no record names is one the installer did not write.
-    $bin = Join-Path $Workspace '.maxstack\bin'
+    $bin = Join-MaxstackPath $Workspace '.maxstack/bin'
     if (Test-Path -LiteralPath $bin -PathType Container) {
         foreach ($file in @(Get-ChildItem -LiteralPath $bin -File -Force)) {
             $path = ".maxstack/bin/$($file.Name)"
@@ -2230,7 +2231,7 @@ function Get-CreatedPaths {
     $created = [System.Collections.Generic.List[string]]::new()
     foreach ($path in @($Candidates) + @($Prior)) {
         if (-not $seen.Add($path)) { continue }
-        $full = Join-Path $Workspace ($path -replace '/', '\')
+        $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $path)
         if ((Test-OrdinalEqual $Kind 'dir')) { $exists = Test-Path -LiteralPath $full -PathType Container }
         else { $exists = Test-Path -LiteralPath $full -PathType Leaf }
         if (-not $exists) { continue }
@@ -2257,7 +2258,7 @@ $groupFileNames = @('opencode.jsonc', '.pi/agent/settings.json')
 
 function Test-InstallerOutputs {
     foreach ($path in @('.opencode/plugins', '.opencode/agents', '.claude/plugins', '.claude/cache', '.maxstack/bin', '.pstack/pstack-t3-instances.json')) {
-        if (Test-Path -LiteralPath (Join-Path $Workspace ($path -replace '/', '\'))) { return $true }
+        if (Test-Path -LiteralPath (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $path))) { return $true }
     }
     return $false
 }
@@ -2271,9 +2272,9 @@ function Resolve-WorkspaceEntry {
     if (-not (Test-RelativePath $Relative) -or $Relative.Contains('\') -or (Test-OrdinalIn $Relative @('stack.lock.json', 'stack.lock.json.bak', 'stack.lock.json.new'))) {
         return [pscustomobject]@{ ok = $false; full = $null; reason = $refused }
     }
-    $root = [IO.Path]::GetFullPath($Workspace).TrimEnd('\')
-    $full = [IO.Path]::GetFullPath((Join-Path $root ($Relative -replace '/', '\')))
-    if (-not $full.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase)) {
+    $root = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Workspace))
+    $full = [IO.Path]::GetFullPath((Join-MaxstackPath $root (ConvertTo-MaxstackPath $Relative)))
+    if (-not (Test-MaxstackPathInside $full $root)) {
         return [pscustomobject]@{ ok = $false; full = $null; reason = 'outside the workspace: the path resolves outside it' }
     }
     $folder = [IO.Path]::GetDirectoryName($full)
@@ -2291,9 +2292,9 @@ function Test-InsideWorkspace {
     param([string] $Target)
 
     if (-not $Target) { return $false }
-    $root = [IO.Path]::GetFullPath($Workspace).TrimEnd('\')
-    $full = [IO.Path]::GetFullPath($Target).TrimEnd('\')
-    return ((Test-OrdinalEqualIgnoreCase $full $root) -or $full.StartsWith("$root\", [StringComparison]::OrdinalIgnoreCase))
+    $root = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Workspace))
+    $full = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Target))
+    return (Test-MaxstackPathEqual $full $root) -or (Test-MaxstackPathInside $full $root)
 }
 
 function Get-EntryItem {
@@ -2952,7 +2953,7 @@ function Select-PresentPaths {
 
     $present = [System.Collections.Generic.List[string]]::new()
     foreach ($path in @($Paths | Where-Object { $_ })) {
-        if (Test-Path -LiteralPath (Join-Path $Workspace ($path -replace '/', '\')) -PathType $Kind) { $present.Add($path) }
+        if (Test-Path -LiteralPath (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $path)) -PathType $Kind) { $present.Add($path) }
     }
     return , $present.ToArray()
 }
@@ -3216,7 +3217,7 @@ function Invoke-UninstallFlow {
 }
 
 
-$workspaceName = Split-Path -Leaf $Workspace.TrimEnd('\', '/')
+$workspaceName = Split-Path -Leaf (Trim-MaxstackPathEndingSeparator $Workspace)
 
 if ($InitSettings) {
     $initManifest = Get-Content -LiteralPath $layersPath -Raw | ConvertFrom-Json -ErrorAction Stop
@@ -3290,7 +3291,7 @@ if (Test-Path -LiteralPath $stackTarget -PathType Leaf) {
     if ($null -ne $priorStack.PSObject.Properties['createdFiles']) { $priorCreatedFiles = @($priorStack.createdFiles) }
     # A schema-1 lock records no created config. A config it names with no backup was made by the installer, as a removal
     # of that lock infers, so the upgrade apply records it as created too.
-    if ($priorLegacy -and @($priorOwned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path 'opencode.jsonc') -and (Test-OrdinalEqual $_.kind 'file') }).Count -gt 0 -and -not (Test-Path -LiteralPath (Join-Path $Workspace 'opencode.jsonc.bak') -PathType Leaf)) {
+    if ($priorLegacy -and @($priorOwned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path 'opencode.jsonc') -and (Test-OrdinalEqual $_.kind 'file') }).Count -gt 0 -and -not (Test-Path -LiteralPath (Join-MaxstackPath $Workspace 'opencode.jsonc.bak') -PathType Leaf)) {
         $priorCreatedFiles = @($priorCreatedFiles) + 'opencode.jsonc'
     }
 }
@@ -3511,13 +3512,13 @@ $existedBeforeFiles = @()
 $settingsKeysBefore = @()
 $settingsFileBefore = $false
 if ($Apply) {
-    $existedBefore = @($installerDirs | Where-Object { Test-Path -LiteralPath (Join-Path $Workspace ($_ -replace '/', '\')) -PathType Container })
+    $existedBefore = @($installerDirs | Where-Object { Test-Path -LiteralPath (Join-MaxstackPath $Workspace $_) -PathType Container })
     $settingsFileBefore = Test-Path -LiteralPath $piSettingsTarget -PathType Leaf
     if ($settingsFileBefore) {
         $settingsBefore = Get-Content -LiteralPath $piSettingsTarget -Raw | ConvertFrom-Json
         if ($null -ne $settingsBefore) { $settingsKeysBefore = @($settingsBefore.PSObject.Properties | ForEach-Object { $_.Name }) }
     }
-    $existedBeforeFiles = @($replacedFileNames | Where-Object { Test-Path -LiteralPath (Join-Path $Workspace ($_ -replace '/', '\')) -PathType Leaf })
+    $existedBeforeFiles = @($replacedFileNames | Where-Object { Test-Path -LiteralPath (Join-MaxstackPath $Workspace $_) -PathType Leaf })
 }
 
 # Validate every already available layer before syncing a pinned source into the workspace cache.
@@ -3568,7 +3569,7 @@ foreach ($layer in $openCodeLayers) { $openCodeSpecs[$layer.name] = Get-OpenCode
 $priorOpenCodeFolders = @($priorLayers.Values | ForEach-Object { Get-Field (Get-Field $_ 'opencode') 'folder' } | Where-Object { $_ } | ForEach-Object { Split-Path -Leaf $_ })
 
 $copilotLayers = @($layers | Where-Object { $_.runtimes.ContainsKey('copilot') })
-$copilotDirs = @($copilotLayers | ForEach-Object { Join-Path $claudePluginsTarget $_.name })
+$copilotDirs = @($copilotLayers | ForEach-Object { Join-MaxstackPath $claudePluginsTarget $_.name })
 $copilotExecutable = if ($copilotLayers.Count -gt 0) { Find-WrappedExecutable $CopilotCommand } else { $null }
 $copilotCmdText = $null
 $copilotShText = $null
@@ -3648,7 +3649,7 @@ if ($openCodeSelected -and -not $configUnknown) {
         if ((-not (Test-OrdinalEqual $layer.kind 'config'))) { continue }
         $layerJson = Read-LayerJson $layer.root
         $fragmentName = Get-Field $layerJson 'config'
-        $fragmentPath = Join-Path $layer.root $(if ($fragmentName) { $fragmentName } else { 'opencode.fragment.jsonc' })
+        $fragmentPath = Join-MaxstackPath $layer.root $(if ($fragmentName) { $fragmentName } else { 'opencode.fragment.jsonc' })
         if (-not (Test-Path -LiteralPath $fragmentPath -PathType Leaf)) {
             throw "Layer '$($layer.name)' has no config fragment: $fragmentPath"
         }
@@ -3680,25 +3681,7 @@ if ($openCodeSelected -and -not $configUnknown) {
     }
     $permissions = @($base.permissions) + $extraPermissions
     if ($permissions.Count -gt 0) {
-        $workspacePermissionPath = $Workspace.Replace('\', '/')
-        $workspaceWslPath = $null
-        if ([regex]::IsMatch($Workspace, '^[A-Za-z]:[\\/]')) {
-            $workspaceWslPath = '/mnt/' + $Workspace.Substring(0, 1).ToLowerInvariant() + $Workspace.Substring(2).Replace('\', '/')
-        }
-        $base.permissions = @(
-            foreach ($permission in $permissions) {
-                $resource = Get-Field $permission 'resource'
-                if (Test-OrdinalEqual $resource '__MAXSTACK_WORKSPACE__/.opencode/*') {
-                    $permission.resource = "$workspacePermissionPath/.opencode/*"
-                    $permission
-                } elseif (Test-OrdinalEqual $resource '__MAXSTACK_WORKSPACE_WSL__/.opencode/*') {
-                    if ($workspaceWslPath) {
-                        $permission.resource = "$workspaceWslPath/.opencode/*"
-                        $permission
-                    }
-                } else { $permission }
-            }
-        )
+        $base.permissions = @(Resolve-MaxstackOpenCodePermissions -Permissions $permissions -Workspace $Workspace)
     }
     # A nested entry point is named here, relative to this file, so the path holds no
     # machine-specific root. Root-level index.ts entries load on their own and are not listed.
@@ -3827,7 +3810,7 @@ if (-not $Apply) {
     }
     if ($workspaceInstructionPlan.text) {
         foreach ($file in $workspaceInstructionFiles) {
-            $state = Get-DriftState -Path (Join-Path $Workspace ($file.path -replace '/', '\')) -Text $file.text
+            $state = Get-DriftState -Path (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $file.path)) -Text $file.text
             if (Test-IsTrue (Get-Field $file 'preserve')) { $state = 'modified by hand; would keep' }
             Write-Host "Workspace instructions: would write or keep $($file.path) ($state)"
         }
@@ -3835,11 +3818,11 @@ if (-not $Apply) {
         Write-Host 'Workspace instructions: none selected layers declare workspaceInstructions.'
     }
     if ($null -ne $t3InstancesPlan) {
-        $t3Path = Join-Path $Workspace ($t3InstancesPlan.path -replace '/', '\')
+        $t3Path = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $t3InstancesPlan.path)
         $t3State = if (Test-IsTrue $t3InstancesPlan.preserve) { 'modified by hand; would keep' } else { Get-DriftState -Path $t3Path -Text $t3InstancesPlan.text }
         Write-Host "T3 instance list: would write or keep $($t3InstancesPlan.path) ($t3State)"
     } elseif ($null -ne (Get-PriorOwnedFileRecord '.pstack/pstack-t3-instances.json')) {
-        $t3Path = Join-Path $Workspace '.pstack/pstack-t3-instances.json'
+        $t3Path = Join-MaxstackPath $Workspace '.pstack/pstack-t3-instances.json'
         $t3Record = Get-PriorOwnedFileRecord '.pstack/pstack-t3-instances.json'
         $t3State = if (-not (Test-Path -LiteralPath $t3Path -PathType Leaf)) { 'missing; ownership will be cleared' } elseif ((Test-ReparsePoint $t3Path) -or (-not (Test-OrdinalEqual (Get-FileHash -LiteralPath $t3Path -Algorithm SHA256).Hash $t3Record.sha256))) { 'modified by hand; would keep' } else { 'would remove' }
         Write-Host "T3 instance list: $t3State .pstack/pstack-t3-instances.json"
@@ -3852,8 +3835,8 @@ if (-not $Apply) {
     if ($claudeSelected) {
         $wantedClaude = @($claudeRecords | ForEach-Object { $_.plugin })
         foreach ($record in $claudeRecords) {
-            $child = Join-Path $claudePluginsTarget $record.plugin
-            $target = if ((Test-OrdinalEqual $record.kind 'junction')) { Join-Path $Workspace $record.target } else { $null }
+            $child = Join-MaxstackPath $claudePluginsTarget $record.plugin
+            $target = if ((Test-OrdinalEqual $record.kind 'junction')) { Join-MaxstackPath $Workspace $record.target } else { $null }
             $prior = Get-Field $priorLayers[$record.layer] 'claude'
             Write-Host ("Drift:          {0}: {1}" -f $child, (Get-ClaudeChildState -Record $record -Prior $prior -Child $child -Target $target))
         }
@@ -3864,7 +3847,7 @@ if (-not $Apply) {
         }
     }
     foreach ($layer in $openCodeLayers) {
-        $folder = Join-Path $opencodePluginsTarget $layer.name
+        $folder = Join-MaxstackPath $opencodePluginsTarget $layer.name
         $relative = ".opencode/plugins/$($layer.name)"
         $record = @($priorOwned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path $relative) -and (Test-OrdinalEqual $_.kind 'dir') } | Select-Object -First 1)
         $planned = @($plan | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path $relative) -and (Test-OrdinalEqual $_.kind 'dir') } | Select-Object -First 1)
@@ -3939,29 +3922,29 @@ $agentNamesByLayer = [hashtable]::new([StringComparer]::Ordinal)
 foreach ($layer in $openCodeLayers) {
     $spec = $openCodeSpecs[$layer.name]
     $claudeDeclared = $layer.runtimes.ContainsKey('claude')
-    $folder = Join-Path $opencodePluginsTarget $layer.name
+    $folder = Join-MaxstackPath $opencodePluginsTarget $layer.name
     New-Item -ItemType Directory -Path $folder -Force | Out-Null
     # The folder is wholly the installer's. What the layer no longer installs is removed, and each item is
     # replaced by a fresh copy, so the folder holds exactly what the layer names.
     $items = @(Get-OpenCodeItems -Layer $layer -Root $layer.root | Where-Object { (-not (Test-OrdinalEqual $_ '.claude-plugin')) -or $claudeDeclared })
     Remove-FolderExtras -Folder $folder -Items $items -Top
     foreach ($item in $items) {
-        $source = Join-Path $layer.root $item
+        $source = Join-MaxstackPath $layer.root $item
         if (-not (Test-Path -LiteralPath $source)) { throw "Plugin layer '$($layer.name)' is missing: $source" }
-        $destination = Join-Path $folder $item
+        $destination = Join-MaxstackPath $folder $item
         Remove-OwnedTree $destination
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
     }
-    $entryPath = Join-Path $folder ($spec.entry -replace '/', '\')
+    $entryPath = Join-MaxstackPath $folder (ConvertTo-MaxstackPath $spec.entry)
     if (-not (Test-Path -LiteralPath $entryPath -PathType Leaf)) {
         throw "Plugin layer '$($layer.name)' has no entry at $entryPath. Check runtimes.opencode.entry in layers.json."
     }
     Write-Host "Copied plugin layer '$($layer.name)' into $folder"
 
-    $installDir = if ((Test-OrdinalEqual $spec.dir '')) { $folder } else { Join-Path $folder ($spec.dir -replace '/', '\') }
+    $installDir = if ((Test-OrdinalEqual $spec.dir '')) { $folder } else { Join-MaxstackPath $folder (ConvertTo-MaxstackPath $spec.dir) }
     $shippedLocks = Get-ShippedLocks $installDir
-    if ((Test-Path -LiteralPath (Join-Path $installDir 'package.json') -PathType Leaf) -and -not (Test-Path -LiteralPath (Join-Path $installDir 'node_modules\@opencode\plugin'))) {
+    if ((Test-Path -LiteralPath (Join-MaxstackPath $installDir 'package.json') -PathType Leaf) -and -not (Test-Path -LiteralPath (Join-MaxstackPath $installDir 'node_modules/@opencode/plugin'))) {
         Write-Host 'Installing plugin dependencies'
         # --ignore-scripts: a layer's own install scripts, and its dependencies', never run from a checkout the installer reads.
         & npm install --prefix $installDir --omit=dev --no-audit --no-fund --ignore-scripts
@@ -3972,13 +3955,13 @@ foreach ($layer in $openCodeLayers) {
 
     $agentNamesByLayer[$layer.name] = @()
     if ($spec.agents) {
-        $agentsSource = Join-Path $layer.root ($spec.agents -replace '/', '\')
+        $agentsSource = Join-MaxstackPath $layer.root (ConvertTo-MaxstackPath $spec.agents)
         if (-not (Test-Path -LiteralPath $agentsSource -PathType Container)) {
             throw "Plugin layer '$($layer.name)' names agents at $agentsSource, which does not exist."
         }
         New-Item -ItemType Directory -Path $agentsTarget -Force | Out-Null
         foreach ($agent in @(Get-ChildItem -LiteralPath $agentsSource -Filter '*.md')) {
-            $destination = Join-Path $agentsTarget $agent.Name
+            $destination = Join-MaxstackPath $agentsTarget $agent.Name
             Copy-Item -LiteralPath $agent.FullName -Destination $destination -Force
             Remove-AgentModel -Path $destination
             Write-Host "Installed agent profile $($agent.Name)"
@@ -4010,9 +3993,9 @@ foreach ($layer in $layers) { $layerByName[$layer.name] = $layer }
 if ($claudeSelected) {
     New-Item -ItemType Directory -Path $claudePluginsTarget -Force | Out-Null
     foreach ($record in $claudeRecords) {
-        $child = Join-Path $claudePluginsTarget $record.plugin
+        $child = Join-MaxstackPath $claudePluginsTarget $record.plugin
         if ((Test-OrdinalEqual $record.kind 'junction')) {
-            $target = Join-Path $Workspace $record.target
+            $target = Join-MaxstackPath $Workspace $record.target
             if (-not (Test-ClaudeJunction -Child $child -Target $target)) {
                 Remove-ClaudeChild $child
                 New-Item -ItemType Junction -Path $child -Target $target | Out-Null
@@ -4031,7 +4014,7 @@ if ($claudeSelected) {
                 Write-Host "Copied Claude plugin '$($record.plugin)' from $($layerByName[$record.layer].root)"
             }
         }
-        $declared = Get-Field (Get-Content -LiteralPath (Join-Path $child '.claude-plugin\plugin.json') -Raw | ConvertFrom-Json) 'name'
+        $declared = Get-Field (Get-Content -LiteralPath (Join-MaxstackPath $child '.claude-plugin/plugin.json') -Raw | ConvertFrom-Json) 'name'
         if (-not (Test-OrdinalEqual $declared $record.plugin)) {
             throw "Claude plugin '$($record.plugin)' materialised at $child names '$declared' in its manifest."
         }
@@ -4070,7 +4053,7 @@ if ($copilotKept) {
 # they name is installed when they are written.
 foreach ($record in $piRecords) {
     if ($record.package) { Assert-PiKeyInstalled $record }
-    if ($record.skills -and -not (Test-Path -LiteralPath (Join-Path $Workspace ($record.skills -replace '/', '\')) -PathType Container)) {
+    if ($record.skills -and -not (Test-Path -LiteralPath (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $record.skills)) -PathType Container)) {
         throw "Layer '$($record.layer)' has no skills folder at $($record.skills) after the install. Check runtimes.pi and the layer's files list."
     }
 }
@@ -4119,7 +4102,7 @@ foreach ($record in $claudeRecords) { $claudeByLayer[$record.layer] = $record }
 $layerRecords = foreach ($layer in $allLayers) {
     $record = $claudeByLayer[$layer.name]
     if ($record) {
-        $child = Join-Path $claudePluginsTarget $record.plugin
+        $child = Join-MaxstackPath $claudePluginsTarget $record.plugin
         $treeSha = Get-LegacyTreeSha256 $child
         if ((Test-OrdinalEqual $record.kind 'junction')) {
             $claude = [pscustomobject]@{

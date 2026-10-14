@@ -1,6 +1,7 @@
 # platforms: windows
 # The ordinal helpers, which every comparison here uses.
 . (Join-Path $PSScriptRoot 'Install-Ordinal.ps1')
+. (Join-Path $PSScriptRoot 'Install-Paths.ps1')
 # Layer sources: the -Source and -LayerSource overrides, how each layer's source is chosen, and the source
 # record the lock keeps. A layer installs from a git source (a url, a ref, and the commit the ref resolved to) or
 # from a local working tree. layers.json gives each layer's default source. An override changes the source for one
@@ -45,7 +46,7 @@ function Test-TestSeam {
 }
 
 # The form of a path that comparisons use: a long-path prefix is dropped, and each junction or symbolic link on the
-# way is followed, so a path through a link compares equal to the folder it names. Case is ignored. A drive that is not
+# way is followed, so a path through a link compares equal to the folder it names. Case follows the platform. A drive that is not
 # present yields the path as written, so a folder on it compares as missing rather than failing the run.
 function Get-NormalPath {
     param([string] $Path)
@@ -53,10 +54,10 @@ function Get-NormalPath {
     $text = [IO.Path]::GetFullPath((Remove-LongPathPrefix $Path))
     $root = [IO.Path]::GetPathRoot($text)
     $current = $root
-    foreach ($segment in @($text.Substring($root.Length).Split('\', [StringSplitOptions]::RemoveEmptyEntries))) {
+    foreach ($segment in @($text.Substring($root.Length).Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries))) {
         $current = Resolve-PathLink ([IO.Path]::Combine($current, $segment))
     }
-    return $current.TrimEnd('\').ToLowerInvariant()
+    return [IO.Path]::TrimEndingDirectorySeparator($current)
 }
 
 # The folder a junction or symbolic link names, or the path itself when it is not a link or cannot be read.
@@ -307,7 +308,7 @@ function Read-TreeFilterNames {
     # stops on is different: git reads its config first, so a config it cannot parse fails here, and the tree is unreadable.
     if ($repo.code -ne 0) {
         $reason = [string] (@($repo.stderr) | Select-Object -First 1)
-        $hasGitEntry = Test-Path -LiteralPath (Join-Path $Dir '.git')
+        $hasGitEntry = Test-Path -LiteralPath (Join-MaxstackPath $Dir '.git')
         if (-not $hasGitEntry -or $reason -match 'not a git repository') { return [pscustomobject]@{ names = @(); fault = $null } }
         if ($reason -match 'dubious ownership') { return [pscustomobject]@{ names = @(); fault = $script:DubiousOwnershipReason } }
         return [pscustomobject]@{ names = @(); fault = "config cannot be read: $reason" }
@@ -390,7 +391,7 @@ function Get-GitEnvironmentFault {
 function Invoke-GitNeutral {
     param([string[]] $Arguments, $Settings, [int] $TimeoutSeconds = 0)
 
-    $folder = Join-Path ([IO.Path]::GetTempPath()) ('maxstack-git-' + [guid]::NewGuid().ToString('N'))
+    $folder = Join-MaxstackPath ([IO.Path]::GetTempPath()) ('maxstack-git-' + [guid]::NewGuid().ToString('N'))
     [void] [IO.Directory]::CreateDirectory($folder)
     try {
         $ceiling = ([IO.Path]::GetDirectoryName($folder)) -replace '\\', '/'
@@ -489,7 +490,7 @@ function Get-FullFolderPath {
 
     $full = [IO.Path]::GetFullPath((Remove-LongPathPrefix $Path))
     $root = [IO.Path]::GetPathRoot($full)
-    if ($full.Length -gt $root.Length) { return $full.TrimEnd('\') }
+    if ($full.Length -gt $root.Length) { return [IO.Path]::TrimEndingDirectorySeparator($full) }
     return $full
 }
 
@@ -497,12 +498,13 @@ function Get-FullFolderPath {
 # reach the network or a device, so they are refused by their text before any lookup. A folder name with a trailing dot or
 # space is refused too: Windows drops it when it normalises a path, so the folder used is not the one the path names.
 function Get-LocalTextFault {
-    param([string] $Path)
+    param([string] $Path, [string] $Platform = '')
 
-    if ($Path -match '^[\\/]{2}') { return 'has a UNC or device path, which cannot be a layer source.' }
+    $platformName = Get-MaxstackPathPlatform $Platform
+    if ((Test-OrdinalEqualIgnoreCase $platformName 'Windows') -and $Path -match '^[\\/]{2}') { return 'has a UNC or device path, which cannot be a layer source.' }
     foreach ($segment in @($Path -split '[\\/]')) {
         if ((Test-OrdinalEqual $segment '') -or (Test-OrdinalEqual $segment '.') -or (Test-OrdinalEqual $segment '..')) { continue }
-        if ($segment.EndsWith('.', [StringComparison]::Ordinal) -or $segment.EndsWith(' ', [StringComparison]::Ordinal)) {
+        if ((Test-OrdinalEqualIgnoreCase $platformName 'Windows') -and ($segment.EndsWith('.', [StringComparison]::Ordinal) -or $segment.EndsWith(' ', [StringComparison]::Ordinal))) {
             return 'has a folder name with a trailing dot or space, which cannot be a layer source.'
         }
     }
@@ -513,25 +515,29 @@ function Get-LocalTextFault {
 # The fault of a recorded local path, read by its text alone: no folder is looked at and no link is followed, so -InitSettings
 # checks the path the lock holds and nothing else. The rules are the text rules of Get-LocalPathFault.
 function Get-LocalPathTextFault {
-    param([string] $Path)
+    param([string] $Path, [string] $Platform = '')
 
-    $textFault = Get-LocalTextFault $Path
+    $platformName = Get-MaxstackPathPlatform $Platform
+    $windows = Test-OrdinalEqualIgnoreCase $platformName 'Windows'
+    $textFault = Get-LocalTextFault $Path $platformName
     if ($textFault) { return $textFault }
-    if (-not (Test-NonEmptyString $Path) -or $Path -notmatch '^[A-Za-z]:[\\/]') { return 'needs an absolute path.' }
-    foreach ($segment in @($Path -split '[\\/]')) {
-        if ($segment -cmatch '^[^~]{1,6}~\d+(\.[^.]{0,3})?$') { return 'has an 8.3 short name, which the seed would write and apply then refuses. Give the long path.' }
+    if (-not (Test-NonEmptyString $Path) -or -not (Test-MaxstackAbsolutePath $Path $platformName)) { return 'needs an absolute path.' }
+    if ($windows) {
+        foreach ($segment in @($Path -split '[\\/]')) {
+            if ($segment -cmatch '^[^~]{1,6}~\d+(\.[^.]{0,3})?$') { return 'has an 8.3 short name, which the seed would write and apply then refuses. Give the long path.' }
+        }
     }
-    $normal = (Get-FullFolderPath $Path).TrimEnd('\').ToLowerInvariant()
-    $root = [IO.Path]::GetPathRoot($normal).TrimEnd('\')
-    if (Test-OrdinalEqual $normal $root) { return 'is a drive or share root, which cannot be a layer source.' }
-    $workspaceNormal = (Get-FullFolderPath $Workspace).TrimEnd('\').ToLowerInvariant()
-    if (Test-OrdinalEqual $normal $workspaceNormal) { return 'is the workspace itself, which cannot be a layer source.' }
-    if ($workspaceNormal.StartsWith("$normal\", [StringComparison]::Ordinal)) {
+    $normal = Get-FullFolderPath $Path
+    $root = [IO.Path]::GetPathRoot($normal)
+    if (Test-MaxstackPathEqual $normal $root $platformName) { return 'is a drive or share root, which cannot be a layer source.' }
+    $workspaceNormal = Get-FullFolderPath $Workspace
+    if (Test-MaxstackPathEqual $normal $workspaceNormal $platformName) { return 'is the workspace itself, which cannot be a layer source.' }
+    if (Test-MaxstackPathInside $workspaceNormal $normal $platformName) {
         return 'is an ancestor of the workspace, and a layer cannot contain the installer that reads it.'
     }
     foreach ($output in @('.claude', '.opencode', '.pi', '.maxstack')) {
-        $folder = (Join-Path $Workspace $output).ToLowerInvariant()
-        if ((Test-OrdinalEqual $normal $folder) -or $normal.StartsWith("$folder\", [StringComparison]::Ordinal)) {
+        $folder = Join-MaxstackPath $Workspace $output
+        if ((Test-MaxstackPathEqual $normal $folder $platformName) -or (Test-MaxstackPathInside $normal $folder $platformName)) {
             return "is inside $output, which the installer writes, so it cannot be a layer source."
         }
     }
@@ -545,21 +551,23 @@ function Get-LocalPathTextFault {
 function Get-LocalPathFault {
     param($Path)
 
-    $textFault = Get-LocalTextFault $Path
+    $platformName = Get-MaxstackPathPlatform
+    $windows = Test-OrdinalEqualIgnoreCase $platformName 'Windows'
+    $textFault = Get-LocalTextFault $Path $platformName
     if ($textFault) { return $textFault }
-    if (-not (Test-NonEmptyString $Path) -or $Path -notmatch '^[A-Za-z]:[\\/]') { return 'needs an absolute path.' }
-    try { Assert-MaxstackShortNames $Path 'local' } catch { return $_.Exception.Message.Substring('local path '.Length) }
+    if (-not (Test-NonEmptyString $Path) -or -not (Test-MaxstackAbsolutePath $Path $platformName)) { return 'needs an absolute path.' }
+    if ($windows) { try { Assert-MaxstackShortNames $Path 'local' } catch { return $_.Exception.Message.Substring('local path '.Length) } }
     $full = Get-FullFolderPath $Path
-    if (Test-OrdinalEqualIgnoreCase $full.TrimEnd('\') ([IO.Path]::GetPathRoot($full)).TrimEnd('\')) { return 'is a drive or share root, which cannot be a layer source.' }
+    if (Test-MaxstackPathEqual $full ([IO.Path]::GetPathRoot($full)) $platformName) { return 'is a drive or share root, which cannot be a layer source.' }
     $normal = Get-NormalPath $full
     $workspaceNormal = Get-NormalPath $Workspace
-    if ((Test-OrdinalEqual $normal $workspaceNormal)) { return 'is the workspace itself, which cannot be a layer source.' }
-    if ($workspaceNormal.StartsWith("$normal\", [StringComparison]::Ordinal)) {
+    if (Test-MaxstackPathEqual $normal $workspaceNormal $platformName) { return 'is the workspace itself, which cannot be a layer source.' }
+    if (Test-MaxstackPathInside $workspaceNormal $normal $platformName) {
         return 'is an ancestor of the workspace, and a layer cannot contain the installer that reads it.'
     }
     foreach ($output in @('.claude', '.opencode', '.pi', '.maxstack')) {
-        $folder = Get-NormalPath (Join-Path $Workspace $output)
-        if ((Test-OrdinalEqual $normal $folder) -or $normal.StartsWith("$folder\", [StringComparison]::Ordinal)) {
+        $folder = Get-NormalPath (Join-MaxstackPath $Workspace $output)
+        if ((Test-MaxstackPathEqual $normal $folder $platformName) -or (Test-MaxstackPathInside $normal $folder $platformName)) {
             return "is inside $output, which the installer writes, so it cannot be a layer source."
         }
     }
@@ -626,14 +634,15 @@ function Read-SourceGrammar {
 # needs one that is absolute or relative to the workspace: a drive-relative or root-relative path, an empty one, or a
 # relative path with a .. component is unsafe. An absolute path may hold .. and is normalized, as -Source has always done.
 function Read-LocalGrammar {
-    param([string] $Path, [switch] $Settings)
+    param([string] $Path, [switch] $Settings, [string] $Platform = '')
 
-    $textFault = Get-LocalTextFault $Path
-        if ($textFault) { return (New-SourceFault 'local-text' " $textFault") }
-        $absolute = $Path -match '^[A-Za-z]:[\\/]'
+    $platformName = Get-MaxstackPathPlatform $Platform
+    $textFault = Get-LocalTextFault $Path $platformName
+    if ($textFault) { return (New-SourceFault 'local-text' " $textFault") }
+    $absolute = Test-MaxstackAbsolutePath $Path $platformName
     if ($Settings) {
         if ([string]::IsNullOrWhiteSpace($Path)) { return (New-SourceFault 'unsafe-local' ' has an unsafe local path.') }
-        if (-not $absolute -and $Path -match '^([A-Za-z]:|[\\/])') { return (New-SourceFault 'unsafe-local' ' has an unsafe local path.') }
+        if ((Test-OrdinalEqualIgnoreCase $platformName 'Windows') -and -not $absolute -and $Path -match '^([A-Za-z]:|[\\/])') { return (New-SourceFault 'unsafe-local' ' has an unsafe local path.') }
         if (-not $absolute -and $Path -match '(^|[\\/])\.\.([\\/]|$)') { return (New-SourceFault 'unsafe-local' ' has an unsafe local path.') }
     }
     return [pscustomobject]@{ kind = 'local'; code = $null; path = $Path; absolute = [bool] $absolute }
@@ -695,7 +704,7 @@ function Read-SourceSpecs {
         Assert-BoundaryText $name '-LayerSource name'
         $grammar = Read-SourceGrammar -Spec "local:$path"
         if ($null -ne $grammar.code) { throw "-LayerSource $name=$(ConvertTo-SafeName $path)$($grammar.reason)" }
-        $full = if ([IO.Path]::IsPathRooted($path)) { $path } else { Join-Path (Get-Location).ProviderPath $path }
+        $full = if ([IO.Path]::IsPathRooted($path)) { $path } else { Join-MaxstackPath (Get-Location).ProviderPath $path }
         Add-ExplicitSource -Table $table -Name $name -Spec (Read-LocalSpec -Name $name -Path $full) -LayerNames $LayerNames
     }
     return $table
@@ -714,7 +723,7 @@ function Join-SourceSub {
     param([string] $Root, [string] $Sub)
 
     if ([string]::IsNullOrEmpty($Sub) -or (Test-OrdinalEqual $Sub '.')) { return $Root }
-    return ([IO.Path]::Combine($Root, ($Sub -replace '/', '\')))
+    return Join-MaxstackPath $Root $Sub
 }
 
 # The state of a local checkout, read without writing: its HEAD commit and whether it holds uncommitted changes.
@@ -805,7 +814,7 @@ function New-DefaultChoice {
     if ($Layer.defaultGit) {
         return [pscustomobject]@{ kind = 'git'; url = $Layer.defaultUrl; ref = $Layer.defaultRef; commit = $Layer.defaultCommit; path = $null; checkout = $null; override = $false }
     }
-    $checkout = Join-Path $Workspace ($Layer.path -replace '/', '\')
+    $checkout = Join-MaxstackPath $Workspace $Layer.path
     return [pscustomobject]@{ kind = 'local'; url = $Layer.defaultUrl; ref = $null; commit = $null; path = $Layer.path; checkout = $checkout; override = $false }
 }
 
@@ -825,7 +834,7 @@ function New-LocalChoice {
     param($Layer, [string] $Path)
 
     $full = Get-FullFolderPath $Path
-    if (-not $Layer.defaultGit -and (Test-OrdinalEqual (Get-NormalPath $full) (Get-NormalPath (Join-Path $Workspace ($Layer.path -replace '/', '\'))))) {
+    if (-not $Layer.defaultGit -and (Test-MaxstackPathEqual (Get-NormalPath $full) (Get-NormalPath (Join-MaxstackPath $Workspace $Layer.path)))) {
         return (New-DefaultChoice $Layer)
     }
     return [pscustomobject]@{ kind = 'local'; url = $null; ref = $null; commit = $null; path = $full; checkout = $full; override = $true }
@@ -1083,7 +1092,7 @@ function Get-LocalSourceFolder {
     param([string] $Path)
 
     if ([IO.Path]::IsPathRooted($Path)) { return $Path }
-    return (Join-Path $Workspace ($Path -replace '/', '\'))
+    return (Join-MaxstackPath $Workspace $Path)
 }
 
 # The reason the guard cannot read a recorded local folder now, or $null. A folder that is gone is reported as missing instead.
@@ -1140,7 +1149,7 @@ function Format-DirtyState {
 function Test-CachedCommit {
     param([string] $Cache, [string] $Commit)
 
-    if ([string]::IsNullOrEmpty($Commit) -or -not (Test-Path -LiteralPath (Join-Path $Cache '.git'))) { return $false }
+    if ([string]::IsNullOrEmpty($Commit) -or -not (Test-Path -LiteralPath (Join-MaxstackPath $Cache '.git'))) { return $false }
     $present = Invoke-GitGuarded -Dir $Cache -Arguments @('--no-lazy-fetch', '-C', $Cache, 'cat-file', '-e', "$Commit^{commit}")
     return ($present.code -eq 0)
 }
@@ -1161,7 +1170,7 @@ function Test-NoLazyFetchSupport {
 function Get-MoveFilesNote {
     param($Layer, [string] $OldCommit)
 
-    $cache = Join-Path $claudeCacheTarget $Layer.name
+    $cache = Join-MaxstackPath $claudeCacheTarget $Layer.name
     if (-not (Test-NoLazyFetchSupport)) { return 'changed files unknown: git 2.44 or later is needed to read the cache without fetching' }
     if (-not (Test-CommitRef $OldCommit)) { return 'changed files unknown: the recorded commit is not a full SHA' }
     if (-not (Test-CachedCommit $cache $Layer.commit)) {

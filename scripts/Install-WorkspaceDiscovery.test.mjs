@@ -613,6 +613,15 @@ test('a drive-relative or root-relative user value is refused, and never resolve
   assertRefused({ envWorkspace: driveRelative, cwd: root }, /MAXSTACK_WORKSPACE path is drive-relative/, 'MAXSTACK_WORKSPACE drive-relative');
 }));
 
+test('POSIX absolute workspace paths follow injected macOS discovery rules', { skip: !shell }, () => {
+  const helperPath = helper.replaceAll("'", "''");
+  const ordinal = join(repoRoot, 'scripts', 'Install-Ordinal.ps1').replaceAll("'", "''");
+  const paths = join(repoRoot, 'scripts', 'Install-Paths.ps1').replaceAll("'", "''");
+  const command = `. '${ordinal}'; . '${paths}'; . '${helperPath}'; $full = ConvertTo-MaxstackFullPath '/Users/name/dev/workspace' '-Workspace' (Get-Location).Path 'macOS'; if (-not (Test-MaxstackAbsolutePath '/Users/name/dev/workspace' 'macOS')) { throw 'POSIX path was not absolute under macOS rules' }; if (-not $full) { throw 'POSIX path did not resolve' }`;
+  const run = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true, encoding: 'utf8' });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+});
+
 // The repo root is excluded as a folder and everything under it. A sibling whose name only starts with the same letters is not under it.
 test('a folder whose name only starts with the repo root name is not under the repo root', { skip: !shell }, () => withRoot((root) => {
   const checkout = makeCheckout(root, 'clone');
