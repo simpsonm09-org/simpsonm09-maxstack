@@ -134,28 +134,34 @@ If T3 reports that the provider could not start a turn, read the server log for 
 
 ## Codex (maxstack)
 
-The `codex` runtime gives OpenAI Codex the workspace's skills, instructions, and the org layer's access gate. It is opt-in: select it with `-Runtimes codex` or in `maxstack.settings.json`. The installer copies each selected layer's skills into the workspace's `.agents\skills` folder.
+The opt-in `codex` runtime installs selected layer skills and makes the workspace instructions available to Codex. Select it with `-Runtimes codex` or `maxstack.settings.json`.
 
 Set up a Codex provider instance in T3 Code:
 
-1. Add a Codex instance named `Codex (maxstack)`. Leave Binary path, CODEX_HOME path, and Shadow home path at their defaults.
-2. Set Launch arguments to the line the installer prints. When no layer ships a Codex gate hook, that line is exactly this one:
+1. Add a Codex instance named `Codex (maxstack)`. Keep CODEX_HOME path and Shadow home path at their defaults. On Windows, use the package's native `codex.exe` as Binary path when T3 would start the npm `codex.cmd` shim through a shell. The fixed argument contains brackets and quotes that shell parsing can alter.
+2. Set Launch arguments to this fixed line. The installer prints it every time. It never changes.
 
    ```text
    -c 'project_root_markers=["stack.lock.json"]'
    ```
 
-Codex treats the git root of a session as the project root, so a repository under `projects\repos` never sees the workspace's skills or instructions. The marker makes the workspace the project root, so every repository under the workspace sees the workspace's skills and `AGENTS.md`.
+Codex normally uses the repository root as its project root. The marker makes the workspace the project root, so repositories under it can read its skills and `AGENTS.md`.
 
 ### The access gate line
 
-When a selected layer's installed copy carries a Codex PreToolUse hook, the installer prints a longer Launch-arguments line instead of the marker line. The line carries the marker, the hook definition, and a `hooks.state` entry that marks the hook trusted. Codex skips a hook it does not trust, so that entry is what turns the hook on.
+When a selected layer ships the Codex gate hook and its OpenCode copy is installed, maxstack writes only the `PreToolUse` hook definition to `.codex/config.toml`. It records that file in `stack.lock.json`. It keeps an unowned file, and it keeps a hand-edited owned file. Remove and uninstall delete the file only while it still matches the recorded bytes. If an unowned `.codex/config.toml` already exists, add the hook there by hand.
 
-The installer builds the line with `scripts/codex-hook-trust.mjs`. It reads the hook's key and hash from `codex app-server` `hooks/list`, then confirms that Codex reports the hook trusted. It runs with an empty temporary `CODEX_HOME`, so it needs no login and makes no model call. A failed run prints the plain marker line and a warning, and the install still succeeds.
+After apply, do this once in the workspace folder:
 
-Codex reads a hook's definition, not the hook script's bytes, when it decides trust. Paste the line into the instance's Launch arguments, and paste it again whenever the installer prints a different one. A changed hook definition, a moved hook path, or a changed timeout changes the key or the hash, and the old line no longer trusts the hook.
+1. Run `codex`.
+2. Choose to trust the workspace folder.
+3. Approve the hook in Codex's hook review, opened with `/hooks`.
 
-A layer's hook lives inside the layer's installed copy under `.opencode\plugins`, which only the `opencode` runtime writes. Select `opencode` with `codex` to get the gate line. With `codex` alone, the installer prints the marker line and a note naming that runtime. maxstack supports one gate hook, so when more than one layer ships one, the installer uses the first and says so.
+Codex lists `/hooks` as its lifecycle hook review command in [the v0.162.1 slash-command source](https://github.com/openai/codex/blob/rust-v0.162.1/codex-rs/tui/src/slash_command.rs). Codex stores project trust and hook approval in the active user config. maxstack never reads or writes that config. Repeat the approval only when apply or `-Status` reports: `the Codex hook changed since the last apply: approve it again in Codex`. Status compares the hook's current hash from `codex app-server` `hooks/list` with the hash in the lock. It cannot see whether the user approved the hook.
+
+The org layer blocks GitHub writes through the Codex `Bash` hook. By owner decision this applies in every repository. Codex does not report a command's working folder to this hook, so the gate cannot select a repository-specific access level.
+
+The gate covers shell commands only, including unified exec. File edits, MCP tools, and hosted tools are outside it. It is a guardrail: Codex skips an unapproved hook, and a missing `node`, hook script, or a timeout lets the command through. The gate turns `ask` into deny. maxstack supports one gate hook and uses the first selected layer that ships one.
 
 ### What the gate covers on Codex
 
@@ -170,9 +176,9 @@ What Codex receives:
 
 - Skills: each selected layer's skills, as folders under `.agents\skills`. The lock owns each folder.
 - Instructions: the generated workspace root `AGENTS.md`, or an existing user `AGENTS.md` that maxstack kept. Codex reads it only when the launch arguments name `stack.lock.json`. If a root collision sends the shared text to `.maxstack/workspace-instructions.md`, Codex does not load that fallback automatically.
-- The access gate: the org layer's PreToolUse hook, when the gate line is set. MCP servers and custom agents are not delivered yet.
+- The access gate: the org layer's PreToolUse hook from `.codex/config.toml`, when approved in Codex. MCP servers and custom agents are not delivered yet.
 
-Verified: `codex debug prompt-input` from a nested repository reads the generated workspace `AGENTS.md` when the launch arguments name the marker. This probe needs no login and makes no model call. The installer tests cover generated files, collision handling, and OpenCode's entry. A T3 Codex session and a live turn with the trusted line are not verified.
+Verified: `codex debug prompt-input` from a nested repository reads the generated workspace `AGENTS.md` when the launch arguments name the marker. This probe needs no login and makes no model call. Hook discovery and trust are measured separately with `codex app-server hooks/list`. A T3 Codex session and a live gated turn are not verified.
 
 ## Cursor and Antigravity
 
