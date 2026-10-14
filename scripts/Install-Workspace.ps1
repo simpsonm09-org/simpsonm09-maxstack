@@ -148,7 +148,7 @@ $retiredOpenCodeFolders = @('pstack-opencode')
 # each record's runtime and layers, which -Remove and -Uninstall need to pick the records to delete.
 $ownedSchemaVersion = 2
 # File outputs whose creation state is recorded for uninstall. Config and Pi settings can also have backups.
-$replacedFileNames = @('opencode.jsonc', '.pi/agent/settings.json', 'AGENTS.md', 'CLAUDE.md', '.maxstack/workspace-instructions.md')
+$replacedFileNames = @('opencode.jsonc', '.pi/agent/settings.json', 'AGENTS.md', 'CLAUDE.md', '.maxstack/workspace-instructions.md', '.pstack/pstack-t3-instances.json')
 
 # The text an installed profile holds once its model line is removed, or $null when the profile
 # has no frontmatter, which leaves the copy as it is.
@@ -210,6 +210,84 @@ function Get-PriorWorkspaceInstructionRecord {
     } | Select-Object -First 1)
     if ($matches.Count -eq 0) { return $null }
     return $matches[0]
+}
+
+function Get-PriorOwnedFileRecord {
+    param([string] $Path)
+
+    if ($null -eq $priorOwned) { return $null }
+    $matches = @($priorOwned | Where-Object { (Test-OrdinalEqual $_.path $Path) -and (Test-OrdinalEqual $_.kind 'file') } | Select-Object -First 1)
+    if ($matches.Count -eq 0) { return $null }
+    return $matches[0]
+}
+
+function Get-T3InstancesPlan {
+    param([object[]] $Layers, [string[]] $SelectedLayers, $Settings)
+
+    $relative = '.pstack/pstack-t3-instances.json'
+    $prior = Get-PriorOwnedFileRecord $relative
+    $full = Join-Path $Workspace ($relative -replace '/', '\')
+    $instances = @()
+    if ($Settings.present -and $Settings.value.Contains('t3') -and $Settings.value.t3.Contains('gatedInstances')) {
+        $instances = @($Settings.value.t3.gatedInstances)
+    }
+    if ($instances.Count -gt 0) {
+        $selectedModels = @($Layers | Where-Object { Test-OrdinalIn $_.name $SelectedLayers })
+        $selectedNames = @($selectedModels | ForEach-Object { $_.name })
+        $gate = $false
+        foreach ($layer in $selectedModels) {
+            if ($null -eq $layer.root) { continue }
+            $hooks = Join-Path $layer.root 'hooks'
+            if ((Test-Path -LiteralPath (Join-Path $hooks 'pre-tool-use.mjs') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $hooks 'lib/codex.mjs') -PathType Leaf)) { $gate = $true; break }
+        }
+        $entries = [ordered]@{}
+        foreach ($instance in $instances) { $entries[$instance] = [ordered]@{ layers = @($selectedNames); gate = $gate } }
+        $text = ConvertTo-Json -InputObject ([ordered]@{ instances = $entries }) -Depth 8
+        $text = $text.Replace("`r`n", "`n").Replace("`r", "`n") + "`n"
+        if ((Test-Path -LiteralPath $full) -and $null -eq $prior) {
+            Write-Host 'Kept .pstack/pstack-t3-instances.json: it exists and was not written by maxstack.'
+            return $null
+        }
+        $preserve = $false
+        if ((Test-Path -LiteralPath $full) -and $null -ne $prior) {
+            $preserve = (Test-ReparsePoint $full) -or (-not (Test-Path -LiteralPath $full -PathType Leaf))
+            if (-not $preserve) { $preserve = -not (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $prior.sha256) }
+        }
+        if ($preserve) { Write-Host 'Kept .pstack/pstack-t3-instances.json: it changed since the last apply, so it was not overwritten.' }
+        return [pscustomobject]@{ path = $relative; text = $text; sha256 = Get-TextSha256 $text; runtime = 't3-gated-instances'; layers = @($selectedNames); preserve = $preserve }
+    }
+    if ($null -eq $prior) { return $null }
+    if ((Test-Path -LiteralPath $full) -and ((Test-ReparsePoint $full) -or (-not (Test-Path -LiteralPath $full -PathType Leaf)) -or (-not (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $prior.sha256)))) {
+        Write-Host 'Kept .pstack/pstack-t3-instances.json: it changed since the last apply, so it was not removed.'
+        return [pscustomobject]@{ path = $relative; text = $null; sha256 = $prior.sha256; runtime = 't3-gated-instances'; layers = @($prior.layers); preserve = $true }
+    }
+    return $null
+}
+
+function Write-T3InstancesFile {
+    param($Plan)
+
+    $relative = '.pstack/pstack-t3-instances.json'
+    $full = Join-Path $Workspace ($relative -replace '/', '\')
+    $prior = Get-PriorOwnedFileRecord $relative
+    if ($null -eq $Plan) {
+        if ($null -eq $prior -or -not (Test-Path -LiteralPath $full -PathType Leaf)) { return }
+        if ((Test-ReparsePoint $full) -or (-not (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $prior.sha256))) {
+            Write-Host 'Kept .pstack/pstack-t3-instances.json: it changed since the last apply, so it was not removed.'
+            return
+        }
+        Remove-Item -LiteralPath $full -Force
+        Write-Host 'Removed .pstack/pstack-t3-instances.json: no gated instances are listed.'
+        return
+    }
+    if (Test-IsTrue $Plan.preserve) { return }
+    if ((Test-Path -LiteralPath $full -PathType Leaf) -and (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $Plan.sha256) -and (Test-OrdinalEqual ([IO.File]::ReadAllText($full)) $Plan.text)) {
+        Write-Host 'T3 instance list already matches: .pstack/pstack-t3-instances.json'
+        return
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $full) -Force | Out-Null
+    Write-FileAtomically $full $Plan.text
+    Write-Host 'Wrote .pstack/pstack-t3-instances.json'
 }
 
 function Read-WorkspaceInstruction {
@@ -872,6 +950,7 @@ function Get-OwnedRuntime {
     if ((Test-OrdinalIn $Path @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh'))) { return 'copilot' }
     if ($Path.StartsWith('.maxstack/bin/pi.', [StringComparison]::Ordinal) -or $Path.StartsWith('.pi/', [StringComparison]::Ordinal)) { return 'pi' }
     if ($Path.StartsWith('.agents/skills/', [StringComparison]::Ordinal)) { return 'codex' }
+    if ((Test-OrdinalEqual $Path '.pstack/pstack-t3-instances.json')) { return 't3-gated-instances' }
     return $null
 }
 
@@ -1904,7 +1983,7 @@ function Get-OwnedRecords {
         # A planned backup is recorded once the apply has written it, and not before.
         if ((Get-Field $record 'backup') -and -not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
         if (Test-IsTrue (Get-Field $record 'preserve')) {
-            $prior = Get-PriorWorkspaceInstructionRecord $record.path
+            $prior = Get-PriorOwnedFileRecord $record.path
             if ($null -ne $prior) { $prior }
             continue
         }
@@ -1987,7 +2066,7 @@ function Get-OwnershipReport {
 
     foreach ($record in @($Recorded)) {
         $runtime = Get-OwnedRuntime $record.path
-        if (($null -ne $runtime) -and (-not (Test-OrdinalIn $runtime $SelectedRuntimes))) {
+        if (($null -ne $runtime) -and (-not (Test-OrdinalIn $runtime $SelectedRuntimes)) -and (-not (Test-OrdinalEqual $runtime 't3-gated-instances'))) {
             if ($notSelectedLabels.Add($record.path)) { $results.Add([pscustomobject]@{ state = 'not selected'; label = $record.path }) }
             continue
         }
@@ -2110,7 +2189,7 @@ function Get-InstallerDirectories {
     param([object[]] $Layers, [switch] $Codex)
 
     $dirs = [System.Collections.Generic.List[string]]::new()
-    foreach ($dir in @('.claude', '.claude/plugins', '.claude/cache', '.opencode', '.opencode/plugins', '.opencode/agents', '.maxstack', '.maxstack/bin', '.pi', '.pi/agent')) {
+    foreach ($dir in @('.claude', '.claude/plugins', '.claude/cache', '.opencode', '.opencode/plugins', '.opencode/agents', '.maxstack', '.maxstack/bin', '.pi', '.pi/agent', '.pstack')) {
         $dirs.Add($dir)
     }
     if ($Codex) { $dirs.Add('.agents'); $dirs.Add('.agents/skills') }
@@ -2157,7 +2236,7 @@ $quarantineSuffix = '.maxstack-removing'
 $groupFileNames = @('opencode.jsonc', '.pi/agent/settings.json')
 
 function Test-InstallerOutputs {
-    foreach ($path in @('.opencode/plugins', '.opencode/agents', '.claude/plugins', '.claude/cache', '.maxstack/bin')) {
+    foreach ($path in @('.opencode/plugins', '.opencode/agents', '.claude/plugins', '.claude/cache', '.maxstack/bin', '.pstack/pstack-t3-instances.json')) {
         if (Test-Path -LiteralPath (Join-Path $Workspace ($path -replace '/', '\'))) { return $true }
     }
     return $false
@@ -3448,6 +3527,8 @@ foreach ($layer in @($layers | Where-Object { $null -ne $_.url })) { $layer.root
 # Validate and compose layer instructions before any workspace file is written.
 $workspaceInstructionPlan = Get-WorkspaceInstructionPlan -Layers $layers -SelectedRuntimes $selectedRuntimes
 $workspaceInstructionFiles = @($workspaceInstructionPlan.files)
+$t3InstancesPlan = Get-T3InstancesPlan -Layers $layers -SelectedLayers $selectedLayers -Settings $workspaceSettings
+if ($removing) { $t3InstancesPlan = $null }
 
 # codex copies each selected layer's skills from the layer root, so the roots must be known. Its checks run before any write.
 $codexSkills = @()
@@ -3660,6 +3741,7 @@ if ($Apply -or $removing -or $updating -or ($null -ne $priorOwned)) {
         -OpenCodeSpecs $openCodeSpecs -CopilotCmdText $copilotCmdText -CopilotShText $copilotShText `
         -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown `
         -CodexSkills $codexSkills -WorkspaceInstructionFiles $workspaceInstructionFiles
+    if ($null -ne $t3InstancesPlan) { $plan += [pscustomobject]@{ path = $t3InstancesPlan.path; kind = 'file'; sha256 = $t3InstancesPlan.sha256; runtime = $t3InstancesPlan.runtime; layers = @($t3InstancesPlan.layers); preserve = $t3InstancesPlan.preserve } }
 }
 
 # The Claude plugin folders, and the OpenCode folders that no unselected layer owns. An unselected
@@ -3729,6 +3811,16 @@ if (-not $Apply) {
         }
     } else {
         Write-Host 'Workspace instructions: none selected layers declare workspaceInstructions.'
+    }
+    if ($null -ne $t3InstancesPlan) {
+        $t3Path = Join-Path $Workspace ($t3InstancesPlan.path -replace '/', '\')
+        $t3State = if (Test-IsTrue $t3InstancesPlan.preserve) { 'modified by hand; would keep' } else { Get-DriftState -Path $t3Path -Text $t3InstancesPlan.text }
+        Write-Host "T3 instance list: would write or keep $($t3InstancesPlan.path) ($t3State)"
+    } elseif ($null -ne (Get-PriorOwnedFileRecord '.pstack/pstack-t3-instances.json')) {
+        $t3Path = Join-Path $Workspace '.pstack/pstack-t3-instances.json'
+        $t3Record = Get-PriorOwnedFileRecord '.pstack/pstack-t3-instances.json'
+        $t3State = if (-not (Test-Path -LiteralPath $t3Path -PathType Leaf)) { 'missing; ownership will be cleared' } elseif ((Test-ReparsePoint $t3Path) -or (-not (Test-OrdinalEqual (Get-FileHash -LiteralPath $t3Path -Algorithm SHA256).Hash $t3Record.sha256))) { 'modified by hand; would keep' } else { 'would remove' }
+        Write-Host "T3 instance list: $t3State .pstack/pstack-t3-instances.json"
     }
     if ($openCodeSelected) {
         Write-Host "Config target:  $configTarget"
@@ -3817,6 +3909,7 @@ if ($openCodeSelected) {
 }
 
 Write-WorkspaceInstructionFiles -Files $workspaceInstructionFiles -PriorOwned $priorOwned
+Write-T3InstancesFile -Plan $t3InstancesPlan
 
 # Each OpenCode layer gets its own folder under .opencode\plugins, holding the items the
 # layer names. The entry's own folder is the npm install point, so its SDK resolves there.

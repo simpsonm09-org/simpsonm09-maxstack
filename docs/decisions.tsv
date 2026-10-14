@@ -1,4 +1,5 @@
 ts	phase	decision	why	evidence	result
+2026-10-13T00:00:00-04:00	T3 gated instances	write a per-machine gated instance allow-list from workspace settings	prevent delegated work from reaching instances without the workspace layers and gate	maxstack.settings.json, stack.lock.json ownership	implemented
 2026-09-26T17:12:07.8362260-04:00	start	started the three-repository OpenCode and OpenChamber setup	keep the rename, adapters, runtime installs, and private publication reviewable	user request, SETUP-PLAN.md	in progress
 2026-09-26T17:12:07.8362260-04:00	frame	preserve the existing maxstack and dev-setup remotes, and create a separate private repo for the renamed scratch project	both setup repositories already have remotes; the scratch directory has no Git metadata	git status and remote checks for maxstack and simpsonm09-dev-setup; projects/repos listing	verified
 2026-09-26T17:12:07.8362260-04:00	frame	treat WSL and OpenChamber as separate OpenCode runtimes	OpenChamber uses a bundled Windows CLI while Ubuntu WSL has no opencode command on PATH	OpenChamber process path; WSL `which opencode` result	verified

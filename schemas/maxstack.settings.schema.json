@@ -43,6 +43,11 @@
         "defaults": {
           "enum": ["leave-alone", "apply-defaults"],
           "default": "leave-alone"
+        },
+        "gatedInstances": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
         }
       }
     }

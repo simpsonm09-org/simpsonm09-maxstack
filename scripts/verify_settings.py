@@ -92,7 +92,7 @@ def _check_nested_keys(properties: dict, validator: str, failures: list[str]) ->
             "T3",
             "t3",
             r"Assert-SettingsObjectKeys \$value\.t3 @\(([^)]*)\)",
-            ("cli", "snapshot", "defaults"),
+            ("cli", "snapshot", "defaults", "gatedInstances"),
         ),
     )
     for block_name, property_name, pattern, expected in nested:
@@ -200,6 +200,22 @@ def _check_closed_objects(properties: dict, failures: list[str]) -> None:
             failures.append(f"settings schema {name} entries must be closed objects")
 
 
+def _check_gated_instances(properties: dict, failures: list[str]) -> None:
+    t3 = properties.get("t3")
+    t3_properties = t3.get("properties") if isinstance(t3, dict) else None
+    gated = t3_properties.get("gatedInstances") if isinstance(t3_properties, dict) else None
+    items = gated.get("items") if isinstance(gated, dict) else None
+    if (
+        not isinstance(gated, dict)
+        or gated.get("type") != "array"
+        or gated.get("uniqueItems") is not True
+        or not isinstance(items, dict)
+        or items.get("type") != "string"
+        or items.get("pattern") != r"^[A-Za-z0-9_-]+$"
+    ):
+        failures.append("settings schema t3.gatedInstances must match the installer id rules")
+
+
 def _check_schema(
     schema: dict, constants: dict, validator: str, failures: list[str]
 ) -> None:
@@ -240,6 +256,7 @@ def _check_schema(
     _check_enums(properties, constants, failures)
     _check_source_length(properties, validator, failures)
     _check_closed_objects(properties, failures)
+    _check_gated_instances(properties, failures)
 
 
 def _check_seed(seed: dict, layer_names: tuple, failures: list[str]) -> None:
@@ -248,13 +265,16 @@ def _check_seed(seed: dict, layer_names: tuple, failures: list[str]) -> None:
     except SettingsRefusal as error:
         failures.append(f"workspace/maxstack.settings.json {error}")
         return
+    valid_seed_keys = list(seed) == ["version"] or list(seed) == ["version", "t3"]
+    valid_seed_t3 = seed.get("t3") == {"gatedInstances": []}
     if (
-        list(seed) != ["version"]
+        not valid_seed_keys
         or type(seed["version"]) is not int
         or seed["version"] != 1
+        or ("t3" in seed and not valid_seed_t3)
     ):
         failures.append(
-            "workspace/maxstack.settings.json must be the path-free version 1 seed"
+            "workspace/maxstack.settings.json must be the path-free version 1 seed with no machine ids"
         )
 
 

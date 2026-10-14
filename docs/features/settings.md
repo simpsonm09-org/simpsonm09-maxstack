@@ -42,7 +42,8 @@ pwsh -File scripts/Install-Workspace.ps1 -Status
     "simpsonm09-org-ai-plugin": {}
   },
   "t3": {
-    "defaults": "leave-alone"
+    "defaults": "leave-alone",
+    "gatedInstances": ["<instance-id>"]
   }
 }
 ```
@@ -56,6 +57,8 @@ Every key and every string value in the file is checked for a control, a format 
 On a new workspace, a named settings dimension selects exactly its listed names. A dimension omitted from the file keeps the current behavior: the default names on a new workspace, or the names in the lock. The default runtimes are `claude`, `opencode`, `copilot`, and `pi`. `codex` is opt-in, so it is selected only when the file lists it under `runtimes`, or a command line names it or `all`. `-Update` stays with the recorded selection. A new selection in the file is reported as pending and needs `-Apply`.
 
 `runtimes.<name>.cli` and `t3.cli` accept `detect` or `install`. They are recorded and validated, but CLI installation is not supported in this release.
+
+`t3.gatedInstances` is an optional array of unique, non-empty ids. Each id may contain only ASCII letters, digits, hyphens, and underscores. On apply, a non-empty list writes `.pstack/pstack-t3-instances.json` for the selected layers. An empty or omitted list removes a previously generated, unchanged file. The list is per-machine configuration and has no defaults.
 
 `layers.<name>.source` takes the `-Source` grammar: `owner/repo@ref`, an `https://` URL with `@ref`, `local:<path>`, or `default`. A source may not hold a control character, a format character, a line or paragraph separator, an unpaired surrogate, or a non-breaking space. A relative `local:` path resolves from the workspace folder only. It may not climb with `..`, be drive-relative or root-relative (a leading slash is root-relative, so `local:/x` is refused), resolve through a junction or symbolic link to a folder outside the workspace, or name the workspace, a maxstack checkout, or a folder the installer writes (`.claude`, `.opencode`, `.pi`, `.maxstack`). An absolute `local:` path is a drive-letter path such as `local:C:\x`. It follows the `-Source` rules and prints a machine-path warning.
 

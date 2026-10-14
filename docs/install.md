@@ -52,6 +52,7 @@ CLAUDE.md
 .opencode/agents/
 .opencode/plugins/
 .pi/
+.pstack/
 opencode.jsonc*
 stack.lock.json*
 ```
@@ -125,6 +126,8 @@ When no unowned root `AGENTS.md` or `CLAUDE.md` blocks the output, maxstack writ
 If either root file exists and is not recorded as maxstack-owned, maxstack keeps it byte for byte and writes the composition to `.maxstack/workspace-instructions.md`. It does not create the other root file. It prints a line naming each kept root file and the fallback path. OpenCode points at the fallback file when selected. Add a reference to that fallback in your own instructions if you need it loaded by another harness.
 
 An edited generated file is reported and kept. Apply does not overwrite it. `-Status` reports it as modified. `-Remove` and `-Uninstall` delete only unchanged generated files and keep edited ones in the lock for a later retry. When no selected layer declares instructions, no new file or OpenCode entry is produced. Previously generated files are removed through the same ownership rules.
+
+The optional `t3.gatedInstances` settings list writes `.pstack/pstack-t3-instances.json`, with the selected layer names and whether their sources include the gate hook. The ids are per-machine settings and maxstack supplies no defaults. The file and a created `.pstack` folder are recorded in `stack.lock.json`. An edited file is kept, and an existing file not recorded as maxstack-owned is kept without being read or overwritten. `-Remove`, `-Uninstall`, and an empty list delete only an unchanged file that maxstack recorded. The installer never touches the model sheet or other files in `.pstack`.
 
 The pinned pstack cache under `.claude\cache` is the source every runtime copies from, so each layer that installs anything writes it, whichever runtime it serves. The lock records each runtime a layer does not install as `enabled: false`. For `copilot` and `pi` the reason is `not selected`.
 
