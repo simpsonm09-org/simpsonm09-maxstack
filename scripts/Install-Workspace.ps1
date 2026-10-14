@@ -3825,7 +3825,12 @@ if ($Status) {
     }
     Write-Host ('Summary: ' + ($counts -join ', '))
     $t3Strict = $null -ne $t3Report -and @($t3Report.strictFailures).Count -gt 0
-    if ($Strict -and (@($results | Where-Object { (-not (Test-OrdinalIn $_.state @('matching', 'not selected', 'skipped'))) }).Count -gt 0 -or $settingsInvalid -or $settingsChanged -or @($pendingRuntimes).Count -gt 0 -or @($pendingLayers).Count -gt 0 -or @($unlistedRuntimes).Count -gt 0 -or @($unlistedLayers).Count -gt 0 -or $t3Strict)) { exit 1 }
+    $ownershipStrict = @($results | Where-Object {
+        $unmatched = -not (Test-OrdinalIn $_.state @('matching', 'not selected', 'skipped'))
+        $staleSnapshot = $null -ne $t3Report -and $t3Report.stale -and (Test-OrdinalEqual $_.state 'drifted') -and (Test-OrdinalEqual $_.label '.maxstack/t3/settings.snapshot.json')
+        $unmatched -and -not $staleSnapshot
+    }).Count -gt 0
+    if ($Strict -and ($ownershipStrict -or $settingsInvalid -or $settingsChanged -or @($pendingRuntimes).Count -gt 0 -or @($pendingLayers).Count -gt 0 -or @($unlistedRuntimes).Count -gt 0 -or @($unlistedLayers).Count -gt 0 -or $t3Strict)) { exit 1 }
     return
 }
 

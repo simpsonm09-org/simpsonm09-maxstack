@@ -112,6 +112,21 @@ test('remove preserves the snapshot and uninstall deletes only an unchanged owne
   });
 });
 
+test('uninstall preserves a snapshot changed after its ownership record', () => {
+  withWorkspace('T3 snapshot changed ownership', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    writeFileSync(snapshotPath, `${readFileSync(snapshotPath, 'utf8')}\n`);
+    const uninstalled = install(ctx, ['-Uninstall']);
+    assert.equal(uninstalled.status, 0, plainOutput(uninstalled));
+    assert.equal(existsSync(snapshotPath), true);
+    assert.equal(existsSync(lockPath(ctx)), true);
+  });
+});
+
 test('strict status fails for malformed explicitly selected T3 settings while plain status reports it', () => {
   withWorkspace('T3 malformed strict source', (ctx) => {
     const source = join(ctx.base, 'settings.json');
@@ -124,6 +139,33 @@ test('strict status fails for malformed explicitly selected T3 settings while pl
     const strict = install(ctx, ['-Status', '-Strict'], { apply: false, env });
     assert.equal(strict.status, 1, plainOutput(strict));
     assert.match(plainOutput(strict), /T3 settings: source is malformed/);
+  });
+});
+
+test('snapshot staleness alone is informational under strict status', () => {
+  withWorkspace('T3 snapshot stale status', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    const workspaceSlug = 'Simpsonm09';
+    const workspacePluginDir = join(ctx.workspace, '.claude', 'plugins');
+    const copilotWrapper = join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd');
+    const piWrapper = join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd');
+    const settings = (defaultAutoPull) => ({
+      defaultAutoPull,
+      defaultThreadEnvMode: 'worktree',
+      providerInstances: {
+        [`claude${workspaceSlug}`]: { driver: 'claudeAgent', enabled: true, config: { binaryPath: 'claude', launchArgs: `--plugin-dir ${workspacePluginDir}` } },
+        [`copilot${workspaceSlug}`]: { driver: 'acpRegistry', enabled: true, config: { source: 'registry', agentId: 'github-copilot-cli', distribution: 'auto', commandPath: copilotWrapper } },
+        [`pi${workspaceSlug}`]: { driver: 'pi', enabled: true, config: { binaryPath: piWrapper, launchArgs: '' } },
+      },
+    });
+    writeFileSync(source, JSON.stringify(settings(false)));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    writeFileSync(source, JSON.stringify(settings(true)));
+    const env = { ...process.env, MAXSTACK_T3_SETTINGS: source };
+    const strict = install(ctx, ['-Status', '-Strict'], { apply: false, env });
+    assert.equal(strict.status, 0, plainOutput(strict));
+    assert.match(strict.stdout, /Snapshot: \.maxstack\/t3\/settings\.snapshot\.json \(stale: would change\)/);
   });
 });
 

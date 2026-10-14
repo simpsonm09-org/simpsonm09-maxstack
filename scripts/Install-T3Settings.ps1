@@ -246,6 +246,24 @@ function Get-T3Defaults {
     return @{ instances = $instances; app = Expand-T3DefaultValue $script:T3DefaultsTemplate.app $Workspace $suffix }
 }
 
+function ConvertTo-T3CanonicalValue {
+    param($Value)
+    if ($Value -is [System.Collections.IDictionary]) {
+        $sorted = [ordered]@{}
+        foreach ($key in (Get-OrdinalSorted @($Value.Keys))) { $sorted[$key] = ConvertTo-T3CanonicalValue $Value[$key] }
+        return $sorted
+    }
+    if ($Value -is [array]) { return , @($Value | ForEach-Object { ConvertTo-T3CanonicalValue $_ }) }
+    return $Value
+}
+
+function Test-T3ValueEqual {
+    param($Left, $Right)
+    $leftJson = ConvertTo-Json -InputObject (ConvertTo-T3CanonicalValue $Left) -Depth 64 -Compress
+    $rightJson = ConvertTo-Json -InputObject (ConvertTo-T3CanonicalValue $Right) -Depth 64 -Compress
+    return (Test-OrdinalEqual $leftJson $rightJson)
+}
+
 function Convert-T3ExpectedInstanceForReport {
     param($Expected, [string] $Workspace, [string[]] $LayerNames)
     $safe = [ordered]@{ driver = $Expected.envelope.driver; enabled = $Expected.envelope.enabled }
@@ -445,7 +463,7 @@ function Get-T3SettingsReport {
     foreach ($key in @($defaults.app.Keys | Where-Object { (Test-OrdinalEqual $inputState.state 'present') })) {
         $appDrift = $null
         if ($snapshot.Contains($key)) {
-            if ((Test-OrdinalEqual $snapshot[$key] $defaults.app[$key])) { $state = 'matching' } else { $state = 'differs'; $strict.Add('differs'); $appDrift = @{ wanted = $defaults.app[$key]; observed = $snapshot[$key] } }
+            if (Test-T3ValueEqual $snapshot[$key] $defaults.app[$key]) { $state = 'matching' } else { $state = 'differs'; $strict.Add('differs'); $appDrift = @{ wanted = $defaults.app[$key]; observed = $snapshot[$key] } }
         } elseif ((Test-OrdinalEqual $inputState.state 'present') -and (Test-T3ExactKey $inputState.value $key)) {
             $state = 'unverifiable'; $strict.Add('unverifiable')
         } else {
