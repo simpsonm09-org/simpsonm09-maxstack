@@ -43,7 +43,8 @@ pwsh -File scripts/Install-Workspace.ps1 -Status
   },
   "t3": {
     "defaults": "leave-alone",
-    "gatedInstances": ["<instance-id>"]
+    "gatedInstances": ["<instance-id>"],
+    "readOnlyInstances": ["<instance-id>"]
   }
 }
 ```
@@ -58,7 +59,7 @@ On a new workspace, a named settings dimension selects exactly its listed names.
 
 `runtimes.<name>.cli` and `t3.cli` accept `detect` or `install`. They are recorded and validated, but CLI installation is not supported in this release.
 
-`t3.gatedInstances` is an optional array of unique, non-empty ids. Each id may contain only ASCII letters, digits, hyphens, and underscores. On apply, a non-empty list writes `.pstack/pstack-t3-instances.json` for the selected layers. An empty or omitted list removes a previously generated, unchanged file. The list is per-machine configuration and has no defaults.
+`t3.gatedInstances` and `t3.readOnlyInstances` are optional arrays of unique, non-empty ids. Each id may contain only ASCII letters, digits, hyphens, and underscores. An id cannot appear in both lists. Read-only instances provide cheap helpers for reviews, research, and explanation on harnesses without our layers or gate. pstack refuses them for roles whose helpers can write files, commit, push, or open pull requests. The lists are per-machine configuration and have no defaults. On apply, either non-empty list writes `.pstack/pstack-t3-instances.json`. When both lists are empty or omitted, apply removes a previously generated, unchanged file.
 
 `layers.<name>.source` takes the `-Source` grammar: `owner/repo@ref`, an `https://` URL with `@ref`, `local:<path>`, or `default`. A source may not hold a control character, a format character, a line or paragraph separator, an unpaired surrogate, or a non-breaking space. A relative `local:` path resolves from the workspace folder only. It may not climb with `..`, be drive-relative or root-relative (a leading slash is root-relative, so `local:/x` is refused), resolve through a junction or symbolic link to a folder outside the workspace, or name the workspace, a maxstack checkout, or a folder the installer writes (`.claude`, `.opencode`, `.pi`, `.maxstack`). An absolute `local:` path is a drive-letter path such as `local:C:\x`. It follows the `-Source` rules and prints a machine-path warning.
 

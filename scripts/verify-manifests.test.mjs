@@ -93,7 +93,7 @@ test('the shipped manifests pass the verifier', { skip }, () => {
 test('the settings seed is valid and schema keys match the PowerShell validator', { skip }, () => {
   const run = spawnSync(python, [verifier], { windowsHide: true, encoding: 'utf8' });
   assert.equal(run.status, 0, failureOf(run));
-  assert.deepEqual(shipped('workspace/maxstack.settings.json'), { version: 1, t3: { gatedInstances: [] } });
+  assert.deepEqual(shipped('workspace/maxstack.settings.json'), { version: 1, t3: { gatedInstances: [], readOnlyInstances: [] } });
 });
 
 test('the manifest verifier rejects settings schema and validator key drift', { skip }, () => {

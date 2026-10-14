@@ -16,9 +16,9 @@ T3 keeps its provider instances in `%USERPROFILE%\.t3\userdata\settings.json`. T
 
 The maxstack instances apply only to the workspace named in their paths. The default instances need no folder and no wrapper.
 
-## T3 model sheet and gated instances
+## T3 model sheet and instance lists
 
-`t3.gatedInstances` lists the ids allowed to receive delegated work. The list is per machine. Add only ids for instances that load this workspace's layers and access gate. maxstack writes the allow-list beside the model sheet under `.pstack`. Run `setup-pstack` inside T3 to write the model sheet there.
+`t3.gatedInstances` lists ids allowed to receive delegated work with this workspace's layers and gate. `t3.readOnlyInstances` lists cheap helpers for reviews, research, and explanation on harnesses without our layers or gate. pstack refuses read-only instances for roles whose helpers can write files, commit, push, or open pull requests. These lists are per machine. maxstack writes both lists beside the model sheet under `.pstack`. Run `setup-pstack` inside T3 to write the model sheet there.
 
 ## OpenCode
 

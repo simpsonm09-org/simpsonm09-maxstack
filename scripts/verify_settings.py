@@ -92,7 +92,7 @@ def _check_nested_keys(properties: dict, validator: str, failures: list[str]) ->
             "T3",
             "t3",
             r"Assert-SettingsObjectKeys \$value\.t3 @\(([^)]*)\)",
-            ("cli", "snapshot", "defaults", "gatedInstances"),
+            ("cli", "snapshot", "defaults", "gatedInstances", "readOnlyInstances"),
         ),
     )
     for block_name, property_name, pattern, expected in nested:
@@ -203,17 +203,12 @@ def _check_closed_objects(properties: dict, failures: list[str]) -> None:
 def _check_gated_instances(properties: dict, failures: list[str]) -> None:
     t3 = properties.get("t3")
     t3_properties = t3.get("properties") if isinstance(t3, dict) else None
-    gated = t3_properties.get("gatedInstances") if isinstance(t3_properties, dict) else None
-    items = gated.get("items") if isinstance(gated, dict) else None
-    if (
-        not isinstance(gated, dict)
-        or gated.get("type") != "array"
-        or gated.get("uniqueItems") is not True
-        or not isinstance(items, dict)
-        or items.get("type") != "string"
-        or items.get("pattern") != r"^[A-Za-z0-9_-]+$"
-    ):
-        failures.append("settings schema t3.gatedInstances must match the installer id rules")
+    for name in ("gatedInstances", "readOnlyInstances"):
+        value = t3_properties.get(name) if isinstance(t3_properties, dict) else None
+        items = value.get("items") if isinstance(value, dict) else None
+        if (not isinstance(value, dict) or value.get("type") != "array" or value.get("uniqueItems") is not True
+                or not isinstance(items, dict) or items.get("type") != "string" or items.get("pattern") != r"^[A-Za-z0-9_-]+$"):
+            failures.append(f"settings schema t3.{name} must match the installer id rules")
 
 
 def _check_schema(
@@ -266,7 +261,7 @@ def _check_seed(seed: dict, layer_names: tuple, failures: list[str]) -> None:
         failures.append(f"workspace/maxstack.settings.json {error}")
         return
     valid_seed_keys = list(seed) == ["version"] or list(seed) == ["version", "t3"]
-    valid_seed_t3 = seed.get("t3") == {"gatedInstances": []}
+    valid_seed_t3 = seed.get("t3") == {"gatedInstances": [], "readOnlyInstances": []}
     if (
         not valid_seed_keys
         or type(seed["version"]) is not int

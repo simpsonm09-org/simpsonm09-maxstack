@@ -3,7 +3,7 @@
 - `AGENTS.md` sets working rules for changes to this repository.
 - `layers.json` is the ordered layer manifest. Each layer is described once: its `name` (the plugin id), its `kind`, its `source`, and a `runtimes` map. The `pstack` layer's source is a git pin into the fork. The org and personal layers are local checkouts with a `path` and a git URL. A layer lists the runtimes it installs for: `claude`, `opencode`, and `copilot`.
 - A layer can declare `workspaceInstructions` in `layer.json`. The installer composes selected declarations into workspace `AGENTS.md` and, when Claude is selected, `CLAUDE.md`. A root collision uses `.maxstack/workspace-instructions.md`.
-- `t3.gatedInstances` in workspace settings generates `.pstack/pstack-t3-instances.json`. The list is per-machine, and the installer records ownership in `stack.lock.json`.
+- `t3.gatedInstances` and `t3.readOnlyInstances` in workspace settings generate `.pstack/pstack-t3-instances.json`. The lists are per-machine, and the installer records ownership in `stack.lock.json`.
 - `scripts/generate-layers.mjs` and `scripts/lib/` project layer skills and OpenCode MCP into a dedicated output directory. `docs/neutral-layer-generator.md` defines the contract.
 - `.github/workflows/ci.yml` calls the shared `repo-standard` checks, runs the manifest validation in `test`, and runs the node installer suite in four Windows shards; the `test-node` job aggregates their results. `mise.toml` pins the linters.
 - `justfile` is the local task runner; its recipes mirror the CI checks.
