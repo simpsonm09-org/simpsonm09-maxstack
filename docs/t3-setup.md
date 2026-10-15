@@ -8,6 +8,8 @@ T3 keeps its provider instances in `%USERPROFILE%\.t3\userdata\settings.json`. T
 
 The model picker and provider instance are separate choices. The picker selects a model; the instance supplies the provider command, arguments, and environment. The workspace installer does not create or remove T3 instances. Configure maxstack instances in T3 as described below, and manage them there.
 
+For delegated work, the selected parent instance does not override an explicit provider target. Choose the maxstack instance for the parent and its delegates when you want the workspace layers. If a delegate explicitly targets a plain provider instance, that instance does not receive maxstack's instance arguments, even when the parent uses maxstack. If a delegate omits the provider target, it inherits according to the delegation contract. Model choice remains separate from provider choice.
+
 A fresh thread clears conversation history. It still starts with the normal harness configuration and instructions. A plain provider instance omits the maxstack instance arguments or wrapper documented below, but that does not guarantee a clean session. Starting outside the workspace reduces workspace-specific instructions and skills. Global provider settings and instructions may still apply. A fully isolated session needs a separate profile and global configuration, then validation; maxstack does not provide or verify an automatic clean mode.
 
 Startup behavior depends on the runtime. Follow the runtime's discovery notes below. In particular, maxstack's Codex launch argument sets `stack.lock.json` as a project-root marker so Codex can discover workspace files from nested repositories. That setting does not prove that a plain Codex session is isolated or never loads `AGENTS.md`.
