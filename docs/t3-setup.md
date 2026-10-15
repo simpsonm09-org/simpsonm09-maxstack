@@ -18,14 +18,14 @@ T3 reloads instance settings while it runs. A new agent session also starts with
 
 | Current instance ID | Display label | Provider | Points at | Use |
 | --- | --- | --- | --- | --- |
-| `codexplain` | Codex | Codex | default launch configuration | Plain Codex |
+| `codex` | Codex | Codex | default launch configuration | Plain Codex |
 | `codex_maxstack` | maxstack | Codex | workspace launch configuration described below | Codex with workspace skills |
 | `claudeAgent` | Claude | Claude | no plugin folder | Plain Claude Code |
-| `claudeSimpsonm09` | Claude | Claude | launch args `--plugin-dir <workspace>\.claude\plugins` | Claude Code with the workspace plugins (legacy ID) |
+| `claudeSimpsonm09` | maxstack | Claude | launch args `--plugin-dir <workspace>\.claude\plugins` | Claude Code with the workspace plugins (legacy ID) |
 | `copilot` | Copilot | Copilot | the registry `copilot.exe` | Plain Copilot CLI |
-| `copilotSimpsonm09` | Copilot | Copilot | `commandPath` `<workspace>/.maxstack/bin/copilot.cmd` (macOS: `copilot.sh`) | Copilot CLI with the workspace plugins (legacy ID) |
+| `copilotSimpsonm09` | maxstack | Copilot | `commandPath` `<workspace>/.maxstack/bin/copilot.cmd` (macOS: `copilot.sh`) | Copilot CLI with the workspace plugins (legacy ID) |
 | `pi` | Pi | Pi | disabled | Plain Pi |
-| `piSimpsonm09` | Pi | Pi | `binaryPath` `<workspace>/.maxstack/bin/pi.cmd` | Pi with the workspace packages and skills (legacy ID) |
+| `piSimpsonm09` | maxstack | Pi | `binaryPath` `<workspace>/.maxstack/bin/pi.cmd` | Pi with the workspace packages and skills (legacy ID) |
 
 The maxstack instances apply only to the workspace named in their paths. The default instances need no folder and no wrapper.
 
