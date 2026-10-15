@@ -469,32 +469,36 @@ function Assert-LockShape {
     param($Stack)
 
     Assert-LockKeySpelling -Value $Stack -Where 'stack.lock.json'
-    foreach ($record in @(Get-Field $Stack 'owned')) {
-        $claimsProperty = $record.PSObject.Properties['runtimes']
-        $runtimeProperty = $record.PSObject.Properties['runtime']
-        $path = Get-Field $record 'path'
-        $agentSkillPath = $path -is [string] -and $path.StartsWith('.agents/skills/', [StringComparison]::Ordinal)
-        $skillName = if ($agentSkillPath) { $path.Substring('.agents/skills/'.Length) } else { '' }
-        if ($agentSkillPath -and ($null -eq $claimsProperty -and $null -eq $runtimeProperty)) {
-            throw 'stack.lock.json has an agent skill ownership record with no runtime attribution.'
-        }
-        if ($null -ne $claimsProperty -and $null -ne $runtimeProperty) {
-            throw 'stack.lock.json must use runtime or runtimes, not both.'
-        }
-        if ($agentSkillPath -and $null -ne $runtimeProperty -and ((-not (Test-OrdinalEqual $runtimeProperty.Value 'codex')) -or -not (Test-OrdinalEqual (Get-Field $record 'kind') 'dir') -or -not [regex]::IsMatch($skillName, '^[A-Za-z0-9][A-Za-z0-9-]*$'))) {
-            throw 'stack.lock.json has an invalid legacy Codex skill ownership record.'
-        }
-        if ($null -eq $claimsProperty) { continue }
-        $runtimeClaims = $claimsProperty.Value
-        if (-not $agentSkillPath -or -not (Test-OrdinalEqual (Get-Field $record 'kind') 'dir') -or -not [regex]::IsMatch($skillName, '^[A-Za-z0-9][A-Za-z0-9-]*$') -or $runtimeClaims -isnot [array] -or $runtimeClaims.Count -eq 0) {
-            throw 'stack.lock.json has an invalid shared skill ownership record.'
-        }
-        $previous = $null
-        foreach ($runtime in $runtimeClaims) {
-            if ($runtime -isnot [string] -or -not (Test-OrdinalIn $runtime @('antigravity', 'codex')) -or ($null -ne $previous -and [string]::CompareOrdinal($previous, $runtime) -ge 0)) {
-                throw 'stack.lock.json has invalid or unsorted shared skill runtime claims.'
+    $ownedRecords = Get-Field $Stack 'owned'
+    if ($null -ne $ownedRecords) {
+        foreach ($record in @($ownedRecords)) {
+            if ($null -eq $record) { throw 'stack.lock.json has a null ownership record.' }
+            $claimsProperty = $record.PSObject.Properties['runtimes']
+            $runtimeProperty = $record.PSObject.Properties['runtime']
+            $path = Get-Field $record 'path'
+            $agentSkillPath = $path -is [string] -and $path.StartsWith('.agents/skills/', [StringComparison]::Ordinal)
+            $skillName = if ($agentSkillPath) { $path.Substring('.agents/skills/'.Length) } else { '' }
+            if ($agentSkillPath -and ($null -eq $claimsProperty -and $null -eq $runtimeProperty)) {
+                throw 'stack.lock.json has an agent skill ownership record with no runtime attribution.'
             }
-            $previous = $runtime
+            if ($null -ne $claimsProperty -and $null -ne $runtimeProperty) {
+                throw 'stack.lock.json must use runtime or runtimes, not both.'
+            }
+            if ($agentSkillPath -and $null -ne $runtimeProperty -and ((-not (Test-OrdinalEqual $runtimeProperty.Value 'codex')) -or -not (Test-OrdinalEqual (Get-Field $record 'kind') 'dir') -or -not [regex]::IsMatch($skillName, '^[A-Za-z0-9][A-Za-z0-9-]*$'))) {
+                throw 'stack.lock.json has an invalid legacy Codex skill ownership record.'
+            }
+            if ($null -eq $claimsProperty) { continue }
+            $runtimeClaims = $claimsProperty.Value
+            if (-not $agentSkillPath -or -not (Test-OrdinalEqual (Get-Field $record 'kind') 'dir') -or -not [regex]::IsMatch($skillName, '^[A-Za-z0-9][A-Za-z0-9-]*$') -or $runtimeClaims -isnot [array] -or $runtimeClaims.Count -eq 0) {
+                throw 'stack.lock.json has an invalid shared skill ownership record.'
+            }
+            $previous = $null
+            foreach ($runtime in $runtimeClaims) {
+                if ($runtime -isnot [string] -or -not (Test-OrdinalIn $runtime @('antigravity', 'codex')) -or ($null -ne $previous -and [string]::CompareOrdinal($previous, $runtime) -ge 0)) {
+                    throw 'stack.lock.json has invalid or unsorted shared skill runtime claims.'
+                }
+                $previous = $runtime
+            }
         }
     }
     foreach ($layer in @(Get-Field $Stack 'layers')) {
