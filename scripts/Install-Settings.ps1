@@ -481,12 +481,12 @@ function Assert-LockShape {
         if ($null -ne $claimsProperty -and $null -ne $runtimeProperty) {
             throw 'stack.lock.json must use runtime or runtimes, not both.'
         }
-        if ($agentSkillPath -and $null -ne $runtimeProperty -and ((-not (Test-OrdinalEqual $runtimeProperty.Value 'codex')) -or (Get-Field $record 'kind') -ne 'dir' -or -not [regex]::IsMatch($skillName, '^[A-Za-z0-9][A-Za-z0-9-]*$'))) {
+        if ($agentSkillPath -and $null -ne $runtimeProperty -and ((-not (Test-OrdinalEqual $runtimeProperty.Value 'codex')) -or -not (Test-OrdinalEqual (Get-Field $record 'kind') 'dir') -or -not [regex]::IsMatch($skillName, '^[A-Za-z0-9][A-Za-z0-9-]*$'))) {
             throw 'stack.lock.json has an invalid legacy Codex skill ownership record.'
         }
         if ($null -eq $claimsProperty) { continue }
         $runtimeClaims = $claimsProperty.Value
-        if (-not $agentSkillPath -or (Get-Field $record 'kind') -ne 'dir' -or -not [regex]::IsMatch($skillName, '^[A-Za-z0-9][A-Za-z0-9-]*$') -or $runtimeClaims -isnot [array] -or $runtimeClaims.Count -eq 0) {
+        if (-not $agentSkillPath -or -not (Test-OrdinalEqual (Get-Field $record 'kind') 'dir') -or -not [regex]::IsMatch($skillName, '^[A-Za-z0-9][A-Za-z0-9-]*$') -or $runtimeClaims -isnot [array] -or $runtimeClaims.Count -eq 0) {
             throw 'stack.lock.json has an invalid shared skill ownership record.'
         }
         $previous = $null
