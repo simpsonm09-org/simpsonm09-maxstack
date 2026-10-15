@@ -973,7 +973,7 @@ function Get-OwnedRuntimeClaims {
     $runtimes = Get-Field $Record 'runtimes'
     if ($null -ne $runtimes) { return @($runtimes) }
     $runtime = Get-Field $Record 'runtime'
-    if ($null -ne $runtime) { return @($runtime) }
+    if ($null -ne $runtime -and -not (Test-OrdinalEqual $runtime $script:WorkspaceInstructionRuntime)) { return @($runtime) }
     $pathRuntime = Get-OwnedRuntime $Record.path
     if ($null -ne $pathRuntime) { return @($pathRuntime) }
     return @()
