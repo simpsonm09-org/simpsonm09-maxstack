@@ -6,6 +6,14 @@ T3 can run OpenCode, Claude Code, the Copilot CLI, and Pi against the same works
 
 T3 keeps its provider instances in `%USERPROFILE%\.t3\userdata\settings.json`. T3 reloads that file while it runs, so an edit needs no restart.
 
+The model picker and provider instance are separate choices. The picker selects a model; the instance supplies the provider command, arguments, and environment. The workspace installer does not create or remove T3 instances. Configure maxstack instances in T3 as described below, and manage them there.
+
+A fresh thread clears conversation history. It still starts with the normal harness configuration and instructions. A plain provider instance omits the maxstack instance arguments or wrapper documented below, but that does not guarantee a clean session. Starting outside the workspace reduces workspace-specific instructions and skills. Global provider settings and instructions may still apply. A fully isolated session needs a separate profile and global configuration, then validation; maxstack does not provide or verify an automatic clean mode.
+
+Startup behavior depends on the runtime. Follow the runtime's discovery notes below. In particular, maxstack's Codex launch argument sets `stack.lock.json` as a project-root marker so Codex can discover workspace files from nested repositories. That setting does not prove that a plain Codex session is isolated or never loads `AGENTS.md`.
+
+T3 reloads instance settings while it runs. A new agent session also starts with fresh conversation history. A reused OpenCode server may need a restart to load plugin changes; see the runtime instructions. These are separate actions.
+
 | Instance id | Display name | Provider | Points at | Use |
 | --- | --- | --- | --- | --- |
 | `claudeAgent` | Claude (default) | Claude | no plugin folder | Plain Claude Code |

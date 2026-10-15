@@ -384,6 +384,10 @@ Limits of the record:
 
 ## Removing and uninstalling
 
+The installer owns only the workspace outputs recorded in `stack.lock.json`. T3 provider instances are configured separately and remain in T3 when you remove a runtime or uninstall the workspace bundle. Uninstall also leaves global provider configuration, authentication, installed binaries, and system plugins alone. It does not promise to remove every plugin from the machine. The T3 settings snapshot is a recorded workspace output; removal preserves it, and uninstall deletes it only while its ownership hash still matches. See [T3 settings snapshot](features/t3-settings.md).
+
+Use `-Remove` with `-Runtimes` or `-Layers` to remove selected recorded outputs and apply the remaining selection. Use `-Uninstall` to remove all recorded workspace outputs. Both use ownership checks and may skip edited or unowned paths; see the rules below and [the T3 setup guide](t3-setup.md) for provider-instance ownership. Neither operation manages the live T3 settings file or global provider configuration.
+
 `-Remove` removes the runtimes or layers it names. `-Uninstall` removes everything the lock records, then the lock files. Both print a plan and write nothing until `-Apply` is given:
 
 ```powershell
