@@ -24,7 +24,7 @@ This page tracks maxstack against the end goal: a person starts in T3 or directl
 - Cursor merged as PR #80 at `0405f1aac05fc866f74600d92b2ab202ab07090a`, so its opt-in skills-only runtime is published on `main`. It is not applied to an installed workspace, and a live Cursor load and T3 session remain unverified. Antigravity has an opt-in, skills-only installer implementation committed locally and reviewed on this feature branch. It shares `.agents/skills` with Codex, and default runtime selection is unchanged. The change is not published, merged, or applied to an installed workspace. Live direct and T3 skill loading remain unverified. The parity matrix describes these limits and evidence.
 - The old `feat/settings-4-t3-snapshot` branch and its backup are preserved research. Snapshot delivery is already in PR #78; the old branch has not been reconciled against current main.
 - The pstack pin at `61654b6` is on `feat/opencode-runtime`, while local pstack main is `60ae9e2`. This is a deliberate difference pending reconciliation, not automatic drift.
-- The canonical T3 provider ID contract is documented on this local branch. Only `codex_maxstack` is confirmed present; the Claude, Copilot, and Pi IDs remain targets until created and verified in T3. No project defaults have been migrated.
+- The canonical T3 provider ID contract is documented on this local branch. Only `codex_maxstack` is confirmed present; the Claude, Copilot, and Pi IDs remain targets until created and verified in T3. No project defaults have been migrated. `t3/defaults.json` remains report-only and has no provider instance ID fields, so it is not part of this migration.
 
 ## How to read the status
 

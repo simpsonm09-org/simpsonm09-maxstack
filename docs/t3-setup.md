@@ -16,13 +16,16 @@ Startup behavior depends on the runtime. Follow the runtime's discovery notes be
 
 T3 reloads instance settings while it runs. A new agent session also starts with fresh conversation history. A reused OpenCode server may need a restart to load plugin changes; see the runtime instructions. These are separate actions.
 
-| Current instance id | Display name | Provider | Points at | Use |
+| Current instance ID | Display label | Provider | Points at | Use |
 | --- | --- | --- | --- | --- |
-| `claudeAgent` | Claude (default) | Claude | no plugin folder | Plain Claude Code |
-| `claudeSimpsonm09` | Claude (maxstack) | Claude | launch args `--plugin-dir <workspace>\.claude\plugins` | Claude Code with the workspace plugins |
-| `copilot` | Copilot (default) | Copilot | the registry `copilot.exe` | Plain Copilot CLI |
-| `copilotSimpsonm09` | Copilot (maxstack) | Copilot | `commandPath` `<workspace>/.maxstack/bin/copilot.cmd` (macOS: `copilot.sh`) | Copilot CLI with the workspace plugins |
-| `piSimpsonm09` | Pi (maxstack) | Pi | `binaryPath` `<workspace>/.maxstack/bin/pi.cmd` | Pi with the workspace packages and skills |
+| `codexplain` | Codex | Codex | default launch configuration | Plain Codex |
+| `codex_maxstack` | maxstack | Codex | workspace launch configuration described below | Codex with workspace skills |
+| `claudeAgent` | Claude | Claude | no plugin folder | Plain Claude Code |
+| `claudeSimpsonm09` | Claude | Claude | launch args `--plugin-dir <workspace>\.claude\plugins` | Claude Code with the workspace plugins (legacy ID) |
+| `copilot` | Copilot | Copilot | the registry `copilot.exe` | Plain Copilot CLI |
+| `copilotSimpsonm09` | Copilot | Copilot | `commandPath` `<workspace>/.maxstack/bin/copilot.cmd` (macOS: `copilot.sh`) | Copilot CLI with the workspace plugins (legacy ID) |
+| `pi` | Pi | Pi | disabled | Plain Pi |
+| `piSimpsonm09` | Pi | Pi | `binaryPath` `<workspace>/.maxstack/bin/pi.cmd` | Pi with the workspace packages and skills (legacy ID) |
 
 The maxstack instances apply only to the workspace named in their paths. The default instances need no folder and no wrapper.
 
@@ -39,19 +42,19 @@ Use these exact provider instance IDs for new maxstack instances. The human-read
 
 The driver chooses how T3 starts a provider. Keep these driver IDs unchanged when you create the canonical provider IDs. The instance ID names the provider choice used by threads, sessions, events, bindings, and project defaults. The model picker selects a model independently. Selecting a provider instance supplies its launch configuration; selecting a model does not change that configuration.
 
-Discover available provider and model IDs in `orchestrator_capabilities` from both the composer catalog and the delegation catalog. Confirm each canonical provider ID in the relevant catalog before using it. Provider IDs are user-defined routing keys. Existing threads, sessions, events, and bindings can refer to them. T3 has no verified rename operation for these IDs.
+Use `orchestrator_capabilities` to discover provider IDs and model IDs in the shared live provider/model catalog exposed to the composer and delegation. Confirm each canonical provider ID and the model you plan to use there. Provider IDs are user-defined routing keys. Existing threads, sessions, events, and bindings can refer to them. T3 has no verified rename operation for these IDs.
 
 ### Migrate project defaults safely
 
 The canonical IDs are the target contract. They are not all present in the current T3 settings. `codex_maxstack` exists. Create and verify `claude_maxstack`, `copilot_maxstack`, and `pi_maxstack` in T3 before changing any project default.
 
-1. In T3's provider settings, create the canonical instances with the launch configuration in this guide. Confirm the driver and exact ID in both capability catalogs.
-2. Keep `claudeSimpsonm09`, `copilotSimpsonm09`, and `piSimpsonm09` available while you verify the new instances. Existing threads can still depend on those IDs.
-3. Update project defaults only after the matching canonical instance appears in both catalogs and starts the expected harness configuration. Preserve each project's selected model.
+1. Create or configure each canonical instance with the launch configuration in this guide, if the T3 settings UI for that driver supports the exact custom ID. Confirm the exact ID and the model you plan to use in `orchestrator_capabilities`, then verify that the instance starts the expected harness configuration.
+2. Keep `claudeSimpsonm09`, `copilotSimpsonm09`, and `piSimpsonm09` available while you verify the new instances. Existing threads can still depend on those legacy IDs.
+3. Update project defaults only after the matching canonical instance is verified. Preserve each project's selected model.
 4. Keep the legacy instances for existing threads and bindings. Do not rewrite historical records.
 5. To roll back a project, restore its previous default ID. Keep the canonical instances available until their threads and bindings no longer need them.
 
-No provider-settings write API is exposed here. The documented T3 settings UI supports entering custom IDs for ACP instances. Do not assume the same UI flow works for other drivers; verify instance creation and capability discovery for each driver before migrating its project defaults. Do not edit a settings file as a substitute for a verified UI flow.
+No provider-settings write API is exposed here. The T3 settings UI supports custom IDs for ACP instances. The UI's ability to create exact custom IDs for other drivers is unknown. If it does not support the canonical ID for a driver, keep that ID as a target and do not migrate that project's default. Do not edit a settings file as a substitute for a verified UI flow.
 
 ## T3 model sheet and instance lists
 
@@ -74,7 +77,7 @@ OpenCode uses the providers you have connected in OpenCode itself, with `opencod
 Claude Code does not walk up for plugins. The installer therefore builds one folder of Claude plugins at the workspace root, `<workspace>\.claude\plugins`. Each child folder is one plugin. The `claudeSimpsonm09` instance points at that folder:
 
 1. Generate the folder: `pwsh -File scripts/Install-Workspace.ps1 -Apply`.
-2. In T3, select `claude_maxstack`, label it `maxstack`, and set its launch arguments to `--plugin-dir <workspace>\.claude\plugins`. To set it up again, add a Claude provider instance with those launch arguments and the canonical ID.
+2. Create or configure `claude_maxstack` in T3, if its settings UI supports that exact ID. Set its label to `maxstack` and its launch arguments to `--plugin-dir <workspace>\.claude\plugins`. Keep `claudeSimpsonm09` available until you verify the canonical instance.
 3. After verifying the instance, set the fleet project's default provider ID to `claude_maxstack`. Keep the model selection unchanged.
 
 Plain `claude` outside T3 takes the same flag, so `claude --plugin-dir <workspace>\.claude\plugins` gives the same plugins.
@@ -98,7 +101,7 @@ The pstack folder is a copy, not a junction. It is not a junction because the Op
 The Copilot provider does not take plugin folders from the instance's arguments. T3 ignores `commandArgs` for registry ACP agents. So the installer writes `.maxstack\bin\copilot.cmd` and `.maxstack\bin\copilot.sh` on Windows, and `.maxstack/bin/copilot.sh` on macOS and Linux. The `copilotSimpsonm09` instance starts the wrapper instead of `copilot`. The default `copilot` instance starts the registry `copilot.exe` on Windows and needs no wrapper.
 
 1. Generate the wrapper: `pwsh -File scripts/Install-Workspace.ps1 -Apply`. It needs the Copilot CLI installed. If Copilot is not on `PATH`, the installer keeps the wrappers it already wrote, as they are, and warns; with none recorded, it skips them and says so. Install Copilot, then run it again.
-2. In T3, select `copilot_maxstack`, label it `maxstack`, and set `config.commandPath` to `<workspace>/.maxstack/bin/copilot.cmd` on Windows or `<workspace>/.maxstack/bin/copilot.sh` on macOS. To set it up again, copy the registry `copilot` instance and set the copy's ID and `config.commandPath` to these values.
+2. Create or configure `copilot_maxstack` in T3, if its settings UI supports that exact ID. Set its label to `maxstack` and `config.commandPath` to `<workspace>/.maxstack/bin/copilot.cmd` on Windows or `<workspace>/.maxstack/bin/copilot.sh` on macOS. Keep `copilotSimpsonm09` available until you verify the canonical instance.
 3. After verifying the instance, set the fleet project's default provider ID to `copilot_maxstack`. Keep the model selection unchanged.
 
 The wrapper runs the Copilot CLI with one `--plugin-dir` for each layer that lists `copilot`, in layer order: pstack, then the org layer, then the personal layer. Each folder is the same `.claude\plugins` folder Claude Code uses. The wrapper then passes its own arguments through. Windows `copilot.cmd` records the executable's absolute path; macOS and Linux `copilot.sh` resolve `copilot` from `PATH` when launched.
@@ -125,7 +128,7 @@ T3's native Pi provider runs `<binaryPath> --mode rpc <launchArgs>`. The install
 
 1. Install the Pi CLI, `@earendil-works/pi-coding-agent`, into `<workspace>/.maxstack/npm` so its executable lands in `.maxstack/npm/node_modules/.bin`, or make it available on `PATH`. The installer looks in the workspace first. Then generate the wrapper and settings with `pwsh -File scripts/Install-Workspace.ps1 -Apply`. The installer writes the absolute path of the Pi it finds into `pi.cmd`. If Pi is missing, the final summary reports the skipped wrappers; install Pi and rerun with `-PiCommand <path>`.
 2. Sign in once, yourself. Run `<workspace>/.maxstack/bin/pi.cmd`, enter `/login` in Pi, and sign in to a provider. The login is written under `.pi/agent`, the folder T3's instance uses. Keep `.pi/agent/auth.json` out of git, and never paste it into a doc or a chat. An agent never logs in for you.
-3. In T3, select `pi_maxstack`, label it `maxstack`, and set its driver to `pi`, `binaryPath` to `<workspace>/.maxstack/bin/pi.cmd`, and `launchArgs` to empty. Leave `customModels` empty and pick the model in T3's picker. maxstack sets no Pi model or provider. To set it up again, add a Pi provider instance with the canonical ID and these values.
+3. Create or configure `pi_maxstack` in T3, if its settings UI supports that exact ID. Set its label to `maxstack`, its driver to `pi`, `binaryPath` to `<workspace>/.maxstack/bin/pi.cmd`, and `launchArgs` to empty. Leave `customModels` empty and pick the model in T3's picker. maxstack sets no Pi model or provider. Keep `piSimpsonm09` available until you verify the canonical instance.
 
 What Pi loads:
 
@@ -175,7 +178,7 @@ The opt-in `codex` runtime installs selected layer skills and makes the workspac
 
 The opt-in `cursor` runtime copies selected layer skills into `<Workspace>/.cursor/skills`. Install with `-Workspace` set to the active Cursor project root. Skills and T3 session loading have not been verified in a live Cursor session.
 
-Configure the existing `codex_maxstack` provider instance in T3 Code. Keep its ID and label `maxstack`:
+Create or configure the `codex_maxstack` provider instance in T3 Code. This workspace has that instance, but a fresh install may not. Use the ID `codex_maxstack` and label `maxstack` if the T3 settings UI supports that exact custom ID for Codex. Otherwise, keep `codex_maxstack` as the target and do not migrate a project default to it. Keep CODEX_HOME path and Shadow home path at their defaults:
 
 1. Keep CODEX_HOME path and Shadow home path at their defaults. On Windows, use the package's native `codex.exe` as Binary path when T3 would start the npm `codex.cmd` shim through a shell. The fixed argument contains brackets and quotes that shell parsing can alter. The line uses single quotes inside double quotes because Windows PowerShell 5.1 drops double quotes nested inside single quotes when it starts a program.
 2. Set Launch arguments to this fixed line. The installer prints it every time. It never changes.
