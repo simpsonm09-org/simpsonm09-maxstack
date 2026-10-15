@@ -84,7 +84,7 @@ Ubuntu WSL can also run the OpenCode CLI. It reads the same workspace files thro
 
 An optional [`maxstack.settings.json`](features/settings.md) beside `stack.lock.json` can declare runtime and layer selections. Its names add to the recorded selection. Omitted names stay selected until removed with `-Remove`. On a new workspace, a dimension named in the settings file selects exactly those names. `-Remove` warns about each removed name the file still lists, since the next apply selects it again. See [Workspace settings](features/settings.md) for its schema and reserved fields.
 
-The workspace installs only the runtimes and layers it selects. `-Runtimes` names runtimes: `claude`, `opencode`, `copilot`, `pi`, `codex`, `cursor`, or `all`. `-Layers` names layers by their names in `layers.json`, or `all`. Both take comma-separated values, which `pwsh -File` passes as one token:
+The workspace installs only the runtimes and layers it selects. `-Runtimes` names runtimes: `claude`, `opencode`, `copilot`, `pi`, `codex`, `cursor`, `antigravity`, or `all`. `-Layers` names layers by their names in `layers.json`, or `all`. Both take comma-separated values, which `pwsh -File` passes as one token:
 
 ```powershell
 pwsh -File scripts/Install-Workspace.ps1 -Runtimes claude,copilot -Apply
@@ -111,11 +111,11 @@ The rules:
 - A layer or runtime that `layers.json` names but the selection leaves out is reported on every apply, audit, and status, with the flag that adds it, for example `-Layers <name>`. `-Status` also lists it as `not selected`. It is not installed until a flag names it.
 - A recorded name that `layers.json` no longer names, such as a layer removed from it, is dropped from the selection with a warning. The next apply removes the folders that layer installed, the same way it removes a layer that stopped installing a runtime.
 - A lock with no `selection` predates the field. It reads as `claude`, `opencode`, `copilot`, and `pi`, with every layer, and the next apply writes the field.
-- `codex` and `cursor` are opt-in. A plain `-Apply`, a new workspace with no runtime named, and a lock with no `selection` select `claude`, `opencode`, `copilot`, and `pi`. Name either runtime with `-Runtimes`, in the settings file's `runtimes` map, or with `-Runtimes all`.
+- `codex`, `cursor`, and `antigravity` are opt-in. A plain `-Apply`, a new workspace with no runtime named, and a lock with no `selection` select `claude`, `opencode`, `copilot`, and `pi`. Name an opt-in runtime with `-Runtimes`, in the settings file's `runtimes` map, or with `-Runtimes all`.
 - `cursor` copies each selected layer's skills to `<Workspace>/.cursor/skills/<skill>`. Set `-Workspace` to the active Cursor project root. If you open a nested repository as the project, install at that repository root. The installer does not assume that a parent workspace's files load in a nested repository. Cursor skills use flat folder names, so duplicate names across selected layers are refused before workspace writes.
 - `copilot` and `pi` need `claude`. Their wrapper or settings name the Claude plugin folders, so selecting either without `claude`, by name or in the recorded selection, is an error.
 - An unknown name on the command line is an error that lists the valid names, and nothing is written.
-- A layer installs only the selected runtimes it declares in `layers.json`, plus the selected `codex` and `cursor` skill projections. A selected layer that declares none of those is reported and installs nothing.
+- A layer installs only the selected runtimes it declares in `layers.json`, plus the selected `codex`, `cursor`, and `antigravity` skill projections. A selected layer that declares none of those is reported and installs nothing.
 
 What each runtime writes:
 
@@ -174,7 +174,7 @@ The same install also builds `.claude/plugins` at the workspace root: one child 
 
 ## Codex
 
-With `codex` selected, the installer copies each selected layer's skills into `.agents\skills`. Codex reads skills and workspace `AGENTS.md` only when the T3 Codex instance's launch arguments name the marker `stack.lock.json`. The installer reports whether it generated or kept the workspace `AGENTS.md`. When a selected layer ships a Codex gate hook and its OpenCode copy is installed, the installer writes `.codex/config.toml` and prints a one-time trust step. See [T3 setup](t3-setup.md#codex-maxstack) for the instance, approval step, and limits. Cursor and Antigravity do not receive the shared file in repository sessions. See [their T3 setup notes](t3-setup.md#cursor-and-antigravity) for the known gap.
+With `codex` or `antigravity` selected, the installer copies each selected layer's skills into `.agents\skills`. The two runtimes share each copied folder, and the lock records the selected consumers. Antigravity documents this workspace skill location for its app, CLI, and IDE. maxstack does not configure Antigravity rules, hooks, plugins, models, or global settings, and has not verified skill loading through a live T3 Antigravity session. Codex reads skills and workspace `AGENTS.md` only when the T3 Codex instance's launch arguments name the marker `stack.lock.json`. When a selected layer ships a Codex gate hook and its OpenCode copy is installed, the installer writes `.codex/config.toml` and prints a one-time trust step. See [Antigravity skills](features/antigravity.md) and [T3 setup](t3-setup.md#codex-maxstack) for the supported surfaces and Codex setup.
 
 ## Copilot CLI
 
@@ -383,6 +383,10 @@ Limits of the record:
 - A lock at `ownedSchema: 1` names no runtime or layer for its records, so `-Remove` refuses it until one `-Apply` writes version 2. `-Uninstall` still works from it when it has an `owned` list, because it names each path directly. Its plain `X.bak` is restored as the original while the config still holds the installer's text, and a config with no backup is taken as the installer's, since that lock records no created config. An upgrade apply over such a lock records that config as created in the same way, so the upgraded lock removes it on uninstall.
 
 ## Removing and uninstalling
+
+The installer owns only the workspace outputs recorded in `stack.lock.json`. T3 provider instances are configured separately and remain in T3 when you remove a runtime or uninstall the workspace bundle. Uninstall also leaves global provider configuration, authentication, installed binaries, and system plugins alone. It does not promise to remove every plugin from the machine. The T3 settings snapshot is a recorded workspace output; removal preserves it, and uninstall deletes it only while its ownership hash still matches. See [T3 settings snapshot](features/t3-settings.md).
+
+Use `-Remove` with `-Runtimes` or `-Layers` to remove selected recorded outputs and apply the remaining selection. Use `-Uninstall` to remove all recorded workspace outputs. Both use ownership checks and may skip edited or unowned paths; see the rules below and [the T3 setup guide](t3-setup.md) for provider-instance ownership. Neither operation manages the live T3 settings file or global provider configuration.
 
 `-Remove` removes the runtimes or layers it names. `-Uninstall` removes everything the lock records, then the lock files. Both print a plan and write nothing until `-Apply` is given:
 

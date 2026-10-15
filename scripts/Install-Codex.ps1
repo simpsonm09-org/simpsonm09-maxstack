@@ -124,24 +124,78 @@ function Get-LayerSkills {
 function Get-CodexRecord {
     param([object[]] $Owned, [string] $Relative)
 
-    return @($Owned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path $Relative) -and (Test-OrdinalEqual $_.kind 'dir') -and (Test-OrdinalEqual (Get-Field $_ 'runtime') 'codex') }) | Select-Object -First 1
+    return @($Owned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path $Relative) -and (Test-OrdinalEqual $_.kind 'dir') -and (@(Get-OwnedRuntimeClaims $_ | Where-Object { Test-OrdinalIn $_ @('codex', 'antigravity') }).Count -gt 0) }) | Select-Object -First 1
+}
+
+function Assert-CodexSkillsPath {
+    $workspace = [IO.Path]::GetFullPath($Workspace)
+    $root = [IO.Path]::GetPathRoot($workspace)
+    $current = $root
+    $relative = [IO.Path]::GetRelativePath($root, $workspace)
+    foreach ($segment in $relative.Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries)) {
+        $current = Join-Path $current $segment
+        if ((Test-Path -LiteralPath $current) -and (Test-ReparsePoint $current)) { throw "Workspace path '$current' is a link or reparse point, so nothing was written." }
+    }
+    $current = $workspace
+    foreach ($segment in @('.agents', 'skills')) {
+        $current = Join-Path $current $segment
+        if (-not (Test-Path -LiteralPath $current)) { continue }
+        if (Test-ReparsePoint $current) { throw "Codex and Antigravity target '$current' is a link or reparse point, so nothing was written." }
+        if (-not (Test-Path -LiteralPath $current -PathType Container)) { throw "Codex and Antigravity target '$current' exists and is not a directory, so nothing was written." }
+    }
+}
+
+function Assert-CodexDestinationWithinWorkspace {
+    param([string] $Path)
+
+    $workspace = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Workspace))
+    $target = [IO.Path]::GetFullPath($Path)
+    $prefix = $workspace + [IO.Path]::DirectorySeparatorChar
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if (-not $target.StartsWith($prefix, $comparison)) { throw "Agent skill target '$target' resolves outside the workspace, so nothing was written." }
+    $current = $workspace
+    $relative = [IO.Path]::GetRelativePath($workspace, $target)
+    foreach ($segment in $relative.Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries)) {
+        $current = Join-Path $current $segment
+        if ((Test-Path -LiteralPath $current) -and (Test-ReparsePoint $current)) { throw "Agent skill target '$current' is a link or reparse point, so nothing was written." }
+    }
+}
+
+function Assert-CodexSkillName {
+    param([string] $Name)
+
+    if ($Name -match '^(?i:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$') { throw "Agent skill folder '$Name' is a reserved Windows device name." }
 }
 
 # Before any write: a skill folder that exists must be one the lock records as codex's and still holds the recorded tree.
 # Anything else is a folder maxstack did not write, or one a person changed, and the apply stops with nothing written.
 function Assert-CodexSkillTargets {
-    param([object[]] $Skills, [object[]] $Owned)
+    param([object[]] $Skills, [object[]] $Owned, [switch] $PreserveModified)
 
+    Assert-CodexSkillsPath
     foreach ($skill in $Skills) {
+        Assert-CodexSkillName $skill.name
         $relative = "$script:CodexSkillFolder/$($skill.name)"
         $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $relative)
+        Assert-CodexDestinationWithinWorkspace $full
+        $parent = Split-Path -Parent $full
+        $same = @()
+        if (Test-Path -LiteralPath $parent -PathType Container) { $same = @(Get-ChildItem -LiteralPath $parent -Force | Where-Object { Test-OrdinalEqualIgnoreCase $_.Name $skill.name }) }
+        if ($same.Count -gt 1) { throw "$relative collides with multiple skill folders by case, so nothing was written." }
+        if ($same.Count -eq 1 -and -not (Test-OrdinalEqual $same[0].Name $skill.name)) { throw "$relative collides with skill folder '$($same[0].Name)' by case, so nothing was written." }
         if (-not (Test-Path -LiteralPath $full)) { continue }
         $record = Get-CodexRecord -Owned $Owned -Relative $relative
         if ($null -eq $record) {
             throw "$relative already exists and maxstack did not write it, so nothing was written. Move it aside, then rerun -Apply."
         }
-        if ((Test-ReparsePoint $full) -or -not (Test-OrdinalEqual (Get-TreeSha256 $full) $record.sha256)) {
-            throw "$relative changed since the last apply, so nothing was written. Move its changes aside, or delete it, then rerun -Apply."
+        if ((Test-ReparsePoint $full)) { throw "$relative is a link or reparse point, so nothing was written." }
+        if (-not (Test-OrdinalEqual (Get-TreeSha256 $full) $record.sha256)) {
+            if (-not $PreserveModified -and $null -eq $record.PSObject.Properties['runtimes']) {
+                throw "$relative changed since the last apply, so nothing was written. Move its changes aside, or delete it, then rerun -Apply."
+            }
+            Write-Host "Kept $relative`: it changed since the last apply."
+            $skill | Add-Member -NotePropertyName preserve -NotePropertyValue $true -Force
+            $skill | Add-Member -NotePropertyName prior -NotePropertyValue $record -Force
         }
     }
 }
@@ -154,7 +208,7 @@ function Write-CodexSkills {
 
     $wanted = @($Skills | ForEach-Object { "$script:CodexSkillFolder/$($_.name)" })
     $stale = @()
-    if ($RemoveStale) { $stale = @($Owned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual (Get-Field $_ 'runtime') 'codex') -and (Test-OrdinalEqual $_.kind 'dir') -and -not (Test-OrdinalIn $_.path $wanted) }) }
+    if ($RemoveStale) { $stale = @($Owned | Where-Object { $null -ne $_ -and @(Get-OwnedRuntimeClaims $_ | Where-Object { Test-OrdinalIn $_ @('codex', 'antigravity') }).Count -gt 0 -and (Test-OrdinalEqual $_.kind 'dir') -and -not (Test-OrdinalIn $_.path $wanted) }) }
     foreach ($record in $stale) {
         $full = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $record.path)
         if (-not (Test-Path -LiteralPath $full -PathType Container)) { continue }
@@ -168,6 +222,8 @@ function Write-CodexSkills {
     $root = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $script:CodexSkillFolder)
     foreach ($skill in $Skills) {
         $full = Join-MaxstackPath $root $skill.name
+        if (Test-IsTrue (Get-Field $skill 'preserve')) { continue }
+        Assert-CodexDestinationWithinWorkspace $full
         Remove-OwnedTree $full
         Copy-SkillTree -Source $skill.source -Destination $full
         Write-Host "Copied codex skill '$($skill.name)' from layer '$($skill.layer)' into $full"

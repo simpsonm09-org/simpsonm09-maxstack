@@ -16,7 +16,7 @@ param(
     # The Pi CLI to wrap when the workspace has none installed under .maxstack\npm: a command name on PATH, or a
     # path. A match inside .maxstack\bin is never used.
     [string] $PiCommand = 'pi',
-    # Runtimes to add to the recorded selection: claude, opencode, copilot, pi, codex, cursor, or all. Comma-separated
+    # Runtimes to add to the recorded selection: claude, opencode, copilot, pi, codex, cursor, antigravity, or all. Comma-separated
     # values are split, because separate tokens do not bind to an array under pwsh -File.
     [Alias('Runtimes')]
     [string[]] $RequestedRuntimes = @(),
@@ -152,7 +152,7 @@ $piSettingsTarget = Join-MaxstackPath $piAgentDir 'settings.json'
 # The Pi the workspace installs for itself. npm puts its bin here, and the installer looks here before PATH.
 $piLocalBinTarget = Join-MaxstackPath $Workspace '.maxstack/npm/node_modules/.bin'
 # codex and cursor are opt-in. A lock with no selection, and a new workspace with no runtime named, select defaultRuntimeNames only.
-$runtimeNames = @('claude', 'opencode', 'copilot', 'pi', 'codex', 'cursor')
+$runtimeNames = @('claude', 'opencode', 'copilot', 'pi', 'codex', 'cursor', 'antigravity')
 $defaultRuntimeNames = @('claude', 'opencode', 'copilot', 'pi')
 # The OpenCode port this repository used to pin. Its folder is removed on every apply,
 # so a workspace that still has it ends with the same tree as one that never did.
@@ -800,6 +800,7 @@ $runtimeArtifacts = @{
     # selection. Only the records the lock holds for codex are.
     codex    = @('.codex/config.toml')
     cursor   = @('.cursor/skills')
+    antigravity = @()
 }
 
 # The names a -Runtimes or -Layers value picks. A value splits on commas, and all picks every name.
@@ -963,6 +964,19 @@ function Get-OwnedRuntime {
     if ($Path.StartsWith('.cursor/skills/', [StringComparison]::Ordinal)) { return 'cursor' }
     if ((Test-OrdinalEqual $Path '.pstack/pstack-t3-instances.json')) { return 't3-gated-instances' }
     return $null
+}
+
+# Legacy records use runtime. Shared .agents skills use runtimes so one folder can serve both.
+function Get-OwnedRuntimeClaims {
+    param($Record)
+
+    $runtimes = Get-Field $Record 'runtimes'
+    if ($null -ne $runtimes) { return @($runtimes) }
+    $runtime = Get-Field $Record 'runtime'
+    if ($null -ne $runtime -and -not (Test-OrdinalEqual $runtime $script:WorkspaceInstructionRuntime)) { return @($runtime) }
+    $pathRuntime = Get-OwnedRuntime $Record.path
+    if ($null -ne $pathRuntime) { return @($pathRuntime) }
+    return @()
 }
 
 # The artifacts of the runtimes that are not selected and that exist on disk. Status names them.
@@ -1776,6 +1790,7 @@ function New-OwnedRecord {
         # Untyped, so that no runtime stays $null in the record rather than an empty string.
         $Runtime = $null,
         [string[]] $Layers = @(),
+        [string[]] $RuntimeClaims = @(),
         # The role of a backup: original, or edited. Null for every other record.
         $Role = $null
     )
@@ -1788,7 +1803,11 @@ function New-OwnedRecord {
         }
         default { $record = [pscustomobject]@{ path = $Path; kind = $Kind; sha256 = $Sha256 } }
     }
-    $record | Add-Member -NotePropertyName runtime -NotePropertyValue $Runtime
+    if ($RuntimeClaims.Count -gt 0) {
+        $record | Add-Member -NotePropertyName runtimes -NotePropertyValue @(Sort-Utf8 @($RuntimeClaims | Where-Object { $_ }))
+    } else {
+        $record | Add-Member -NotePropertyName runtime -NotePropertyValue $Runtime
+    }
     $record | Add-Member -NotePropertyName layers -NotePropertyValue @(Sort-Utf8 @($Layers | Where-Object { $_ }))
     if ($null -ne $Role) { $record | Add-Member -NotePropertyName role -NotePropertyValue $Role }
     return $record
@@ -1892,6 +1911,7 @@ function Get-OwnedPlan {
         [bool] $PiPending,
         [hashtable] $PiUnknown,
         [object[]] $CodexSkills = @(),
+        [string[]] $SkillRuntimeClaims = @('codex'),
         [object[]] $CursorSkills = @(),
         [object[]] $WorkspaceInstructionFiles = @(),
         $CodexHookConfigPlan = $null
@@ -1970,7 +1990,13 @@ function Get-OwnedPlan {
     }
 
     foreach ($skill in $CodexSkills) {
-        $records.Add((New-OwnedRecord -Path "$script:CodexSkillFolder/$($skill.name)" -Kind 'dir' -Sha256 $skill.sha256 -Runtime 'codex' -Layers @($skill.layer)))
+        $skillSha = if (Test-IsTrue (Get-Field $skill 'preserve')) { $skill.prior.sha256 } else { $skill.sha256 }
+        $skillRecord = @{ Path = "$script:CodexSkillFolder/$($skill.name)"; Kind = 'dir'; Sha256 = $skillSha; Layers = @($skill.layer) }
+        if (Test-OrdinalIn 'antigravity' $SkillRuntimeClaims) { $skillRecord.RuntimeClaims = $SkillRuntimeClaims }
+        else { $skillRecord.Runtime = 'codex' }
+        $preserveSkill = Test-IsTrue (Get-Field $skill 'preserve')
+        $records.Add((New-OwnedRecord @skillRecord))
+        if ($preserveSkill) { $records[$records.Count - 1] | Add-Member -NotePropertyName preserve -NotePropertyValue $true }
     }
 
     foreach ($skill in $CursorSkills) {
@@ -2029,10 +2055,15 @@ function Get-OwnedRecords {
         if ((Get-Field $record 'backup') -and -not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
         if (Test-IsTrue (Get-Field $record 'preserve')) {
             $prior = @($priorOwned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path $record.path) -and (Test-OrdinalEqual $_.kind $record.kind) } | Select-Object -First 1)
-            if ($prior.Count -gt 0) { $prior[0] }
+            if ($prior.Count -gt 0 -and $null -ne (Get-Field $record 'runtimes')) {
+                $attribution = @{ RuntimeClaims = @($record.runtimes); Layers = @($record.layers) }
+                $kept = New-OwnedRecord -Path $record.path -Kind $record.kind -Sha256 $prior[0].sha256 @attribution
+                $kept
+            } elseif ($prior.Count -gt 0) { $prior[0] }
             continue
         }
-        $attribution = @{ Runtime = $record.runtime; Layers = @($record.layers); Role = (Get-Field $record 'role') }
+        $attribution = @{ Runtime = (Get-Field $record 'runtime'); Layers = @($record.layers); Role = (Get-Field $record 'role') }
+        if ($null -ne (Get-Field $record 'runtimes')) { $attribution.RuntimeClaims = @($record.runtimes); $attribution.Remove('Runtime') }
         switch ($record.kind) {
             'file' {
                 $disk = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
@@ -2113,8 +2144,8 @@ function Get-OwnershipReport {
     }
 
     foreach ($record in @($Recorded)) {
-        $runtime = Get-OwnedRuntime $record.path
-        if (($null -ne $runtime) -and (-not (Test-OrdinalIn $runtime $SelectedRuntimes)) -and (-not (Test-OrdinalEqual $runtime 't3-gated-instances'))) {
+        $consumers = @(Get-OwnedRuntimeClaims $record)
+        if ($consumers.Count -gt 0 -and @($consumers | Where-Object { Test-OrdinalIn $_ $SelectedRuntimes }).Count -eq 0 -and (-not (Test-OrdinalEqual (Get-OwnedRuntime $record.path) 't3-gated-instances'))) {
             if ($notSelectedLabels.Add($record.path)) { $results.Add([pscustomobject]@{ state = 'not selected'; label = $record.path }) }
             continue
         }
@@ -2943,7 +2974,8 @@ function Get-RemovalCandidates {
     foreach ($record in @($Records)) {
         if ($All) { $candidates.Add($record); continue }
         if ($Produced.ContainsKey($record.path)) { continue }
-        $runtimeGone = ($null -ne $record.runtime) -and ((-not (Test-OrdinalIn $record.runtime $KeepRuntimes)))
+        $consumers = @(Get-OwnedRuntimeClaims $record)
+        $runtimeGone = $consumers.Count -gt 0 -and @($consumers | Where-Object { Test-OrdinalIn $_ $KeepRuntimes }).Count -eq 0
         $layerGone = @($record.layers | Where-Object { (-not (Test-OrdinalIn $_ $KeepLayers)) }).Count -gt 0
         if ($runtimeGone -or $layerGone) { $candidates.Add($record) }
     }
@@ -3499,6 +3531,7 @@ if (-not $removing) {
 }
 $copilotSelected = (Test-OrdinalIn 'copilot' $selectedRuntimes)
 $codexSelected = (Test-OrdinalIn 'codex' $selectedRuntimes)
+$antigravitySelected = (Test-OrdinalIn 'antigravity' $selectedRuntimes)
 $cursorSelected = (Test-OrdinalIn 'cursor' $selectedRuntimes)
 $piSelected = (Test-OrdinalIn 'pi' $selectedRuntimes)
 $openCodeSelected = (Test-OrdinalIn 'opencode' $selectedRuntimes)
@@ -3517,6 +3550,7 @@ foreach ($layer in $allLayers) {
             # Cursor reads Agent Skills from the project root, so it also needs no layer declaration.
             elseif (Test-OrdinalEqual $runtime 'cursor') { $active[$runtime] = @{} }
         }
+        if ($antigravitySelected) { $active['codex'] = @{}; $active['antigravity'] = @{} }
         if ($active.Count -eq 0) { Write-Host "Layer '$($layer.name)' declares none of the selected runtimes, so it installs nothing." }
     }
     $layer.runtimes = $active
@@ -3556,7 +3590,7 @@ foreach ($layer in $layers) {
 # Before any write, an apply records what already exists: the directories an install may create, the
 # settings file, and its Pi keys. The ownership record then tells the paths this install created from
 # the paths that were there first, so an uninstall never removes what it did not create.
-$installerDirs = @(Get-InstallerDirectories -Layers $layers -Codex:$codexSelected -Cursor:$cursorSelected)
+$installerDirs = @(Get-InstallerDirectories -Layers $layers -Codex:($codexSelected -or $antigravitySelected) -Cursor:$cursorSelected)
 if ($Apply -and $null -ne $t3Report -and (Test-OrdinalEqual $t3Report.sourceState 'present')) { $installerDirs += @('.maxstack', '.maxstack/t3') }
 $existedBefore = @()
 $existedBeforeFiles = @()
@@ -3597,6 +3631,10 @@ if ($Apply -and $cursorSelected) {
         }
         $stagedCursorSkills = @(Get-LayerSkills -Layers $layers -Runtime 'cursor')
         Assert-CursorSkillTargets -Skills $stagedCursorSkills -Owned $priorOwned
+        if ($codexSelected -or $antigravitySelected) {
+            $stagedAgentSkills = @(Get-LayerSkills -Layers $layers)
+            Assert-CodexSkillTargets -Skills $stagedAgentSkills -Owned $priorOwned -PreserveModified:$antigravitySelected
+        }
     } finally {
         $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
         $stageFull = [IO.Path]::GetFullPath($cursorStageRoot)
@@ -3605,6 +3643,31 @@ if ($Apply -and $cursorSelected) {
             throw "Cursor preflight cleanup target '$stageFull' is outside the temporary directory."
         }
         Remove-OwnedTree $stageFull
+    }
+}
+
+# Antigravity reads the same workspace skill projection as Codex. Validate skill names and targets
+# from staged sources before syncing a pinned layer into the workspace cache.
+if ($Apply -and ($codexSelected -or $antigravitySelected)) {
+    Assert-CodexSkillsPath
+    if (-not $cursorSelected) {
+        $skillStageRoot = Join-Path ([IO.Path]::GetTempPath()) "maxstack-agents-preflight-$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $skillStageRoot | Out-Null
+        try {
+            foreach ($layer in @($layers | Where-Object { $null -ne $_.url })) {
+                $stageCache = Sync-GitPlugin $layer -CacheRoot (Join-Path $skillStageRoot '.claude/cache')
+                $layer.root = Join-SourceSub $stageCache $layer.sourcePath
+                if (-not (Test-Path -LiteralPath $layer.root -PathType Container)) { throw "Layer '$($layer.name)' has no $($layer.sourcePath) folder at the pinned commit." }
+            }
+            $stagedSkills = @(Get-LayerSkills -Layers $layers)
+            Assert-CodexSkillTargets -Skills $stagedSkills -Owned $priorOwned -PreserveModified:$antigravitySelected
+        } finally {
+            $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
+            $stageFull = [IO.Path]::GetFullPath($skillStageRoot)
+            $tempPrefix = $tempRoot + [IO.Path]::DirectorySeparatorChar
+            if (-not $stageFull.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Skill preflight cleanup target '$stageFull' is outside the temporary directory." }
+            Remove-OwnedTree $stageFull
+        }
     }
 }
 
@@ -3633,10 +3696,10 @@ if ($removing) { $t3InstancesPlan = $null }
 $codexSkills = @()
 $cursorSkills = @()
 $codexHookConfigPlan = $null
-if ($codexSelected) {
+if ($codexSelected -or $antigravitySelected) {
     $codexSkills = @(Get-LayerSkills -Layers $layers)
-    if (-not ($removing -or $uninstalling)) { $codexHookConfigPlan = Get-CodexHookConfigPlan -Layers $layers }
-    if ($Apply) { Assert-CodexSkillTargets -Skills $codexSkills -Owned $priorOwned }
+    if ($codexSelected -and -not ($removing -or $uninstalling)) { $codexHookConfigPlan = Get-CodexHookConfigPlan -Layers $layers }
+    if ($Apply) { Assert-CodexSkillTargets -Skills $codexSkills -Owned $priorOwned -PreserveModified:$antigravitySelected }
 }
 if ($cursorSelected) {
     $cursorSkills = @(Get-LayerSkills -Layers $layers -Runtime 'cursor')
@@ -3828,7 +3891,8 @@ if ($Apply -or $removing -or $updating -or ($null -ne $priorOwned)) {
     $plan = Get-OwnedPlan -Document $document -Layers $layers -ClaudeRecords $claudeRecords -OpenCodeLayers $openCodeLayers `
         -OpenCodeSpecs $openCodeSpecs -CopilotCmdText $copilotCmdText -CopilotShText $copilotShText `
         -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown `
-        -CodexSkills $codexSkills -CursorSkills $cursorSkills -WorkspaceInstructionFiles $workspaceInstructionFiles -CodexHookConfigPlan $codexHookConfigPlan
+        -CodexSkills $codexSkills -SkillRuntimeClaims @(if ($codexSelected) { 'codex' }; if ($antigravitySelected) { 'antigravity' }) `
+        -CursorSkills $cursorSkills -WorkspaceInstructionFiles $workspaceInstructionFiles -CodexHookConfigPlan $codexHookConfigPlan
     if ($null -ne $t3InstancesPlan) { $plan += [pscustomobject]@{ path = $t3InstancesPlan.path; kind = 'file'; sha256 = $t3InstancesPlan.sha256; runtime = $t3InstancesPlan.runtime; layers = @($t3InstancesPlan.layers); preserve = $t3InstancesPlan.preserve } }
 }
 $priorT3Snapshot = @($priorOwned | Where-Object { (Test-OrdinalEqual (Get-Field $_ 'path') '.maxstack/t3/settings.snapshot.json') -and (Test-OrdinalEqual (Get-Field $_ 'kind') 'file') })
@@ -4203,7 +4267,7 @@ if ($piKept) {
 }
 
 # codex's skill folders come after the Pi wrappers, and before the lock records what was written.
-if ($Apply -and $codexSelected) { Write-CodexSkills -Skills $codexSkills -Owned $priorOwned -RemoveStale (-not $removing) }
+if ($Apply -and ($codexSelected -or $antigravitySelected) -and -not ($removing -or $uninstalling)) { Write-CodexSkills -Skills $codexSkills -Owned $priorOwned -RemoveStale $true }
 if ($Apply -and $cursorSelected) { Write-CursorSkills -Skills $cursorSkills -Owned $priorOwned -RemoveStale (-not $removing) }
 if ($Apply -and $codexSelected -and -not $removing) { Write-CodexHookConfig -Plan $codexHookConfigPlan }
 
