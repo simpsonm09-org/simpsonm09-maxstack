@@ -103,7 +103,11 @@ test('the settings seed is valid and schema keys match the PowerShell validator'
 
 test('the manifest verifier rejects settings schema and validator key drift', { skip }, () => {
   const validator = readFileSync(join(repoRoot, 'scripts', 'Install-Settings.ps1'), 'utf8');
-  const altered = validator.replace("'claude', 'codex', 'copilot', 'opencode', 'pi'", "'claude', 'codex', 'copilot', 'opencode', 'new-harness'");
+  // Anchor on the declaration, read the same way the verifier reads it, so a change to the ids cannot leave this fixture
+  // matching nothing. The mutation appends one id the schema does not declare, which is real schema-validator drift.
+  const runtimeIds = /\$script:SettingsRuntimeIds\s*=\s*@\(([^)]*)\)/g;
+  assert.equal([...validator.matchAll(runtimeIds)].length, 1, 'the fixture anchor found the validator runtime list once');
+  const altered = validator.replace(runtimeIds, (_list, ids) => `$script:SettingsRuntimeIds = @(${ids}, 'new-harness')`);
   assert.notEqual(altered, validator, 'the fixture replacement found the validator list');
   const run = runVerifier({ extraFiles: { 'scripts/Install-Settings.ps1': altered } });
   assert.equal(run.status, 1, failureOf(run));

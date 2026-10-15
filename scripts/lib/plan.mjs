@@ -1,7 +1,7 @@
 import { jsonBytes } from './json.mjs';
 import { compareUtf8 } from './paths.mjs';
 
-export const RUNTIMES = ['claude', 'copilot', 'opencode', 'pi'];
+export const RUNTIMES = ['claude', 'copilot', 'cursor', 'opencode', 'pi'];
 
 // Returns the complete generated tree for one runtime as Map<path, {bytes, layers}>.
 // Every path is relative to the output directory. Nothing is written here.
@@ -16,7 +16,7 @@ export function planGeneration(runtime, layers) {
       addFile(files, `.claude/plugins/${layer.name}/.claude-plugin/plugin.json`, jsonBytes({ name: layer.name }), [layer.name]);
     }
     for (const skill of layer.skills) {
-      if (runtime === 'opencode' || runtime === 'pi') claimBareName(bareNames, skill.name);
+      if (runtime === 'opencode' || runtime === 'pi' || runtime === 'cursor') claimBareName(bareNames, skill.name);
       const base = skillBase(runtime, layer.name);
       for (const file of skill.files) addFile(files, `${base}/${skill.name}/${file.path}`, file.bytes, [layer.name]);
     }
@@ -28,6 +28,7 @@ export function planGeneration(runtime, layers) {
 function skillBase(runtime, layer) {
   if (runtime === 'opencode') return '.opencode/skills';
   if (runtime === 'pi') return '.pi/agent/skills';
+  if (runtime === 'cursor') return '.cursor/skills';
   return `.claude/plugins/${layer}/skills`;
 }
 

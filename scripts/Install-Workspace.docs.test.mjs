@@ -31,11 +31,13 @@ test('finding F8: OpenCode debug verification documents its managed service beha
   assert.match(t3, /OpenCode 2\.x debug commands start or reuse its managed background service/);
 });
 
-test('Cursor and Antigravity setup documents the codex runtime scope', () => {
+test('Cursor and Antigravity setup documents the opt-in skills target and remaining gaps', () => {
   const section = t3.split('## Cursor and Antigravity\n')[1]?.split('\n## ')[0] ?? '';
   assert.match(section, /workspace root/);
-  assert.match(section, /second-class harnesses/);
-  assert.match(section, /not verified in a live session/);
+  assert.match(section, /\.cursor\\skills/);
+  assert.match(section, /not consumed automatically/);
+  assert.match(section, /no gate/);
+  assert.match(section, /live skill load and T3 session remain unverified/);
 });
 
 test('finding F9/F10: dependency size and all generated runtime folders are documented', () => {

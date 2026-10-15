@@ -16,7 +16,7 @@ param(
     # The Pi CLI to wrap when the workspace has none installed under .maxstack\npm: a command name on PATH, or a
     # path. A match inside .maxstack\bin is never used.
     [string] $PiCommand = 'pi',
-    # Runtimes to add to the recorded selection: claude, opencode, copilot, pi, codex, or all. Comma-separated
+    # Runtimes to add to the recorded selection: claude, opencode, copilot, pi, codex, cursor, or all. Comma-separated
     # values are split, because separate tokens do not bind to an array under pwsh -File.
     [Alias('Runtimes')]
     [string[]] $RequestedRuntimes = @(),
@@ -118,6 +118,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-MaxstackPath $PSScriptRoot 'Install-LayerSources.ps1')
 . (Join-MaxstackPath $PSScriptRoot 'Install-Settings.ps1')
 . (Join-MaxstackPath $PSScriptRoot 'Install-Codex.ps1')
+. (Join-MaxstackPath $PSScriptRoot 'Install-Cursor.ps1')
 . (Join-MaxstackPath $PSScriptRoot 'Install-T3Settings.ps1')
 $layersPath = if ($LayersFile) { $LayersFile } else { Join-MaxstackPath $repoRoot 'layers.json' }
 $workspaceSettingsPath = Join-MaxstackPath $Workspace 'maxstack.settings.json'
@@ -150,9 +151,8 @@ $piAgentDir = Join-MaxstackPath $Workspace '.pi/agent'
 $piSettingsTarget = Join-MaxstackPath $piAgentDir 'settings.json'
 # The Pi the workspace installs for itself. npm puts its bin here, and the installer looks here before PATH.
 $piLocalBinTarget = Join-MaxstackPath $Workspace '.maxstack/npm/node_modules/.bin'
-# codex is opt-in. A lock with no selection, and a new workspace with no runtime named, select defaultRuntimeNames only, so
-# an existing install is unchanged until codex is named by -Runtimes, the settings file, or all.
-$runtimeNames = @('claude', 'opencode', 'copilot', 'pi', 'codex')
+# codex and cursor are opt-in. A lock with no selection, and a new workspace with no runtime named, select defaultRuntimeNames only.
+$runtimeNames = @('claude', 'opencode', 'copilot', 'pi', 'codex', 'cursor')
 $defaultRuntimeNames = @('claude', 'opencode', 'copilot', 'pi')
 # The OpenCode port this repository used to pin. Its folder is removed on every apply,
 # so a workspace that still has it ends with the same tree as one that never did.
@@ -799,6 +799,7 @@ $runtimeArtifacts = @{
     # The codex skill folders sit in .agents\skills, which other tools also read, so no top-level path is judged by the
     # selection. Only the records the lock holds for codex are.
     codex    = @('.codex/config.toml')
+    cursor   = @('.cursor/skills')
 }
 
 # The names a -Runtimes or -Layers value picks. A value splits on commas, and all picks every name.
@@ -941,7 +942,7 @@ function Get-UnselectedNotes {
         }
     }
     $declared = @(Get-OrdinalUnique @($AllLayers | ForEach-Object { $_.declared.Keys }))
-    foreach ($runtime in $defaultRuntimeNames) {
+    foreach ($runtime in $runtimeNames) {
         if ((Test-OrdinalIn $runtime $declared) -and (-not (Test-OrdinalIn $runtime $SelectedRuntimes))) {
             $notes.Add([pscustomobject]@{ kind = 'runtime'; name = $runtime; flag = '-Runtimes' })
         }
@@ -959,6 +960,7 @@ function Get-OwnedRuntime {
     if ((Test-OrdinalIn $Path @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh'))) { return 'copilot' }
     if ($Path.StartsWith('.maxstack/bin/pi.', [StringComparison]::Ordinal) -or $Path.StartsWith('.pi/', [StringComparison]::Ordinal)) { return 'pi' }
     if ($Path.StartsWith('.agents/skills/', [StringComparison]::Ordinal) -or (Test-OrdinalEqual $Path '.codex/config.toml')) { return 'codex' }
+    if ($Path.StartsWith('.cursor/skills/', [StringComparison]::Ordinal)) { return 'cursor' }
     if ((Test-OrdinalEqual $Path '.pstack/pstack-t3-instances.json')) { return 't3-gated-instances' }
     return $null
 }
@@ -1163,11 +1165,11 @@ function Get-ItemsTreeSha256 {
 # cache cloned from another remote is never fetched from. A partial, sparse clone keeps
 # only the plugin folder. Once the commit is in the cache, no network is used.
 function Sync-GitPlugin {
-    param($Layer)
+    param($Layer, [string] $CacheRoot = $claudeCacheTarget)
 
-    $cache = Join-MaxstackPath $claudeCacheTarget $Layer.name
+    $cache = Join-MaxstackPath $CacheRoot $Layer.name
     if (-not (Test-Path -LiteralPath (Join-MaxstackPath $cache '.git'))) {
-        New-Item -ItemType Directory -Path $claudeCacheTarget -Force | Out-Null
+        New-Item -ItemType Directory -Path $CacheRoot -Force | Out-Null
         Write-Host "Cloning $($Layer.url) (partial, sparse) into $cache"
         # A clone names no tree, so it runs from an empty folder. Its target is an absolute path, since a relative one would resolve there.
         $clone = Invoke-GitGuarded -Arguments @('clone', '--quiet', '--filter=blob:none', '--no-checkout', '--sparse', '--', $Layer.url, [IO.Path]::GetFullPath($cache))
@@ -1890,6 +1892,7 @@ function Get-OwnedPlan {
         [bool] $PiPending,
         [hashtable] $PiUnknown,
         [object[]] $CodexSkills = @(),
+        [object[]] $CursorSkills = @(),
         [object[]] $WorkspaceInstructionFiles = @(),
         $CodexHookConfigPlan = $null
     )
@@ -1970,6 +1973,15 @@ function Get-OwnedPlan {
         $records.Add((New-OwnedRecord -Path "$script:CodexSkillFolder/$($skill.name)" -Kind 'dir' -Sha256 $skill.sha256 -Runtime 'codex' -Layers @($skill.layer)))
     }
 
+    foreach ($skill in $CursorSkills) {
+        if (Test-IsTrue (Get-Field $skill 'preserve')) {
+            $prior = Get-Field $skill 'prior'
+            $records.Add([pscustomobject]@{ path = $prior.path; kind = $prior.kind; sha256 = $prior.sha256; runtime = $prior.runtime; layers = @($prior.layers); preserve = $true })
+        } else {
+            $records.Add((New-OwnedRecord -Path "$script:CursorSkillFolder/$($skill.name)" -Kind 'dir' -Sha256 $skill.sha256 -Runtime 'cursor' -Layers @($skill.layer)))
+        }
+    }
+
     if ($null -ne $CodexHookConfigPlan -and -not (Test-IsTrue (Get-Field $CodexHookConfigPlan 'remove'))) {
         if (Test-IsTrue (Get-Field $CodexHookConfigPlan 'preserve')) {
             $priorHook = Get-PriorOwnedFileRecord $CodexHookConfigPlan.path
@@ -2016,8 +2028,8 @@ function Get-OwnedRecords {
         # A planned backup is recorded once the apply has written it, and not before.
         if ((Get-Field $record 'backup') -and -not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
         if (Test-IsTrue (Get-Field $record 'preserve')) {
-            $prior = Get-PriorOwnedFileRecord $record.path
-            if ($null -ne $prior) { $prior }
+            $prior = @($priorOwned | Where-Object { $null -ne $_ -and (Test-OrdinalEqual $_.path $record.path) -and (Test-OrdinalEqual $_.kind $record.kind) } | Select-Object -First 1)
+            if ($prior.Count -gt 0) { $prior[0] }
             continue
         }
         $attribution = @{ Runtime = $record.runtime; Layers = @($record.layers); Role = (Get-Field $record 'role') }
@@ -2170,6 +2182,13 @@ function Get-OwnershipReport {
             if (-not $recordedPaths.Contains($path) -and -not $notSelectedLabels.Contains($path)) { $results.Add([pscustomobject]@{ state = 'untracked'; label = $path }) }
         }
     }
+    $cursorSkillsRoot = Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $script:CursorSkillFolder)
+    if ((Test-OrdinalIn 'cursor' $SelectedRuntimes) -and (Test-Path -LiteralPath $cursorSkillsRoot -PathType Container)) {
+        foreach ($entry in @(Get-ChildItem -LiteralPath $cursorSkillsRoot -Force)) {
+            $path = "$script:CursorSkillFolder/$($entry.Name)"
+            if (-not $recordedPaths.Contains($path)) { $results.Add([pscustomobject]@{ state = 'untracked'; label = $path }) }
+        }
+    }
     # The rows of a skipped layer are not judged, since the skip line already says why.
     if (@($SkippedLayers).Count -gt 0) {
         foreach ($item in $results) {
@@ -2223,13 +2242,14 @@ function Remove-FolderExtras {
 # The directories an install may create, named relative to the workspace. An apply reads this list
 # before and after its writes, to tell what it created from what was there first.
 function Get-InstallerDirectories {
-    param([object[]] $Layers, [switch] $Codex)
+    param([object[]] $Layers, [switch] $Codex, [switch] $Cursor)
 
     $dirs = [System.Collections.Generic.List[string]]::new()
     foreach ($dir in @('.claude', '.claude/plugins', '.claude/cache', '.opencode', '.opencode/plugins', '.opencode/agents', '.maxstack', '.maxstack/bin', '.pi', '.pi/agent', '.pstack')) {
         $dirs.Add($dir)
     }
     if ($Codex) { $dirs.Add('.agents'); $dirs.Add('.agents/skills'); $dirs.Add('.codex') }
+    if ($Cursor) { $dirs.Add('.cursor'); $dirs.Add('.cursor/skills') }
     foreach ($layer in $Layers) {
         $dirs.Add(".claude/plugins/$($layer.name)")
         $dirs.Add(".claude/cache/$($layer.name)")
@@ -2273,7 +2293,7 @@ $quarantineSuffix = '.maxstack-removing'
 $groupFileNames = @('opencode.jsonc', '.pi/agent/settings.json')
 
 function Test-InstallerOutputs {
-    foreach ($path in @('.opencode/plugins', '.opencode/agents', '.claude/plugins', '.claude/cache', '.maxstack/bin', '.pstack/pstack-t3-instances.json')) {
+    foreach ($path in @('.opencode/plugins', '.opencode/agents', '.claude/plugins', '.claude/cache', '.maxstack/bin', '.cursor/skills', '.pstack/pstack-t3-instances.json')) {
         if (Test-Path -LiteralPath (Join-MaxstackPath $Workspace (ConvertTo-MaxstackPath $path))) { return $true }
     }
     return $false
@@ -3479,6 +3499,7 @@ if (-not $removing) {
 }
 $copilotSelected = (Test-OrdinalIn 'copilot' $selectedRuntimes)
 $codexSelected = (Test-OrdinalIn 'codex' $selectedRuntimes)
+$cursorSelected = (Test-OrdinalIn 'cursor' $selectedRuntimes)
 $piSelected = (Test-OrdinalIn 'pi' $selectedRuntimes)
 $openCodeSelected = (Test-OrdinalIn 'opencode' $selectedRuntimes)
 $claudeSelected = (Test-OrdinalIn 'claude' $selectedRuntimes)
@@ -3493,6 +3514,8 @@ foreach ($layer in $allLayers) {
             if ($layer.declared.ContainsKey($runtime)) { $active[$runtime] = $layer.declared[$runtime] }
             # codex reads every selected layer's skills, so it needs no declaration in layers.json.
             elseif (Test-OrdinalEqual $runtime 'codex') { $active[$runtime] = @{} }
+            # Cursor reads Agent Skills from the project root, so it also needs no layer declaration.
+            elseif (Test-OrdinalEqual $runtime 'cursor') { $active[$runtime] = @{} }
         }
         if ($active.Count -eq 0) { Write-Host "Layer '$($layer.name)' declares none of the selected runtimes, so it installs nothing." }
     }
@@ -3533,7 +3556,7 @@ foreach ($layer in $layers) {
 # Before any write, an apply records what already exists: the directories an install may create, the
 # settings file, and its Pi keys. The ownership record then tells the paths this install created from
 # the paths that were there first, so an uninstall never removes what it did not create.
-$installerDirs = @(Get-InstallerDirectories -Layers $layers -Codex:$codexSelected)
+$installerDirs = @(Get-InstallerDirectories -Layers $layers -Codex:$codexSelected -Cursor:$cursorSelected)
 if ($Apply -and $null -ne $t3Report -and (Test-OrdinalEqual $t3Report.sourceState 'present')) { $installerDirs += @('.maxstack', '.maxstack/t3') }
 $existedBefore = @()
 $existedBeforeFiles = @()
@@ -3558,8 +3581,35 @@ if ($Apply) {
     [void](Get-WorkspaceInstructionPlan -Layers $knownLayers -SelectedRuntimes $selectedRuntimes -ValidateOnly)
 }
 
-# Git sources are synced before anything is written, so a bad pin stops the run with
-# the workspace unchanged. Audit reads no git source; it reports what the last apply left.
+# Cursor collision preflight resolves pinned skills in an isolated temporary cache first. This
+# lets an apply refuse an unsafe target before Sync-GitPlugin writes the workspace cache.
+if ($Apply -and $cursorSelected) {
+    Assert-CursorSkillsPath
+    $cursorStageRoot = Join-Path ([IO.Path]::GetTempPath()) "maxstack-cursor-preflight-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $cursorStageRoot | Out-Null
+    try {
+        foreach ($layer in @($layers | Where-Object { $null -ne $_.url })) {
+            $stageCache = Sync-GitPlugin $layer -CacheRoot (Join-Path $cursorStageRoot '.claude/cache')
+            $layer.root = Join-SourceSub $stageCache $layer.sourcePath
+            if (-not (Test-Path -LiteralPath $layer.root -PathType Container)) {
+                throw "Layer '$($layer.name)' has no $($layer.sourcePath) folder at the pinned commit."
+            }
+        }
+        $stagedCursorSkills = @(Get-LayerSkills -Layers $layers -Runtime 'cursor')
+        Assert-CursorSkillTargets -Skills $stagedCursorSkills -Owned $priorOwned
+    } finally {
+        $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
+        $stageFull = [IO.Path]::GetFullPath($cursorStageRoot)
+        $tempPrefix = $tempRoot + [IO.Path]::DirectorySeparatorChar
+        if (-not $stageFull.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Cursor preflight cleanup target '$stageFull' is outside the temporary directory."
+        }
+        Remove-OwnedTree $stageFull
+    }
+}
+
+# Git sources are synced only after source and destination preflight, so a bad pin or Cursor
+# collision stops the run before workspace cache or generated-output writes. Audit reads no git source.
 if ($Apply) {
     foreach ($layer in @($layers | Where-Object { $null -ne $_.url })) {
         $cache = Sync-GitPlugin $layer
@@ -3581,11 +3631,16 @@ if ($removing) { $t3InstancesPlan = $null }
 
 # codex copies each selected layer's skills from the layer root, so the roots must be known. Its checks run before any write.
 $codexSkills = @()
+$cursorSkills = @()
 $codexHookConfigPlan = $null
 if ($codexSelected) {
-    $codexSkills = @(Get-CodexSkills -Layers $layers)
+    $codexSkills = @(Get-LayerSkills -Layers $layers)
     if (-not ($removing -or $uninstalling)) { $codexHookConfigPlan = Get-CodexHookConfigPlan -Layers $layers }
     if ($Apply) { Assert-CodexSkillTargets -Skills $codexSkills -Owned $priorOwned }
+}
+if ($cursorSelected) {
+    $cursorSkills = @(Get-LayerSkills -Layers $layers -Runtime 'cursor')
+    if ($Apply) { Assert-CursorSkillTargets -Skills $cursorSkills -Owned $priorOwned }
 }
 
 $claudeRecords = @($layers | ForEach-Object { Get-ClaudeRecord $_ } | Where-Object { $null -ne $_ })
@@ -3773,7 +3828,7 @@ if ($Apply -or $removing -or $updating -or ($null -ne $priorOwned)) {
     $plan = Get-OwnedPlan -Document $document -Layers $layers -ClaudeRecords $claudeRecords -OpenCodeLayers $openCodeLayers `
         -OpenCodeSpecs $openCodeSpecs -CopilotCmdText $copilotCmdText -CopilotShText $copilotShText `
         -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown `
-        -CodexSkills $codexSkills -WorkspaceInstructionFiles $workspaceInstructionFiles -CodexHookConfigPlan $codexHookConfigPlan
+        -CodexSkills $codexSkills -CursorSkills $cursorSkills -WorkspaceInstructionFiles $workspaceInstructionFiles -CodexHookConfigPlan $codexHookConfigPlan
     if ($null -ne $t3InstancesPlan) { $plan += [pscustomobject]@{ path = $t3InstancesPlan.path; kind = 'file'; sha256 = $t3InstancesPlan.sha256; runtime = $t3InstancesPlan.runtime; layers = @($t3InstancesPlan.layers); preserve = $t3InstancesPlan.preserve } }
 }
 $priorT3Snapshot = @($priorOwned | Where-Object { (Test-OrdinalEqual (Get-Field $_ 'path') '.maxstack/t3/settings.snapshot.json') -and (Test-OrdinalEqual (Get-Field $_ 'kind') 'file') })
@@ -4149,6 +4204,7 @@ if ($piKept) {
 
 # codex's skill folders come after the Pi wrappers, and before the lock records what was written.
 if ($Apply -and $codexSelected) { Write-CodexSkills -Skills $codexSkills -Owned $priorOwned -RemoveStale (-not $removing) }
+if ($Apply -and $cursorSelected) { Write-CursorSkills -Skills $cursorSkills -Owned $priorOwned -RemoveStale (-not $removing) }
 if ($Apply -and $codexSelected -and -not $removing) { Write-CodexHookConfig -Plan $codexHookConfigPlan }
 
 $claudeByLayer = [hashtable]::new([StringComparer]::Ordinal)

@@ -84,7 +84,7 @@ Ubuntu WSL can also run the OpenCode CLI. It reads the same workspace files thro
 
 An optional [`maxstack.settings.json`](features/settings.md) beside `stack.lock.json` can declare runtime and layer selections. Its names add to the recorded selection. Omitted names stay selected until removed with `-Remove`. On a new workspace, a dimension named in the settings file selects exactly those names. `-Remove` warns about each removed name the file still lists, since the next apply selects it again. See [Workspace settings](features/settings.md) for its schema and reserved fields.
 
-The workspace installs only the runtimes and layers it selects. `-Runtimes` names runtimes: `claude`, `opencode`, `copilot`, `pi`, `codex`, or `all`. `-Layers` names layers by their names in `layers.json`, or `all`. Both take comma-separated values, which `pwsh -File` passes as one token:
+The workspace installs only the runtimes and layers it selects. `-Runtimes` names runtimes: `claude`, `opencode`, `copilot`, `pi`, `codex`, `cursor`, or `all`. `-Layers` names layers by their names in `layers.json`, or `all`. Both take comma-separated values, which `pwsh -File` passes as one token:
 
 ```powershell
 pwsh -File scripts/Install-Workspace.ps1 -Runtimes claude,copilot -Apply
@@ -106,15 +106,16 @@ The rules:
 - A plain `-Apply`, with no flags, reuses the recorded selection. It does not select a layer or runtime that `layers.json` gained after the selection was recorded. On a new workspace, no settings selection means all runtimes and layers; a dimension named in `maxstack.settings.json` selects exactly its listed names.
 - A flag adds its names to the recorded selection, and never removes one. Naming a runtime or layer that is already selected prints `Already selected ...` and changes nothing. Removing one is `-Remove`, described in [Removing and uninstalling](#removing-and-uninstalling).
 - A `-Runtimes` or `-Layers` name matches a runtime or layer name ignoring ASCII letter case, so `PSTACK` selects `pstack`. A name that holds a format or control character, such as a zero width space, is refused, and the refusal shows the character escaped, such as `​`. Other letters are not folded, so a name that only looks like a layer, such as one written with a ligature, is unknown.
-- `all` expands to every runtime or layer that `layers.json` names at the time of the run. The lock then records the expanded names, not the word `all`, so a layer added later is not selected until a flag names it.
+- `all` expands to every supported runtime and every layer that `layers.json` names at the time of the run. The lock records the expanded names, not the word `all`, so a runtime or layer added later is not selected until a flag names it.
 - An unnamed dimension keeps its recorded value. A new workspace with no settings selection and no flags selects every runtime and every layer, so a plain `-Apply` installs what it did before. A new workspace with `-Runtimes` selects exactly the runtimes named, and every layer unless `-Layers` names some.
 - A layer or runtime that `layers.json` names but the selection leaves out is reported on every apply, audit, and status, with the flag that adds it, for example `-Layers <name>`. `-Status` also lists it as `not selected`. It is not installed until a flag names it.
 - A recorded name that `layers.json` no longer names, such as a layer removed from it, is dropped from the selection with a warning. The next apply removes the folders that layer installed, the same way it removes a layer that stopped installing a runtime.
 - A lock with no `selection` predates the field. It reads as `claude`, `opencode`, `copilot`, and `pi`, with every layer, and the next apply writes the field.
-- `codex` is opt-in. A plain `-Apply`, a new workspace with no runtime named, and a lock with no `selection` select the four runtimes above and not `codex`. Name `codex` with `-Runtimes codex`, in the settings file's `runtimes` map, or with `-Runtimes all`. An install that does not name it prints what it printed before.
+- `codex` and `cursor` are opt-in. A plain `-Apply`, a new workspace with no runtime named, and a lock with no `selection` select `claude`, `opencode`, `copilot`, and `pi`. Name either runtime with `-Runtimes`, in the settings file's `runtimes` map, or with `-Runtimes all`.
+- `cursor` copies each selected layer's skills to `<Workspace>/.cursor/skills/<skill>`. Set `-Workspace` to the active Cursor project root. If you open a nested repository as the project, install at that repository root. The installer does not assume that a parent workspace's files load in a nested repository. Cursor skills use flat folder names, so duplicate names across selected layers are refused before workspace writes.
 - `copilot` and `pi` need `claude`. Their wrapper or settings name the Claude plugin folders, so selecting either without `claude`, by name or in the recorded selection, is an error.
 - An unknown name on the command line is an error that lists the valid names, and nothing is written.
-- A layer installs only the selected runtimes it declares in `layers.json`. A selected layer that declares none of them is reported and installs nothing.
+- A layer installs only the selected runtimes it declares in `layers.json`, plus the selected `codex` and `cursor` skill projections. A selected layer that declares none of those is reported and installs nothing.
 
 What each runtime writes:
 
@@ -122,6 +123,8 @@ What each runtime writes:
 - `opencode`: `opencode.jsonc`, `.opencode\plugins`, and the agent profiles.
 - `copilot`: `.maxstack\bin\copilot.cmd` and `copilot.sh`.
 - `pi`: `.maxstack\bin\pi.cmd` and `pi.sh`, and `.pi\agent\settings.json`.
+- `codex`: `.agents\skills` and, when a selected layer has a Codex gate hook, `.codex\config.toml`.
+- `cursor`: `.cursor\skills`, one folder per skill.
 - `codex`: `.agents\skills\<name>\`, one copy of each skill of each selected layer, in layer order. A skill is a folder with a `SKILL.md` whose frontmatter `name` is the folder name and whose `description` is set. Two layers cannot name a skill the same, even by case, and a skill that sets a `model` is refused. When a selected layer ships the Codex gate hook and its OpenCode copy is installed, maxstack also owns `.codex/config.toml` with the `PreToolUse` definition. Existing unowned files are kept. Edited owned files are kept; remove and uninstall delete only unchanged files. The lock records the hook hash for the Codex status check. The installer never reads or writes `CODEX_HOME`, user config, `auth.json`, or a model. The T3 instance uses the fixed marker argument `-c 'project_root_markers=["stack.lock.json"]'`.
 
 ## Workspace instructions

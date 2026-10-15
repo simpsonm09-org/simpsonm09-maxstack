@@ -508,7 +508,7 @@ function renameDemoSkill(ctx) {
 
 // codex copies its skills into .agents, which the other runtimes never write, so it is left out of the comparison.
 function withoutCodexFiles(files) {
-  return new Map([...files].filter(([path]) => !path.startsWith('.agents/')));
+  return new Map([...files].filter(([path]) => !path.startsWith('.agents/') && !path.startsWith('.cursor/')));
 }
 
 function portableFiles(ctx) {
@@ -523,7 +523,7 @@ function portableFiles(ctx) {
 withWorkspace('-Runtimes all -Layers all writes what a plain apply writes plus the codex skills, and records every name', (ctx) => {
   renameDemoSkill(ctx);
   mustApply(ctx, ['-Runtimes', 'all', '-Layers', 'all']);
-  assert.deepEqual(selectionOf(ctx), { runtimes: [...ALL_RUNTIMES, 'codex'].sort(), layers: ALL_LAYERS });
+  assert.deepEqual(selectionOf(ctx), { runtimes: [...ALL_RUNTIMES, 'codex', 'cursor'].sort(), layers: ALL_LAYERS });
   const plain = buildWorkspace();
   try {
     renameDemoSkill(plain);
@@ -547,7 +547,7 @@ withWorkspace('naming a runtime that is already selected narrows nothing, and sa
 withWorkspace('an unknown runtime or layer name fails, lists the valid names, and writes nothing', (ctx) => {
   const runtime = runInstaller(shell, ctx, ['-Runtimes', 'gemini']);
   assert.notEqual(runtime.status, 0, 'the installer accepted an unknown runtime');
-  assert.match(plainOutput(runtime), /-Runtimes names an unknown name 'gemini'\. Valid names: claude, opencode, copilot, pi, codex, or all\./);
+  assert.match(plainOutput(runtime), /-Runtimes names an unknown name 'gemini'\. Valid names: claude, opencode, copilot, pi, codex, cursor, or all\./);
   const layer = runInstaller(shell, ctx, ['-Layers', 'nope']);
   assert.notEqual(layer.status, 0, 'the installer accepted an unknown layer');
   assert.match(plainOutput(layer), /-Layers names an unknown name 'nope'\. Valid names: pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin, or all\./);

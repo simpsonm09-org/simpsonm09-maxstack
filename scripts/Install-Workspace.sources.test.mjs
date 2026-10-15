@@ -2031,6 +2031,7 @@ withWorkspace('finding F11: missing workspace source refuses before command vali
   cpSync(join(repoRoot, 'scripts', 'Install-Ordinal.ps1'), join(copyScripts, 'Install-Ordinal.ps1'));
   cpSync(join(repoRoot, 'scripts', 'Install-Paths.ps1'), join(copyScripts, 'Install-Paths.ps1'));
   cpSync(join(repoRoot, 'scripts', 'Install-Links.ps1'), join(copyScripts, 'Install-Links.ps1'));
+  cpSync(join(repoRoot, 'scripts', 'Install-Cursor.ps1'), join(copyScripts, 'Install-Cursor.ps1'));
   const before = snapshotTree(ctx.base);
 
   const env = { ...process.env };

@@ -20,7 +20,7 @@ test('CLI requires a runtime, an output, and layer roots, and rejects unknown op
     rejects(runCli(['--runtime', 'claude', '--layers', layer]), /--out is required/);
     rejects(runCli(['--runtime', 'claude', '--out', join(root, 'o')]), /--layers requires/);
     rejects(runCli(['--runtime', 'claude', '--out', join(root, 'o'), '--layers', layer, '--unknown']), /Unknown option/);
-    rejects(runGenerator('cursor', [layer], join(root, 'o')), /unsupported runtime "cursor"/);
+    rejects(runGenerator('gemini', [layer], join(root, 'o')), /unsupported runtime "gemini"/);
   });
 });
 
@@ -29,10 +29,10 @@ test('skills are byte copies for every runtime: frontmatter keys, BOM, CRLF, and
     const skill = Buffer.from('﻿---\r\nname: sample\r\ndescription: "Say \\"hi\\": ok"\r\nuser-invocable: true\r\nlicense: MIT\r\nmetadata: {"team": "x"}\r\nfuture-key: y\r\n---\r\nBody\r\n');
     const icon = Buffer.from([0, 255, 13, 10, 1, 128]);
     const layer = makeLayer(root, 'sample', { skills: {}, files: { 'skills/sample/SKILL.md': skill, 'skills/sample/assets/icon.bin': icon } });
-    for (const runtime of ['claude', 'copilot', 'opencode', 'pi']) {
+    for (const runtime of ['claude', 'copilot', 'opencode', 'pi', 'cursor']) {
       const out = join(root, `out-${runtime}`);
       succeeds(runGenerator(runtime, [layer], out), runtime);
-      const base = runtime === 'opencode' ? '.opencode/skills/sample' : runtime === 'pi' ? '.pi/agent/skills/sample' : '.claude/plugins/sample/skills/sample';
+      const base = runtime === 'opencode' ? '.opencode/skills/sample' : runtime === 'pi' ? '.pi/agent/skills/sample' : runtime === 'cursor' ? '.cursor/skills/sample' : '.claude/plugins/sample/skills/sample';
       assert.deepEqual(treeBytes(out).get(`${base}/SKILL.md`), skill, `${runtime} SKILL.md bytes`);
       assert.deepEqual(treeBytes(out).get(`${base}/assets/icon.bin`), icon, `${runtime} asset bytes`);
     }
@@ -55,6 +55,21 @@ test('skill validation refuses a folder that differs from its name, a missing de
       rejects(runGenerator('claude', [layer], join(root, `out-${index}`)), diagnostic, label);
       assert.equal(existsSync(join(root, `out-${index}`)), false, `${label} creates no output`);
     });
+  });
+});
+
+test('Cursor projects flat skill folders and rejects case-insensitive ID duplicates before writing', () => {
+  withTemp((root) => {
+    const first = makeLayer(join(root, 'first'), 'first', { skills: { Review: skillText('Review') } });
+    const second = makeLayer(join(root, 'second'), 'second', { skills: { review: skillText('review') } });
+    const out = join(root, 'out');
+    rejects(runGenerator('cursor', [first, second], out), /duplicate skill review across layers/);
+    assert.equal(existsSync(out), false, 'the duplicate refusal writes no output');
+
+    const one = join(root, 'one');
+    succeeds(runGenerator('cursor', [first], one));
+    assert.deepEqual([...treeBytes(one).keys()].filter((path) => path !== 'generator.owned.json'), ['.cursor/skills/Review/SKILL.md']);
+    assert.deepEqual(ownership(one).owned[0].layers, ['first']);
   });
 });
 
@@ -164,7 +179,7 @@ test('OpenCode projects V2 MCP servers with later layers winning, disabled kept,
 test('empty MCP is accepted for every runtime and writes no servers file', () => {
   withTemp((root) => {
     const layer = makeLayer(root, 'sample', { fragment: '{}' });
-    for (const runtime of ['claude', 'copilot', 'opencode', 'pi']) {
+    for (const runtime of ['claude', 'copilot', 'opencode', 'pi', 'cursor']) {
       const out = join(root, `out-${runtime}`);
       succeeds(runGenerator(runtime, [layer], out), runtime);
       assert.equal(treeBytes(out).has('opencode.jsonc'), false);

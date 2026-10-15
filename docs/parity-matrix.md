@@ -27,7 +27,7 @@ Pins:
 - maxstack pins pstack at commit `61654b660a7ede152b28de7c765b4e4d59bd2a4e` on branch `feat/opencode-runtime` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
 - The `pstack-max` checkout at `pstack-max` is on `feat/opencode-runtime` at the pinned commit `61654b660a7ede152b28de7c765b4e4d59bd2a4e`. Where the pin and upstream `main` differ, the row says so (see G7).
 
-Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex is a fifth runtime, opt-in, which installs the layers' skills and no plugin. Its fixed Launch argument selects the workspace project root; the gate definition lives in owned `.codex/config.toml` (rows 2.1, 2.2, and 2.8). Cursor and Antigravity have no installer target.
+Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex and Cursor are opt-in. Codex installs skills and instructions only; its Launch argument selects the workspace project root, and its gate definition lives in owned `.codex/config.toml` (rows 2.1, 2.2, and 2.8). Cursor copies skills only into the explicit workspace root's `.cursor/skills`. Install again with that nested repository as `-Workspace` when it is the active Cursor project. The installer does not assume that a parent workspace's files load into a nested repository. Antigravity has no installer target.
 
 Harness versions named in the sources: Copilot CLI 1.0.93 and 1.0.89 [ORG, PSC-MAP-CP]; OpenCode 2.0.24 and 2.0.26 [MS-T3]; Pi 1.0 [PSC-PI].
 
@@ -93,7 +93,7 @@ Summary grid (status only; the detail below holds the reason and evidence). Gene
 | Windows | same | differs | same | same | not built yet | not built yet | unverified |
 | macOS | not built yet | unverified | not built yet | unverified | not built yet | not built yet | not built yet |
 
-Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, not built yet 35, unverified 15.
+Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, not built yet 33, unverified 17.
 
 ### 2.1 Skills load (same SKILL.md; naming and prefix)
 
@@ -101,7 +101,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 - Copilot: **differs**: same files, invoked by bare name through the `skill` tool. The user types `/pstack:<skill>`; a bare `/<skill>` reports unknown on CLI 1.0.89. The skill list in the prompt is cut by a character budget. How Copilot treats the `user-invocable` and `paths` keys is not recorded (G8d). Evidence: PSC-MAP-CP (Tool actions, Per-skill notes).
 - OpenCode: **differs**: IDs are unprefixed (`poteto-mode`). The fork plugin registers `skills/` through `ctx.skill.transform`, so each skill and each `principle-*` loads by ID. A repo skill with the same ID collides (the prefix is what separates them on Claude). Evidence: FORK-OC (index.ts, load.ts), FORK-MAP-OC (Tool actions), RS-AS (Skill rules).
 - Pi: **differs**: bare names; `/skill:<name>` forces one. The `pstack:` prefix is dropped; only agent types keep it. `user-invocable: false` is ignored, so the 23 `principle-*` skills show in completion. Pi also loads `%USERPROFILE%\.agents\skills`, which held 40 skills on this machine. Verified: `get_commands` in rpc lists 68 skills (pstack 58, org 6, personal 4) with no model call. Evidence: PSC-PI (T11, T12, S07a), MS-T3 (Pi known limits, Verified).
-- Cursor: **differs**: Cursor Agent supports Agent Skills in `.agents/skills`, `.cursor/skills`, compatibility locations, and user locations. In T3 repository-cwd sessions, workspace-root `.agents/skills` is outside the active project root. Deliver skills per repository or make the workspace root active. maxstack has no Cursor installer target. Documented: [Cursor Agent Skills](https://cursor.com/docs/skills) (2026-10-13); T3 code: `CursorSkills.ts:219-231`. A live turn was stopped by a usage limit, so loading was not verified in a session.
+- Cursor: **differs**: the opt-in `cursor` runtime copies each selected layer's skills into `.cursor/skills/<skill>`, with one lock record per folder. Cursor scans project skill folders recursively. When a nested repository is the active project, select that repository as `-Workspace`; maxstack does not assume parent workspace inheritance. Installer output and Node projection are covered by focused tests. A live Cursor turn and T3 session are not verified. Documented: [Cursor Agent Skills](https://cursor.com/docs/skills); T3 source: `CursorSkills.ts`.
 - Codex: **differs**. The opt-in `codex` runtime copies each selected layer's skills into `.agents\skills\<name>`, a byte copy with one lock record per folder. Codex finds a skill by its folder name, and reads it from the project root down to the working directory. The project root is the git root by default, so the workspace skills reach a repository only when the T3 launch arguments name the marker `stack.lock.json`. Verified with codex-cli 0.162.1: `codex debug prompt-input` from a repository under a scratch workspace lists the three installed skills only with the marker. No login, no model call. A live turn is not verified. The `.agents\skills` folder may also be read by other tools; this row does not claim that. Evidence: research-codex-surfaces.md (PROBE-1, PROBE-6, PROBE-15), CODEX-PROBE (this change, `codex debug prompt-input`), scripts/Install-Codex.ps1.
 - Antigravity: **differs**: Antigravity supports Agent Skills at `<workspace-root>/.agents/skills/<skill>/SKILL.md` and user locations. In T3 repository-cwd sessions, workspace-root skills are outside the active directory scope. Install per repository or make the workspace root active. maxstack has no installer target. Documented: [Antigravity skills](https://antigravity.google/docs/skills?app=cli) (2026-10-13); T3 code: `AntigravitySkills.ts:174-179`. No authenticated live session was run.
 
@@ -121,7 +121,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 - Copilot: **differs**: the `copilot.cmd` wrapper passes one `--plugin-dir` per layer that lists copilot, in layer order, all pointing at `.claude\plugins`. T3 ignores commandArgs for registry ACP agents, so a wrapper is needed. Verified live through the `copilotSimpsonm09` instance. Evidence: MS-T3 (Copilot, Verified), MS-INST (Copilot CLI).
 - OpenCode: **differs**: plugins are copied to `.opencode\plugins\<name>`. A nested entry (pstack's `opencode/index.ts`) is named in the `plugin` list of `opencode.jsonc`; a root `index.ts` is discovered. Verified: OpenCode 2.0.26 loads the nested pstack entry from an installed workspace. Evidence: MS-PUB (Entries OpenCode loads), MS-T3 (Verified).
 - Pi: **differs**: packages go in the `packages` list of `.pi\agent\settings.json`; skills folders go in `skills`. The pstack package is the root of the pinned cache, `.claude\cache\pstack`. Verified: rpc lists the skills of the installed packages. Evidence: MS-T3 (Pi, What Pi loads, Verified), MS-PUB (`pi: {}`).
-- Cursor: **not built yet**. No installer support. Evidence: MS-MT (Runtimes), MS-T3 (Not set up).
+- Cursor: **not built yet**. Cursor skill folders are installed separately; Cursor plugin delivery is not built. Evidence: Cursor installer selection and the [skills guide](https://cursor.com/docs/skills).
 - Codex: **not built yet** for the plugin. The opt-in `codex` runtime installs skills and instructions only. FORK-CXM (`.codex-plugin/plugin.json`) is not installed, and a Codex plugin install lives under `CODEX_HOME`, which maxstack does not write. Evidence: MS-T3 (Codex (maxstack)), MS-LAY, research-codex-surfaces.md (Plugins).
 - Antigravity: **not built yet**. No installer support. Evidence: MS-MT (Runtimes).
 
@@ -261,7 +261,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 - Copilot: **differs**: the wrapper, SessionStart and gate are verified live on Windows. The PowerShell rewrite is not measured live, and the PreToolUse checks are a stub (2.10). Evidence: MS-T3 (Verified), ORG (Known limits), FORK-WIN.
 - OpenCode: **same**. OpenCode 2.0.24 and 2.0.26 run from the Windows workspace. Caveat: `glob` with an absolute Windows path can return no matches. Evidence: MS-T3 (OpenCode), FORK-MAP-OC (Tool actions).
 - Pi: **same**. The `pi.cmd` wrapper and the rpc probe ran on Windows. Caveat: Pi also loads `%USERPROFILE%\.agents\skills` (G6). Evidence: MS-T3 (Pi, Verified).
-- Cursor: **not built yet**. Evidence: MS-MT (Runtimes).
+- Cursor: **unverified**. The skills installer targets Windows, macOS, and Linux, but no live Cursor session was tested on Windows. Evidence: `scripts/Install-Cursor.ps1`, `scripts/Install-Workspace.cursor.test.mjs`.
 - Codex: **not built yet**. `codex-hooks.json` has a `commandWindows` entry that was never run. Evidence: PSC-CXH.
 - Antigravity: **unverified**. Nothing recorded. Evidence: none in the inputs.
 
@@ -271,7 +271,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 - Copilot: **unverified**. The fixture checks that macOS writes and records only executable `copilot.sh`, with ordered plugin arguments and argument forwarding, without login. Hosted CI has not run for this change, and the real CLI and hook behavior remain unverified. Evidence: this change, `scripts/Install-Workspace.macos.test.mjs`.
 - OpenCode: **not built yet**. The installer's junction logic is Windows-only. Evidence: MS-MT (Installer lifecycle).
 - Pi: **unverified**. The installer writes `pi.sh`. "On macOS, nothing in this section has been run." Evidence: MS-T3 (Pi, Not verified), MS-INST (Pi).
-- Cursor: **not built yet**. Evidence: MS-MT (Runtimes).
+- Cursor: **unverified**. The skills installer targets Windows, macOS, and Linux, but no macOS installer run or live Cursor session was tested. Evidence: `scripts/Install-Cursor.ps1`.
 - Codex: **not built yet**. Evidence: MS-T3 (Not set up).
 - Antigravity: **not built yet**. Evidence: MS-MT (Runtimes).
 
