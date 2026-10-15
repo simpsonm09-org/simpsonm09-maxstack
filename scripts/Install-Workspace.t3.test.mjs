@@ -53,6 +53,179 @@ test('the list writes selected layers and a false gate when the gate hook is abs
   });
 });
 
+test('no explicit T3 source leaves the snapshot path and output untouched', () => {
+  withWorkspace('T3 source omitted', (ctx) => {
+    const env = { ...process.env };
+    delete env.MAXSTACK_T3_SETTINGS;
+    const run = install(ctx, [], { env });
+    assert.equal(run.status, 0, plainOutput(run));
+    assert.doesNotMatch(plainOutput(run), /T3 settings:|Snapshot:/);
+    assert.equal(existsSync(join(ctx.workspace, '.maxstack', 't3')), false);
+  });
+});
+
+test('an explicit source wins over the environment and writes only the sanitized snapshot', () => {
+  withWorkspace('T3 explicit source', (ctx) => {
+    const source = join(ctx.base, 'selected-settings.json');
+    const ignored = join(ctx.base, 'environment-settings.json');
+    const canary = `private-${String.fromCharCode(116, 111, 107, 101, 110)}-value`;
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: true, github: { token: canary }, unknownSetting: canary }));
+    writeFileSync(ignored, JSON.stringify({ defaultAutoPull: false }));
+    const env = { ...process.env, MAXSTACK_T3_SETTINGS: ignored };
+    const run = install(ctx, ['-T3Settings', source], { env });
+    assert.equal(run.status, 0, plainOutput(run));
+    assert.doesNotMatch(plainOutput(run), new RegExp(canary));
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    const snapshot = readJson(snapshotPath);
+    assert.equal(snapshot.defaultAutoPull, true);
+    assert.equal(Object.hasOwn(snapshot, 'github'), false);
+    assert.equal(Object.hasOwn(snapshot, 'unknownSetting'), false);
+    assert.equal(readJson(lockPath(ctx)).owned.some((item) => item.path === '.maxstack/t3/settings.snapshot.json'), true);
+  });
+});
+
+test('an existing unowned snapshot is kept and not claimed', () => {
+  withWorkspace('unowned T3 snapshot', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    const original = '{"personal":true}\n';
+    mkdirSync(join(ctx.workspace, '.maxstack', 't3'), { recursive: true });
+    writeFileSync(snapshotPath, original);
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: true }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.equal(readFileSync(snapshotPath, 'utf8'), original);
+    assert.match(plainOutput(applied), /Kept \.maxstack\/t3\/settings\.snapshot\.json: it exists and was not written by maxstack/);
+    assert.equal(readJson(lockPath(ctx)).owned.some((item) => item.path === '.maxstack/t3/settings.snapshot.json'), false);
+    const status = install(ctx, ['-Status', '-Strict'], { apply: false, env: { ...process.env, MAXSTACK_T3_SETTINGS: source } });
+    assert.equal(status.status, 1, plainOutput(status));
+    assert.match(status.stdout, /untracked\s+\.maxstack\/t3\/settings\.snapshot\.json/);
+  });
+});
+
+test('apply keeps a modified owned snapshot and strict status reports it as modified', () => {
+  withWorkspace('modified owned T3 snapshot', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    assert.equal(install(ctx, ['-T3Settings', source]).status, 0);
+    const priorRecord = readJson(lockPath(ctx)).owned.find((item) => item.path === '.maxstack/t3/settings.snapshot.json');
+    const userContent = '{"keptByUser":true}\n';
+    writeFileSync(snapshotPath, userContent);
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: true }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.equal(readFileSync(snapshotPath, 'utf8'), userContent);
+    const retainedRecord = readJson(lockPath(ctx)).owned.find((item) => item.path === '.maxstack/t3/settings.snapshot.json');
+    assert.equal(retainedRecord.sha256, priorRecord.sha256);
+    const status = install(ctx, ['-Status', '-Strict'], { apply: false, env: { ...process.env, MAXSTACK_T3_SETTINGS: source } });
+    assert.equal(status.status, 1, plainOutput(status));
+    assert.match(status.stdout, /modified\s+\.maxstack\/t3\/settings\.snapshot\.json/);
+  });
+});
+
+test('an unchanged owned snapshot updates when the selected source changes', () => {
+  withWorkspace('current owned T3 snapshot update', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    assert.equal(install(ctx, ['-T3Settings', source]).status, 0);
+    const priorRecord = readJson(lockPath(ctx)).owned.find((item) => item.path === '.maxstack/t3/settings.snapshot.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: true }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    assert.deepEqual(readJson(snapshotPath), { defaultAutoPull: true });
+    const nextRecord = readJson(lockPath(ctx)).owned.find((item) => item.path === '.maxstack/t3/settings.snapshot.json');
+    assert.notEqual(nextRecord.sha256, priorRecord.sha256);
+    assert.match(plainOutput(applied), /Snapshot: \.maxstack\/t3\/settings\.snapshot\.json \(stale: would change\)/);
+  });
+});
+
+test('snapshot false ignores a selected malformed source without output or side effects', () => {
+  withWorkspace('T3 snapshot disabled', (ctx) => {
+    writeWorkspaceSettings(ctx, { version: 1, t3: { snapshot: false } });
+    const source = join(ctx.base, 'malformed-settings.json');
+    writeFileSync(source, '{');
+    const run = install(ctx, ['-T3Settings', source]);
+    assert.equal(run.status, 0, plainOutput(run));
+    assert.doesNotMatch(plainOutput(run), /T3 settings:|Snapshot:/);
+    assert.equal(existsSync(join(ctx.workspace, '.maxstack', 't3')), false);
+  });
+});
+
+test('remove preserves the snapshot and uninstall deletes only an unchanged owned snapshot', () => {
+  withWorkspace('T3 snapshot ownership lifecycle', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    const removed = install(ctx, ['-Remove', '-Runtimes', 'pi']);
+    assert.equal(removed.status, 0, plainOutput(removed));
+    assert.equal(existsSync(snapshotPath), true);
+    const uninstalled = install(ctx, ['-Uninstall']);
+    assert.equal(uninstalled.status, 0, plainOutput(uninstalled));
+    assert.equal(existsSync(snapshotPath), false);
+  });
+});
+
+test('uninstall preserves a snapshot changed after its ownership record', () => {
+  withWorkspace('T3 snapshot changed ownership', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    const snapshotPath = join(ctx.workspace, '.maxstack', 't3', 'settings.snapshot.json');
+    writeFileSync(snapshotPath, `${readFileSync(snapshotPath, 'utf8')}\n`);
+    const uninstalled = install(ctx, ['-Uninstall']);
+    assert.equal(uninstalled.status, 0, plainOutput(uninstalled));
+    assert.equal(existsSync(snapshotPath), true);
+    assert.equal(existsSync(lockPath(ctx)), true);
+  });
+});
+
+test('strict status fails for malformed explicitly selected T3 settings while plain status reports it', () => {
+  withWorkspace('T3 malformed strict source', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    writeFileSync(source, JSON.stringify({ defaultAutoPull: false }));
+    assert.equal(install(ctx, ['-T3Settings', source]).status, 0);
+    writeFileSync(source, '{');
+    const env = { ...process.env, MAXSTACK_T3_SETTINGS: source };
+    const plain = install(ctx, ['-Status'], { apply: false, env });
+    assert.equal(plain.status, 0, plainOutput(plain));
+    const strict = install(ctx, ['-Status', '-Strict'], { apply: false, env });
+    assert.equal(strict.status, 1, plainOutput(strict));
+    assert.match(plainOutput(strict), /T3 settings: source is malformed/);
+  });
+});
+
+test('snapshot staleness alone is informational under strict status', () => {
+  withWorkspace('T3 snapshot stale status', (ctx) => {
+    const source = join(ctx.base, 'settings.json');
+    const workspaceSlug = 'Simpsonm09';
+    const workspacePluginDir = join(ctx.workspace, '.claude', 'plugins');
+    const copilotWrapper = join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd');
+    const piWrapper = join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd');
+    const settings = (defaultAutoPull) => ({
+      defaultAutoPull,
+      defaultThreadEnvMode: 'worktree',
+      providerInstances: {
+        [`claude${workspaceSlug}`]: { driver: 'claudeAgent', enabled: true, config: { binaryPath: 'claude', launchArgs: `--plugin-dir ${workspacePluginDir}` } },
+        [`copilot${workspaceSlug}`]: { driver: 'acpRegistry', enabled: true, config: { source: 'registry', agentId: 'github-copilot-cli', distribution: 'auto', commandPath: copilotWrapper } },
+        [`pi${workspaceSlug}`]: { driver: 'pi', enabled: true, config: { binaryPath: piWrapper, launchArgs: '' } },
+      },
+    });
+    writeFileSync(source, JSON.stringify(settings(false)));
+    const applied = install(ctx, ['-T3Settings', source]);
+    assert.equal(applied.status, 0, plainOutput(applied));
+    writeFileSync(source, JSON.stringify(settings(true)));
+    const env = { ...process.env, MAXSTACK_T3_SETTINGS: source };
+    const strict = install(ctx, ['-Status', '-Strict'], { apply: false, env });
+    assert.equal(strict.status, 0, plainOutput(strict));
+    assert.match(strict.stdout, /Snapshot: \.maxstack\/t3\/settings\.snapshot\.json \(stale: would change\)/);
+  });
+});
+
 test('the list marks the gate when the selected layer source has both gate hooks', () => {
   withWorkspace('gated list with gate', (ctx) => {
     addGateHooks(ctx);
