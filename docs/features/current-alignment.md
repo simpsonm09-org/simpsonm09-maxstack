@@ -21,7 +21,7 @@ This page tracks maxstack against the end goal: a person starts in T3 or directl
 
 - The owner has not run the fresh macOS install and Copilot session. Hosted macOS CI is evidence for the lifecycle job, not for the real Copilot CLI, login, hooks, or loaded PStack and organization skills.
 - Fresh-session checks for OpenCode, Copilot, and Pi as T3 dispatch parents remain pending. Pi's instructions also need live validation. A Codex GitHub-write command was denied by the organization gate in this run. The gate is intended to guard GitHub writes across harnesses, but startup, hook-trust, and timeout conditions can prevent the hook from running, so it is not a guaranteed security boundary. See [T3 setup](../t3-setup.md) for the gate's operation and limits.
-- Cursor and Antigravity have no installer target. The parity matrix describes their current limitations and evidence.
+- Cursor has an opt-in skills-only target. A live Cursor load and T3 session remain unverified. Antigravity has no installer target. The parity matrix describes these limits and evidence.
 - The old `feat/settings-4-t3-snapshot` branch and its backup are preserved research. Snapshot delivery is already in PR #78; the old branch has not been reconciled against current main.
 - The pstack pin at `61654b6` is on `feat/opencode-runtime`, while local pstack main is `60ae9e2`. This is a deliberate difference pending reconciliation, not automatic drift.
 

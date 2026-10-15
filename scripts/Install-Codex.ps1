@@ -25,7 +25,7 @@ $script:CodexGateRecordedNote = 'Codex: .codex/config.toml holds the gate hook; 
 
 # Reads a SKILL.md frontmatter the way the generator does: the block between the first two --- lines, one key per line.
 # A key that is not name or description is read and kept, so a model key is found and refused by the caller.
-function Read-CodexSkillFields {
+function Read-SkillFields {
     param([string] $Path, [string] $Label)
 
     $text = [IO.File]::ReadAllText($Path)
@@ -45,20 +45,20 @@ function Read-CodexSkillFields {
 }
 
 # Every entry of a skill folder, with links listed and never followed. A link anywhere in the skill is refused.
-function Assert-CodexSkillFolder {
-    param([string] $Folder, [string] $Label)
+function Assert-SkillFolder {
+    param([string] $Folder, [string] $Label, [string] $Runtime = 'codex')
 
-    if (Test-ReparsePoint $Folder) { throw "$Label is a symbolic link or junction, so codex cannot take it. Replace it with a folder." }
+    if (Test-ReparsePoint $Folder) { throw "$Label is a symbolic link or junction, so $Runtime cannot take it. Replace it with a folder." }
     foreach ($entry in @(Get-TreeEntries -Root $Folder -Rule 'owned')) {
         if ($null -ne $entry.link) { throw "$Label holds a symbolic link or junction at $($entry.relative), which a skill may not hold." }
     }
 }
 
 # The frontmatter a skill must carry. A model key is refused, since maxstack sets no model. A missing name or description is refused.
-function Assert-CodexSkillFields {
+function Assert-SkillFields {
     param([string] $Path, [string] $Name, [string] $Label)
 
-    $fields = Read-CodexSkillFields -Path $Path -Label $Label
+    $fields = Read-SkillFields -Path $Path -Label $Label
     if ($fields.ContainsKey('model')) { throw "$Label`: frontmatter model is not allowed; maxstack sets no model." }
     if (-not (Test-NonEmptyString $fields['name'])) { throw "$Label`: frontmatter name is missing or empty." }
     if (-not (Test-OrdinalEqual $fields['name'] $Name)) { throw "$Label`: frontmatter name '$($fields['name'])' must equal the folder name '$Name'." }
@@ -66,31 +66,31 @@ function Assert-CodexSkillFields {
 }
 
 # Copies a skill folder, leaving out node_modules at any depth, as the generator does. The copy hashes like its source.
-function Copy-CodexSkillTree {
+function Copy-SkillTree {
     param([string] $Source, [string] $Destination)
 
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     foreach ($child in @(Get-ChildItem -LiteralPath $Source -Force)) {
         if (Test-OrdinalEqual $child.Name 'node_modules') { continue }
         $target = Join-MaxstackPath $Destination $child.Name
-        if ($child.PSIsContainer) { Copy-CodexSkillTree -Source $child.FullName -Destination $target }
+        if ($child.PSIsContainer) { Copy-SkillTree -Source $child.FullName -Destination $target }
         else { Copy-Item -LiteralPath $child.FullName -Destination $target -Force }
     }
 }
 
-# The skills the selected codex layers contribute, in layer order. Each entry names the skill, its layer, its source folder,
+# The skills the selected runtime's layers contribute, in layer order. Each entry names the skill, its layer, its source folder,
 # and the owned hash its installed copy will hold. A layer whose root is not known yet (a pinned cache not at its pin) adds
 # nothing, so only audit sees it, and its records read as drifted until an apply syncs it.
-function Get-CodexSkills {
-    param([object[]] $Layers)
+function Get-LayerSkills {
+    param([object[]] $Layers, [string] $Runtime = 'codex')
 
     $skills = [System.Collections.Generic.List[object]]::new()
     $claimed = [hashtable]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($layer in @($Layers | Where-Object { $_.runtimes.ContainsKey('codex') })) {
+    foreach ($layer in @($Layers | Where-Object { $_.runtimes.ContainsKey($Runtime) })) {
         if ($null -eq $layer.root) { continue }
         $skillsRoot = Join-MaxstackPath $layer.root 'skills'
         if (-not (Test-Path -LiteralPath $skillsRoot -PathType Container)) { continue }
-        if (Test-ReparsePoint $skillsRoot) { throw "Layer '$($layer.name)' has a symbolic link or junction at skills, which codex cannot read." }
+        if (Test-ReparsePoint $skillsRoot) { throw "Layer '$($layer.name)' has a symbolic link or junction at skills, which $Runtime cannot read." }
         $names = [System.Collections.Generic.List[string]]::new()
         foreach ($child in @(Get-ChildItem -LiteralPath $skillsRoot -Force)) {
             if ($child.Name.StartsWith('.', [StringComparison]::Ordinal)) { continue }
@@ -99,19 +99,19 @@ function Get-CodexSkills {
         }
         $seen = [hashtable]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($name in $names) {
-            if ($seen.ContainsKey($name)) { throw "Layer '$($layer.name)' has skill folders whose names differ only by case, which codex cannot tell apart: $($seen[$name]) and $name." }
+            if ($seen.ContainsKey($name)) { throw "Layer '$($layer.name)' has skill folders whose names differ only by case, which $Runtime cannot tell apart: $($seen[$name]) and $name." }
             $seen[$name] = $name
         }
         foreach ($name in (Sort-Utf8 $names.ToArray())) {
             $label = "Layer '$($layer.name)' skill '$name'"
             if (-not [regex]::IsMatch($name, '^[A-Za-z0-9][A-Za-z0-9-]*\z')) { throw "$label`: skill folder names must be letters, digits, and hyphens." }
             $folder = Join-MaxstackPath $skillsRoot $name
-            Assert-CodexSkillFolder -Folder $folder -Label $label
+            Assert-SkillFolder -Folder $folder -Label $label -Runtime $Runtime
             $skillFile = @(Get-ChildItem -LiteralPath $folder -File -Force | Where-Object { Test-OrdinalEqual $_.Name 'SKILL.md' })
             if ($skillFile.Count -eq 0) { throw "$label`: a file named exactly SKILL.md is required." }
-            Assert-CodexSkillFields -Path $skillFile[0].FullName -Name $name -Label $label
+            Assert-SkillFields -Path $skillFile[0].FullName -Name $name -Label $label
             if ($claimed.ContainsKey($name)) {
-                throw "duplicate skill $name across layers: $($claimed[$name]) and $($layer.name) both name it, and codex finds a skill by its folder name. Rename one of them."
+                throw "duplicate skill $name across layers: $($claimed[$name]) and $($layer.name) both name it, and $Runtime finds a skill by its folder name. Rename one of them."
             }
             $claimed[$name] = $layer.name
             $skills.Add([pscustomobject]@{ name = $name; layer = $layer.name; source = $folder; sha256 = (Get-TreeSha256 $folder) })
@@ -169,7 +169,7 @@ function Write-CodexSkills {
     foreach ($skill in $Skills) {
         $full = Join-MaxstackPath $root $skill.name
         Remove-OwnedTree $full
-        Copy-CodexSkillTree -Source $skill.source -Destination $full
+        Copy-SkillTree -Source $skill.source -Destination $full
         Write-Host "Copied codex skill '$($skill.name)' from layer '$($skill.layer)' into $full"
     }
 }

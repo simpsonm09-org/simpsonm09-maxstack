@@ -17,7 +17,7 @@ test('the ordinal guard scans every PowerShell script in scripts/, including the
   const { files } = scanInstallers(scriptsDir);
   const onDisk = readdirSync(scriptsDir).filter((name) => name.endsWith('.ps1')).sort();
   assert.deepEqual([...files].sort(), onDisk, 'the scan does not cover every script/*.ps1');
-  for (const name of ['Install-Workspace.ps1', 'Install-Settings.ps1', 'Install-LayerSources.ps1', 'Install-WorkspaceDiscovery.ps1', 'Install-Ordinal.ps1']) {
+  for (const name of ['Install-Workspace.ps1', 'Install-Settings.ps1', 'Install-LayerSources.ps1', 'Install-WorkspaceDiscovery.ps1', 'Install-Cursor.ps1', 'Install-Ordinal.ps1']) {
     assert.ok(files.includes(name), `${name} is not scanned`);
   }
 });

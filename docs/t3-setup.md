@@ -136,6 +136,8 @@ If T3 reports that the provider could not start a turn, read the server log for 
 
 The opt-in `codex` runtime installs selected layer skills and makes the workspace instructions available to Codex. Select it with `-Runtimes codex` or `maxstack.settings.json`.
 
+The opt-in `cursor` runtime copies selected layer skills into `<Workspace>/.cursor/skills`. Install with `-Workspace` set to the active Cursor project root. Skills and T3 session loading have not been verified in a live Cursor session.
+
 Set up a Codex provider instance in T3 Code:
 
 1. Add a Codex instance named `Codex (maxstack)`. Keep CODEX_HOME path and Shadow home path at their defaults. On Windows, use the package's native `codex.exe` as Binary path when T3 would start the npm `codex.cmd` shim through a shell. The fixed argument contains brackets and quotes that shell parsing can alter. The line uses single quotes inside double quotes because Windows PowerShell 5.1 drops double quotes nested inside single quotes when it starts a program.
@@ -182,9 +184,11 @@ Verified: `codex debug prompt-input` from a nested repository reads the generate
 
 ## Cursor and Antigravity
 
-Selecting the `codex` runtime also puts the selected layers' skills in `.agents\skills`, which Cursor and Antigravity read when a session opens at the workspace root. A session opened inside a repository does not see skills or the generated workspace instruction file above that repository. These harnesses get no gate, layer agents, or workspace instructions in repository sessions. They are second-class harnesses, and this is the supported level.
+The opt-in `cursor` runtime copies selected layer skills into `.cursor\skills`. Cursor reads that folder and the generated root `AGENTS.md` when the workspace root is its active project. If a nested repository is the active project, set `-Workspace` to that repository and use the existing local source overrides for sibling layer checkouts. Cursor does not inherit the parent's generated files. If an unowned root `AGENTS.md` blocks generation, the installer keeps it and writes `.maxstack\workspace-instructions.md`; reference that fallback from your own instructions to load it. The fallback is not consumed automatically.
 
-Measured: documentation and T3 source show that both check the active project or working directory and home paths, without walking up to the parent workspace. A Cursor turn was attempted once and stopped at a usage limit. No Antigravity session was authenticated or run. Skill loading and instructions were not verified in a live session.
+Cursor has no gate, plugin delivery, or layer agent delivery. Its live skill load and T3 session remain unverified.
+
+Measured: Cursor documentation and T3 source describe active-project discovery; a live session has not verified this install. No Antigravity session was authenticated or run.
 
 ## Not set up
 

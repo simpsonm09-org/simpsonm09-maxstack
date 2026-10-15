@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Install-Paths.ps1')
 
 $script:SettingsTopLevelKeys = @('$schema', 'version', 'os', 'runtimes', 'layers', 't3')
-$script:SettingsRuntimeIds = @('claude', 'codex', 'copilot', 'opencode', 'pi')
+$script:SettingsRuntimeIds = @('claude', 'codex', 'copilot', 'cursor', 'opencode', 'pi')
 $script:SettingsCliModes = @('detect', 'install')
 $script:SettingsOsModes = @('auto', 'windows', 'macos', 'linux')
 $script:SettingsT3Defaults = @('leave-alone', 'apply-defaults')

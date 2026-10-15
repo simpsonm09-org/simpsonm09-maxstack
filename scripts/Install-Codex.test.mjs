@@ -453,7 +453,7 @@ withContext('codex is selected by the settings file runtimes map', (shared) => {
 withContext('-Runtimes all selects codex with the other runtimes', (shared) => {
   const ctx = addWorkspace(shared, 'all');
   mustRun(ctx, ['-Runtimes', 'all']);
-  assert.deepEqual(readLock(ctx).selection.runtimes, ['claude', 'codex', 'copilot', 'opencode', 'pi']);
+  assert.deepEqual(readLock(ctx).selection.runtimes, ['claude', 'codex', 'copilot', 'cursor', 'opencode', 'pi']);
 });
 
 withContext('a new workspace with no flags does not select codex, and its status says nothing about codex', (shared) => {

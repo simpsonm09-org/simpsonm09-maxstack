@@ -1,12 +1,12 @@
 # Master template
 
-This document records the design for one maintained source of AI functionality that `maxstack` converts for seven runtimes and installs into a workspace. It is a plan. Nothing here is built yet except the four runtimes the installer already supports and the opt-in Codex skills and instructions.
+This document records the design for one maintained source of AI functionality that `maxstack` converts for seven runtimes and installs into a workspace. It is a plan. The installer supports four default runtimes, opt-in Codex skills and instructions, and opt-in Cursor skills.
 
 ## Goal
 
 Maintain skills, agents, hooks, MCP servers, and instructions once. Install them so that every repository and worktree under a workspace folder, opened by any supported harness, has all of them.
 
-The runtimes are Claude Code, GitHub Copilot CLI, OpenCode, Pi, Antigravity, Cursor, and Codex. The first four install today. Codex installs skills and instructions as an opt-in runtime. Cursor and Antigravity have no installer support.
+The runtimes are Claude Code, GitHub Copilot CLI, OpenCode, Pi, Antigravity, Cursor, and Codex. The first four install by default. Codex and Cursor are opt-in. Codex installs skills and instructions. Cursor installs skills and uses the shared workspace instruction output. Antigravity has no installer support.
 
 ## What the research found
 
@@ -33,7 +33,7 @@ How a workspace folder reaches the repositories beneath it:
 Three behaviors constrain the design:
 
 - A skill in a parent folder is invisible to most harnesses, because skill discovery stops at the repository or worktree root.
-- Copilot, OpenCode, and Cursor read both `.claude/skills` and `.agents/skills`, so a skill present in both appears twice. Each workspace needs one canonical location per harness.
+- Copilot and OpenCode read both `.claude/skills` and `.agents/skills`, so a skill present in both appears twice. Cursor also reads `.cursor/skills`, which maxstack installs as an opt-in runtime.
 - Claude Code, Copilot, and Cursor hooks fail open on timeout or crash. A hook is a guardrail and not a sandbox.
 
 ## Design
