@@ -80,7 +80,7 @@ The variable is set in the wrapper, not in the T3 instance, so other Copilot run
 
 ### What works on Copilot
 
-On Windows, pstack's PreToolUse hook is a no-op stub under Copilot, so its file-read and subagent-model checks do not run there. The SessionStart context, the skills, and the org gate work on Copilot. Hosted macOS CI checks wrapper generation and the no-login installer lifecycle; the real Mac CLI and hook behavior remain unverified. Copilot does not receive the generated workspace instruction file in a session inside a repository. This is a known gap.
+On Windows, pstack's PreToolUse hook is a no-op stub under Copilot, so its file-read and subagent-model checks do not run there. The SessionStart context, the skills, and the org gate work on Copilot. Hosted macOS CI checks wrapper generation and the no-login installer lifecycle. The owner still needs to run the installer on the work Mac, start a fresh session through `copilot.sh`, sign in, and confirm that PStack and the organization skills load. Copilot does not receive the generated workspace instruction file in a session inside a repository. This is a known gap. See [current delivery state](features/current-alignment.md).
 
 ## Pi (maxstack)
 
