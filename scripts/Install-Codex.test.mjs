@@ -52,8 +52,8 @@ function skillMarkdown(name, { description = 'fixture skill', frontmatterName = 
 // A local layer checkout. Its skills map a folder name to the SKILL.md text. The Claude manifest names the layer, and the
 // node_modules tree stops the installer from running npm. With hooks, the layer ships the two files that make a Codex
 // gate hook, so the opencode copy under .opencode/plugins carries them.
-function writeLocalLayer(workspace, name, skills, { hooks = false } = {}) {
-  const root = join(workspace, LAYER_PATH[name]);
+function writeLocalLayer(workspace, name, skills, { hooks = false, rootOverride = null } = {}) {
+  const root = rootOverride ?? join(workspace, LAYER_PATH[name]);
   const files = ['index.ts', 'node_modules', 'package.json', 'skills', '.claude-plugin'];
   if (hooks) files.push('hooks');
   writeFile(root, 'index.ts', 'export default {};\n');
@@ -450,10 +450,10 @@ withContext('codex is selected by the settings file runtimes map', (shared) => {
   assert.ok(ownedSkillRecords(lock).length > 0);
 });
 
-withContext('-Runtimes all selects codex with the other runtimes', (shared) => {
+withContext('-Runtimes all selects codex and antigravity with the other runtimes', (shared) => {
   const ctx = addWorkspace(shared, 'all');
   mustRun(ctx, ['-Runtimes', 'all']);
-  assert.deepEqual(readLock(ctx).selection.runtimes, ['claude', 'codex', 'copilot', 'cursor', 'opencode', 'pi']);
+  assert.deepEqual(readLock(ctx).selection.runtimes, ['antigravity', 'claude', 'codex', 'copilot', 'cursor', 'opencode', 'pi']);
 });
 
 withContext('a new workspace with no flags does not select codex, and its status says nothing about codex', (shared) => {
@@ -670,4 +670,149 @@ withContext('verify-workspace-install.py passes a codex workspace', (shared) => 
   mkdirSync(home);
   const verify = spawnSync(python, [join(repoRoot, 'scripts', 'verify-workspace-install.py'), '--workspace', ctx.workspace, '--home', home], { windowsHide: true, encoding: 'utf8' });
   assert.equal(verify.status, 0, `${verify.stdout}\n${verify.stderr}`);
+});
+
+// -- Antigravity shares the workspace skill projection --------------------------------------------------------------
+
+withContext('antigravity copies selected layer skills once and records explicit runtime claims', (shared) => {
+  const ctx = addWorkspace(shared, 'antigravity');
+  mustRun(ctx, ['-Runtimes', 'antigravity']);
+  const antiLock = readLock(ctx);
+  assert.deepEqual(antiLock.selection.runtimes, ['antigravity']);
+  assert.ok(ownedSkillRecords(antiLock).every((record) => {
+    assert.deepEqual(record.runtimes, ['antigravity']);
+    assert.equal(Object.hasOwn(record, 'runtime'), false);
+    return true;
+  }));
+  assert.ok(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'org-demo')));
+  const antiStatus = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
+  assert.equal(antiStatus.status, 0, plainOutput(antiStatus));
+
+  mustRun(ctx, ['-Runtimes', 'codex']);
+  const sharedLock = readLock(ctx);
+  assert.deepEqual(sharedLock.selection.runtimes, ['antigravity', 'codex']);
+  assert.ok(ownedSkillRecords(sharedLock).every((record) => JSON.stringify(record.runtimes) === JSON.stringify(['antigravity', 'codex'])));
+  assert.equal(ownedSkillRecords(sharedLock).length, PSTACK_SKILLS.length + 2, 'each folder has one record');
+  const status = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
+  assert.equal(status.status, 0, plainOutput(status));
+});
+
+withContext('antigravity can be selected through maxstack.settings.json', (shared) => {
+  const ctx = addWorkspace(shared, 'settings-antigravity');
+  writeFileSync(join(ctx.workspace, 'maxstack.settings.json'), JSON.stringify({ version: 1, runtimes: { antigravity: {} } }));
+  mustRun(ctx);
+  assert.deepEqual(readLock(ctx).selection.runtimes, ['antigravity']);
+  assert.ok(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'org-demo')));
+});
+
+withContext('antigravity reads skills from an explicit local source override across all three selected layers', (shared) => {
+  const ctx = addWorkspace(shared, 'source-override');
+  const overrideRoot = join(shared.base, 'override-org');
+  writeLocalLayer(ctx.workspace, ORG, { 'override-skill': skillMarkdown('override-skill', { description: 'from source override' }) }, { rootOverride: overrideRoot });
+  mustRun(ctx, ['-Runtimes', 'antigravity', '-Source', `${ORG}=local:${overrideRoot}`]);
+  assert.ok(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'override-skill')));
+  assert.equal(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'org-demo')), null);
+  assert.equal(readLock(ctx).layers.find((layer) => layer.name === ORG).source.override, true);
+  assert.equal(readLock(ctx).selection.layers.length, 3);
+});
+
+withContext('removing either shared runtime preserves the other claim and removes the final unchanged skills', (shared) => {
+  const ctx = addWorkspace(shared, 'remove-antigravity-first');
+  mustRun(ctx, ['-Runtimes', 'codex,antigravity,opencode']);
+  mustRun(ctx, ['-Remove', '-Runtimes', 'antigravity']);
+  assert.deepEqual(readLock(ctx).selection.runtimes, ['codex', 'opencode']);
+  assert.ok(ownedSkillRecords(readLock(ctx)).every((record) => record.runtime === 'codex' && !Object.hasOwn(record, 'runtimes')));
+  mustRun(ctx, ['-Remove', '-Runtimes', 'codex']);
+  assert.equal(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'org-demo')), null);
+
+  const reverse = addWorkspace(shared, 'remove-codex-first');
+  mustRun(reverse, ['-Runtimes', 'codex,antigravity,opencode']);
+  mustRun(reverse, ['-Remove', '-Runtimes', 'codex']);
+  assert.ok(lstatSafe(join(reverse.workspace, '.agents', 'skills', 'org-demo')));
+  mustRun(reverse, ['-Remove', '-Runtimes', 'antigravity']);
+  assert.equal(lstatSafe(join(reverse.workspace, '.agents', 'skills', 'org-demo')), null);
+});
+
+withContext('an edited shared skill keeps its old hash and reports strict drift after one claim is removed', (shared) => {
+  const ctx = addWorkspace(shared, 'edited-shared');
+  mustRun(ctx, ['-Runtimes', 'codex,antigravity,opencode']);
+  const path = join(ctx.workspace, '.agents', 'skills', 'org-demo', 'SKILL.md');
+  const beforeHash = ownedSkillRecords(readLock(ctx)).find((record) => record.path === skillPath('org-demo')).sha256;
+  writeFileSync(path, skillMarkdown('org-demo', { description: 'edited by hand' }));
+  mustRun(ctx, ['-Remove', '-Runtimes', 'codex']);
+  const record = ownedSkillRecords(readLock(ctx)).find((item) => item.path === skillPath('org-demo'));
+  assert.deepEqual(record.runtimes, ['antigravity']);
+  assert.equal(record.sha256, beforeHash, 'claim changes do not bless edited bytes');
+  const status = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
+  assert.notEqual(status.status, 0, plainOutput(status));
+  assert.ok(hasRow(status, 'modified', skillPath('org-demo')), plainOutput(status));
+});
+
+withContext('antigravity refuses case-insensitive duplicate skills before writing workspace outputs', (shared) => {
+  const duplicateSkills = { [ORG]: { 'org-demo': skillMarkdown('org-demo') }, [PERSONAL]: { 'Org-Demo': skillMarkdown('Org-Demo') } };
+  const ctx = addWorkspace(shared, 'duplicate', { skills: duplicateSkills });
+  const run = runInstaller(shell, ctx, ['-Runtimes', 'antigravity']);
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /duplicate skill .* across layers/i);
+  assert.equal(lstatSafe(lockPath(ctx)), null);
+  assert.equal(lstatSafe(join(ctx.workspace, '.agents')), null);
+  assert.equal(lstatSafe(join(ctx.workspace, '.claude', 'cache')), null, 'the collision fails before workspace cache writes');
+});
+
+withContext('antigravity leaves unowned skills alone and refuses a skills-root junction outside the workspace', (shared) => {
+  const ctx = addWorkspace(shared, 'unowned');
+  writeFile(ctx.workspace, '.agents/skills/user-skill/SKILL.md', skillMarkdown('user-skill'));
+  mustRun(ctx, ['-Runtimes', 'antigravity']);
+  assert.equal(readFileSync(join(ctx.workspace, '.agents', 'skills', 'user-skill', 'SKILL.md'), 'utf8'), skillMarkdown('user-skill'));
+
+  const linked = addWorkspace(shared, 'linked');
+  const outside = join(shared.base, 'outside-skills');
+  mkdirSync(outside, { recursive: true });
+  symlinkSync(outside, join(linked.workspace, '.agents'), 'junction');
+  const run = runInstaller(shell, linked, ['-Runtimes', 'antigravity']);
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /link or reparse point/);
+  assert.equal(readdirSync(outside).length, 0, 'the external directory is untouched');
+  assert.equal(lstatSafe(lockPath(linked)), null);
+});
+
+withContext('antigravity uninstall keeps edited and unowned skills and is safe to repeat', (shared) => {
+  const ctx = addWorkspace(shared, 'uninstall-antigravity');
+  mustRun(ctx, ['-Runtimes', 'antigravity']);
+  const edited = join(ctx.workspace, '.agents', 'skills', 'org-demo', 'SKILL.md');
+  writeFileSync(edited, skillMarkdown('org-demo', { description: 'edited before uninstall' }));
+  writeFile(ctx.workspace, '.agents/skills/user-skill/SKILL.md', skillMarkdown('user-skill'));
+
+  const first = mustRun(ctx, ['-Uninstall']);
+  assert.match(plainOutput(first), /SKIP\s+\.agents\/skills\/org-demo/);
+  assert.ok(lstatSafe(edited));
+  assert.ok(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'user-skill', 'SKILL.md')));
+  const second = mustRun(ctx, ['-Uninstall']);
+  assert.ok(lstatSafe(edited), plainOutput(second));
+  assert.ok(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'user-skill', 'SKILL.md')));
+});
+
+withContext('PowerShell and Python readers reject malformed shared runtime claims', (shared) => {
+  assert.ok(python, 'python is needed for the verifier');
+  const cases = [
+    ['duplicate', (record) => { record.runtimes = ['antigravity', 'antigravity']; }],
+    ['unsorted', (record) => { record.runtimes = ['codex', 'antigravity']; }],
+    ['unknown', (record) => { record.runtimes = ['antigravity', 'gemini']; }],
+    ['conflict', (record) => { record.runtime = 'codex'; }],
+    ['missing-claims', (record) => { delete record.runtimes; }],
+    ['nested-path', (record) => { record.path = `${record.path}/extra`; }],
+  ];
+  for (const [name, mutate] of cases) {
+    const ctx = addWorkspace(shared, `malformed-${name}`);
+    mustRun(ctx, ['-Runtimes', 'codex,antigravity']);
+    const lock = readLock(ctx);
+    mutate(ownedSkillRecords(lock)[0]);
+    writeFileSync(lockPath(ctx), JSON.stringify(lock));
+    const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
+    assert.notEqual(status.status, 0, plainOutput(status));
+    const home = join(shared.base, `malformed-home-${name}`);
+    mkdirSync(home);
+    const verify = spawnSync(python, [join(repoRoot, 'scripts', 'verify-workspace-install.py'), '--workspace', ctx.workspace, '--home', home], { windowsHide: true, encoding: 'utf8' });
+    assert.notEqual(verify.status, 0, `${verify.stdout}\n${verify.stderr}`);
+  }
 });

@@ -186,6 +186,8 @@ Verified: `codex debug prompt-input` from a nested repository reads the generate
 
 The opt-in `cursor` runtime copies selected layer skills into `.cursor\skills`. Cursor reads that folder and the generated root `AGENTS.md` when the workspace root is its active project. If a nested repository is the active project, set `-Workspace` to that repository and use the existing local source overrides for sibling layer checkouts. Cursor does not inherit the parent's generated files. If an unowned root `AGENTS.md` blocks generation, the installer keeps it and writes `.maxstack\workspace-instructions.md`; reference that fallback from your own instructions to load it. The fallback is not consumed automatically.
 
+The opt-in `antigravity` runtime copies selected layer skills into `.agents\skills`, shared with Codex. Google documents this workspace location for the Antigravity app, CLI, and IDE. The installer does not configure Antigravity rules, hooks, plugins, models, or global settings. Skill loading through a live T3 Antigravity session remains unverified. See [Antigravity skills](features/antigravity.md).
+
 Cursor has no gate, plugin delivery, or layer agent delivery. Its live skill load and T3 session remain unverified.
 
 Measured: Cursor documentation and T3 source describe active-project discovery; a live session has not verified this install. No Antigravity session was authenticated or run.

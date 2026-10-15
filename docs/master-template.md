@@ -6,7 +6,7 @@ This document records the design for one maintained source of AI functionality t
 
 Maintain skills, agents, hooks, MCP servers, and instructions once. Install them so that every repository and worktree under a workspace folder, opened by any supported harness, has all of them.
 
-The runtimes are Claude Code, GitHub Copilot CLI, OpenCode, Pi, Antigravity, Cursor, and Codex. The first four install by default. Codex and Cursor are opt-in. Codex installs skills and instructions. Cursor installs skills and uses the shared workspace instruction output. Antigravity has no installer support.
+The runtimes are Claude Code, GitHub Copilot CLI, OpenCode, Pi, Antigravity, Cursor, and Codex. The first four install by default. Codex, Cursor, and Antigravity are opt-in. Codex installs skills and instructions. Cursor installs skills and uses the shared workspace instruction output. Antigravity installs workspace skills only.
 
 ## What the research found
 

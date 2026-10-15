@@ -12,7 +12,15 @@
       "type": "object",
       "minProperties": 1,
       "propertyNames": {
-        "enum": ["claude", "codex", "copilot", "cursor", "opencode", "pi"]
+        "enum": [
+          "antigravity",
+          "claude",
+          "codex",
+          "copilot",
+          "cursor",
+          "opencode",
+          "pi"
+        ]
       },
       "additionalProperties": {
         "type": "object",

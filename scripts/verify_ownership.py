@@ -79,7 +79,11 @@ def check_owned_record(record: object, where: str, failures: list[str]) -> str |
             expected = expected | {"createdKey"}
             if record["createdKey"] is not True:
                 failures.append(f"{where} createdKey, when present, must be true")
-    expected = expected | {"runtime", "layers"}
+    expected = expected | {"layers"}
+    if "runtimes" in record:
+        expected = expected | {"runtimes"}
+    else:
+        expected = expected | {"runtime"}
     if BACKUP_PATH.search(str(record.get("path", ""))) and "role" in record:
         expected = expected | {"role"}
         if record["role"] not in BACKUP_ROLES:
@@ -96,7 +100,30 @@ def check_attribution(record: dict, where: str, failures: list[str]) -> None:
     """The runtime a record belongs to, null for the claude cache, and the layers it was installed for.
     The runtime must be the one the record's path names, so a record cannot claim another runtime's file."""
     runtime = record.get("runtime")
-    if runtime is not None and runtime not in SELECTION_RUNTIMES:
+    consumers = record.get("runtimes")
+    path = str(record.get("path", ""))
+    if path.startswith(".agents/skills/") and (
+        record.get("kind") != "dir"
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", path.removeprefix(".agents/skills/")) is None
+    ):
+        failures.append(f"{where} is not one .agents/skills folder")
+    if "runtime" in record and "runtimes" in record:
+        failures.append(f"{where} must use runtime or runtimes, not both")
+    elif consumers is not None:
+        if not isinstance(consumers, list) or not consumers:
+            failures.append(f"{where} runtimes must be a non-empty list")
+        elif any(value not in ("codex", "antigravity") for value in consumers):
+            failures.append(f"{where} runtimes must contain only codex and antigravity")
+        elif len(set(consumers)) != len(consumers) or consumers != sorted(consumers, key=utf8_order):
+            failures.append(f"{where} runtimes must be sorted by UTF-8 bytes, once each")
+        skill_name = path.removeprefix(".agents/skills/")
+        if (
+            not path.startswith(".agents/skills/")
+            or record.get("kind") != "dir"
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", skill_name) is None
+        ):
+            failures.append(f"{where} runtimes attribution is only valid for .agents/skills")
+    elif runtime is not None and runtime not in SELECTION_RUNTIMES:
         failures.append(
             f"{where} runtime must be null or one of {list(SELECTION_RUNTIMES)}"
         )
@@ -211,7 +238,7 @@ def utf8_order(text: str) -> bytes:
     return text.encode("utf-8")
 
 
-SELECTION_RUNTIMES = ("claude", "opencode", "copilot", "pi", "codex", "cursor")
+SELECTION_RUNTIMES = ("claude", "opencode", "copilot", "pi", "codex", "cursor", "antigravity")
 # The runtimes a lock with no selection reads as. codex is opt-in, so it is not among them (Install-Workspace.ps1).
 DEFAULT_RUNTIMES = ("claude", "opencode", "copilot", "pi")
 # Each runtime whose wrapper or settings name the Claude plugin folders, which only claude writes.
@@ -319,7 +346,18 @@ def check_selection(lock: dict, failures: list[str]) -> None:
     for index, record in enumerate(lock.get("owned", []) or []):
         path = record.get("path") if isinstance(record, dict) else None
         runtime = owned_runtime(path) if isinstance(path, str) else None
-        if runtime is not None and runtime not in runtimes:
+        consumers = record.get("runtimes") if isinstance(record, dict) else None
+        if isinstance(consumers, list):
+            if any(consumer not in runtimes for consumer in consumers if isinstance(consumer, str)):
+                failures.append(
+                    f"stack.lock.json owned[{index}] claims an unselected runtime"
+                )
+        elif consumers is None:
+            if runtime is not None and runtime not in runtimes:
+                failures.append(
+                    f"stack.lock.json owned[{index}] is {path}, which belongs to {runtime}, and {runtime} is not selected"
+                )
+        elif runtime is not None and runtime not in runtimes:
             failures.append(
                 f"stack.lock.json owned[{index}] is {path}, which belongs to {runtime}, and {runtime} is not selected"
             )
