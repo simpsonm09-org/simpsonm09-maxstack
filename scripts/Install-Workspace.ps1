@@ -1165,11 +1165,11 @@ function Get-ItemsTreeSha256 {
 # cache cloned from another remote is never fetched from. A partial, sparse clone keeps
 # only the plugin folder. Once the commit is in the cache, no network is used.
 function Sync-GitPlugin {
-    param($Layer)
+    param($Layer, [string] $CacheRoot = $claudeCacheTarget)
 
-    $cache = Join-MaxstackPath $claudeCacheTarget $Layer.name
+    $cache = Join-MaxstackPath $CacheRoot $Layer.name
     if (-not (Test-Path -LiteralPath (Join-MaxstackPath $cache '.git'))) {
-        New-Item -ItemType Directory -Path $claudeCacheTarget -Force | Out-Null
+        New-Item -ItemType Directory -Path $CacheRoot -Force | Out-Null
         Write-Host "Cloning $($Layer.url) (partial, sparse) into $cache"
         # A clone names no tree, so it runs from an empty folder. Its target is an absolute path, since a relative one would resolve there.
         $clone = Invoke-GitGuarded -Arguments @('clone', '--quiet', '--filter=blob:none', '--no-checkout', '--sparse', '--', $Layer.url, [IO.Path]::GetFullPath($cache))
@@ -3581,8 +3581,35 @@ if ($Apply) {
     [void](Get-WorkspaceInstructionPlan -Layers $knownLayers -SelectedRuntimes $selectedRuntimes -ValidateOnly)
 }
 
-# Git sources are synced before anything is written, so a bad pin stops the run with
-# the workspace unchanged. Audit reads no git source; it reports what the last apply left.
+# Cursor collision preflight resolves pinned skills in an isolated temporary cache first. This
+# lets an apply refuse an unsafe target before Sync-GitPlugin writes the workspace cache.
+if ($Apply -and $cursorSelected) {
+    Assert-CursorSkillsPath
+    $cursorStageRoot = Join-Path ([IO.Path]::GetTempPath()) "maxstack-cursor-preflight-$([guid]::NewGuid().ToString('N'))"
+    New-Item -ItemType Directory -Path $cursorStageRoot | Out-Null
+    try {
+        foreach ($layer in @($layers | Where-Object { $null -ne $_.url })) {
+            $stageCache = Sync-GitPlugin $layer -CacheRoot (Join-Path $cursorStageRoot '.claude/cache')
+            $layer.root = Join-SourceSub $stageCache $layer.sourcePath
+            if (-not (Test-Path -LiteralPath $layer.root -PathType Container)) {
+                throw "Layer '$($layer.name)' has no $($layer.sourcePath) folder at the pinned commit."
+            }
+        }
+        $stagedCursorSkills = @(Get-LayerSkills -Layers $layers -Runtime 'cursor')
+        Assert-CursorSkillTargets -Skills $stagedCursorSkills -Owned $priorOwned
+    } finally {
+        $tempRoot = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
+        $stageFull = [IO.Path]::GetFullPath($cursorStageRoot)
+        $tempPrefix = $tempRoot + [IO.Path]::DirectorySeparatorChar
+        if (-not $stageFull.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Cursor preflight cleanup target '$stageFull' is outside the temporary directory."
+        }
+        Remove-OwnedTree $stageFull
+    }
+}
+
+# Git sources are synced only after source and destination preflight, so a bad pin or Cursor
+# collision stops the run before workspace cache or generated-output writes. Audit reads no git source.
 if ($Apply) {
     foreach ($layer in @($layers | Where-Object { $null -ne $_.url })) {
         $cache = Sync-GitPlugin $layer

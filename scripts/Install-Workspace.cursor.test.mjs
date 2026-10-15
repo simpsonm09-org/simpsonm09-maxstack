@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync, renameSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ALL_RUNTIMES, LOCAL_LAYERS, lockPath, mustApply, plainOutput, readJson, runInstaller, runStatus, selectionOf, shell, withWorkspace, writeLayerStub, writeWorkspaceSettings } from './lib/installer-test-kit.mjs';
 
@@ -47,6 +47,143 @@ withWorkspace('cursor refuses an unowned skill target without overwriting it', (
   assert.match(plainOutput(result), /already exists and maxstack did not write it/);
   assert.deepEqual(readFileSync(target), userBytes);
   assert.equal(existsSync(lockPath(ctx)), false, 'a refused collision writes no lock');
+}, {});
+
+withWorkspace('cursor refuses a linked skills root without writing outside the workspace', (ctx) => {
+  renameDuplicate(ctx);
+  const outside = join(ctx.base, 'outside-root');
+  mkdirSync(outside);
+  const marker = join(outside, 'marker.txt');
+  writeFileSync(marker, 'outside stays unchanged\n');
+  mkdirSync(join(ctx.workspace, '.cursor'));
+  const root = join(ctx.workspace, '.cursor', 'skills');
+  symlinkSync(outside, root, 'junction');
+  try {
+    const result = runInstaller(shell, ctx, ['-Runtimes', 'cursor']);
+    assert.notEqual(result.status, 0, 'the installer accepted a linked skills root');
+    assert.match(plainOutput(result), /linked|reparse|junction|symbolic link/i);
+    assert.deepEqual(readFileSync(marker), Buffer.from('outside stays unchanged\n'));
+    assert.deepEqual(readdirSync(outside), ['marker.txt']);
+    assert.equal(existsSync(lockPath(ctx)), false, 'a refused linked root writes no lock');
+  } finally {
+    rmSync(root);
+  }
+}, {});
+
+withWorkspace('cursor refuses a linked cursor ancestor without writing outside the workspace', (ctx) => {
+  renameDuplicate(ctx);
+  const outside = join(ctx.base, 'outside-ancestor');
+  mkdirSync(outside);
+  const marker = join(outside, 'marker.txt');
+  writeFileSync(marker, 'outside stays unchanged\n');
+  const ancestor = join(ctx.workspace, '.cursor');
+  symlinkSync(outside, ancestor, 'junction');
+  try {
+    const result = runInstaller(shell, ctx, ['-Runtimes', 'cursor']);
+    assert.notEqual(result.status, 0, 'the installer accepted a linked cursor ancestor');
+    assert.match(plainOutput(result), /linked|reparse|junction|symbolic link/i);
+    assert.deepEqual(readFileSync(marker), Buffer.from('outside stays unchanged\n'));
+    assert.deepEqual(readdirSync(outside), ['marker.txt']);
+    assert.equal(existsSync(lockPath(ctx)), false, 'a refused linked ancestor writes no lock');
+  } finally {
+    rmSync(ancestor);
+  }
+}, {});
+
+withWorkspace('cursor refuses a linked skill target and preserves its outside contents', (ctx) => {
+  renameDuplicate(ctx);
+  const outside = join(ctx.base, 'outside-skill');
+  mkdirSync(outside);
+  const marker = join(outside, 'SKILL.md');
+  writeFileSync(marker, 'user skill\n');
+  const target = join(ctx.workspace, '.cursor', 'skills', 'demo-skill');
+  mkdirSync(join(ctx.workspace, '.cursor', 'skills'), { recursive: true });
+  symlinkSync(outside, target, 'junction');
+  try {
+    const result = runInstaller(shell, ctx, ['-Runtimes', 'cursor']);
+    assert.notEqual(result.status, 0, 'the installer accepted a linked skill target');
+    assert.match(plainOutput(result), /already exists|linked|reparse|junction|symbolic link/i);
+    assert.equal(readFileSync(marker, 'utf8'), 'user skill\n');
+    assert.deepEqual(readdirSync(outside), ['SKILL.md']);
+    assert.equal(existsSync(lockPath(ctx)), false, 'a refused linked target writes no lock');
+  } finally {
+    rmSync(target);
+  }
+}, {});
+
+withWorkspace('cursor refuses an unowned skill file and preserves its bytes', (ctx) => {
+  renameDuplicate(ctx);
+  const target = join(ctx.workspace, '.cursor', 'skills', 'demo-skill');
+  mkdirSync(join(ctx.workspace, '.cursor', 'skills'), { recursive: true });
+  const userBytes = Buffer.from('user-owned file\r\n');
+  writeFileSync(target, userBytes);
+  const result = runInstaller(shell, ctx, ['-Runtimes', 'cursor']);
+  assert.notEqual(result.status, 0, 'the installer accepted an unowned file at a skill target');
+  assert.match(plainOutput(result), /already exists|unowned|collision/i);
+  assert.deepEqual(readFileSync(target), userBytes);
+  assert.equal(existsSync(lockPath(ctx)), false, 'a refused file collision writes no lock');
+}, {});
+
+withWorkspace('cursor refuses a file at the skills root and preserves its bytes', (ctx) => {
+  renameDuplicate(ctx);
+  mkdirSync(join(ctx.workspace, '.cursor'));
+  const root = join(ctx.workspace, '.cursor', 'skills');
+  const userBytes = Buffer.from('user-owned root file\r\n');
+  writeFileSync(root, userBytes);
+  const result = runInstaller(shell, ctx, ['-Runtimes', 'cursor']);
+  assert.notEqual(result.status, 0, 'the installer accepted a file at the skills root');
+  assert.match(plainOutput(result), /not a directory/);
+  assert.deepEqual(readFileSync(root), userBytes);
+  assert.equal(existsSync(lockPath(ctx)), false, 'a refused root file writes no lock');
+}, {});
+
+withWorkspace('cursor refuses an owned skill target replaced by a link and preserves its outside contents', (ctx) => {
+  renameDuplicate(ctx);
+  mustApply(ctx, ['-Runtimes', 'cursor']);
+  const outside = join(ctx.base, 'outside-owned-skill');
+  mkdirSync(outside);
+  const marker = join(outside, 'SKILL.md');
+  writeFileSync(marker, 'outside stays unchanged\n');
+  const target = join(ctx.workspace, '.cursor', 'skills', 'demo-skill');
+  rmSync(target, { recursive: true, force: true });
+  symlinkSync(outside, target, 'junction');
+  try {
+    const result = runInstaller(shell, ctx, ['-Runtimes', 'cursor']);
+    assert.notEqual(result.status, 0, 'the installer accepted an owned skill link');
+    assert.match(plainOutput(result), /link or reparse point/);
+    assert.equal(readFileSync(marker, 'utf8'), 'outside stays unchanged\n');
+    assert.deepEqual(readdirSync(outside), ['SKILL.md']);
+  } finally {
+    rmSync(target);
+  }
+}, {});
+
+withWorkspace('cursor refuses traversal in a recorded owned skill path before removal', (ctx) => {
+  renameDuplicate(ctx);
+  mustApply(ctx, ['-Runtimes', 'cursor']);
+  const outside = join(ctx.workspace, 'outside-marker.txt');
+  writeFileSync(outside, 'outside stays unchanged\n');
+  const lock = readJson(lockPath(ctx));
+  const owned = lock.owned.find((record) => record.runtime === 'cursor');
+  owned.path = '.cursor/skills/../../outside-marker.txt';
+  writeFileSync(lockPath(ctx), JSON.stringify(lock, null, 2));
+  const result = runInstaller(shell, ctx, ['-Runtimes', 'cursor']);
+  assert.notEqual(result.status, 0, 'the installer accepted traversal in a recorded skill path');
+  assert.match(plainOutput(result), /safe path segment/);
+  assert.equal(readFileSync(outside, 'utf8'), 'outside stays unchanged\n');
+}, {});
+
+withWorkspace('cursor detects pinned-layer skill collisions before creating its cache or outputs', (ctx) => {
+  renameDuplicate(ctx);
+  const target = join(ctx.workspace, '.cursor', 'skills', 'poteto-mode');
+  mkdirSync(target, { recursive: true });
+  writeFileSync(join(target, 'SKILL.md'), 'user-owned skill\n');
+  const result = runInstaller(shell, ctx, ['-Runtimes', 'cursor']);
+  assert.notEqual(result.status, 0, 'the installer accepted an unowned pinned-layer skill target');
+  assert.match(plainOutput(result), /already exists and maxstack did not write it/);
+  assert.equal(existsSync(join(ctx.workspace, '.claude', 'cache', 'pstack')), false, 'preflight created the pinned cache');
+  assert.equal(existsSync(lockPath(ctx)), false, 'preflight wrote a lock');
+  assert.deepEqual(readFileSync(join(target, 'SKILL.md'), 'utf8'), 'user-owned skill\n');
 }, {});
 
 withWorkspace('cursor strict status reports an unowned skill folder', (ctx) => {
