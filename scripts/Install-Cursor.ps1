@@ -43,7 +43,7 @@ function Assert-CursorDestinationWithinWorkspace {
 function Assert-CursorSkillName {
     param([string] $Name)
 
-    if ([string]::IsNullOrEmpty($Name) -or $Name -in @('.', '..') -or $Name -match '[/\\<>:"|?*]' -or $Name -match '[. ]$' -or $Name -match '[\x00-\x1f]') {
+    if ([string]::IsNullOrEmpty($Name) -or (Test-OrdinalIn $Name @('.', '..')) -or $Name -match '[/\\<>:"|?*]' -or $Name -match '[. ]$' -or $Name -match '[\x00-\x1f]') {
         throw "Cursor skill folder '$Name' is not a safe path segment, so nothing was written."
     }
     if ($Name -match '^(?i:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$') {
