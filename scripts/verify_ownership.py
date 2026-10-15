@@ -15,6 +15,7 @@ OWNED_SCHEMA = 2
 OWNED_KINDS = ("file", "dir", "link", "json-entries")
 OWNED_PI_KEYS = ("packages", "skills")
 SHA256_UPPER = re.compile(r"^[0-9A-F]{64}$")
+HOOK_HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 # A backup of a replaced file: X.bak, the original, or X.bak.N, a numbered copy. Only these may name a role.
 BACKUP_PATH = re.compile(r"\.bak(\.\d+)?$")
 BACKUP_ROLES = ("original", "edited", "user")
@@ -80,6 +81,15 @@ def check_owned_record(record: object, where: str, failures: list[str]) -> str |
             if record["createdKey"] is not True:
                 failures.append(f"{where} createdKey, when present, must be true")
     expected = expected | {"layers"}
+    if "hookHash" in record:
+        expected = expected | {"hookHash"}
+        if (
+            record.get("path") != ".codex/config.toml"
+            or kind != "file"
+            or not isinstance(record["hookHash"], str)
+            or HOOK_HASH.fullmatch(record["hookHash"]) is None
+        ):
+            failures.append(f"{where} hookHash must be a sha256 hash on the Codex config file")
     if "runtimes" in record:
         expected = expected | {"runtimes"}
     else:
@@ -123,9 +133,9 @@ def check_attribution(record: dict, where: str, failures: list[str]) -> None:
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", skill_name) is None
         ):
             failures.append(f"{where} runtimes attribution is only valid for .agents/skills")
-    elif runtime is not None and runtime not in SELECTION_RUNTIMES:
+    elif runtime is not None and runtime not in OWNED_RUNTIMES:
         failures.append(
-            f"{where} runtime must be null or one of {list(SELECTION_RUNTIMES)}"
+            f"{where} runtime must be null or one of {list(OWNED_RUNTIMES)}"
         )
     elif runtime != owned_runtime(record["path"]):
         failures.append(
@@ -239,6 +249,7 @@ def utf8_order(text: str) -> bytes:
 
 
 SELECTION_RUNTIMES = ("claude", "opencode", "copilot", "pi", "codex", "cursor", "antigravity")
+OWNED_RUNTIMES = SELECTION_RUNTIMES + ("t3-gated-instances", "workspace-instructions")
 # The runtimes a lock with no selection reads as. codex is opt-in, so it is not among them (Install-Workspace.ps1).
 DEFAULT_RUNTIMES = ("claude", "opencode", "copilot", "pi")
 # Each runtime whose wrapper or settings name the Claude plugin folders, which only claude writes.
@@ -251,6 +262,8 @@ def owned_runtime(path: str) -> str | None:
         return "opencode"
     if path.startswith(".agents/skills/"):
         return "codex"
+    if path == ".codex/config.toml":
+        return "codex"
     if path.startswith(".cursor/skills/"):
         return "cursor"
     if path.startswith(".claude/plugins/"):
@@ -259,6 +272,10 @@ def owned_runtime(path: str) -> str | None:
         return "copilot"
     if path.startswith((".maxstack/bin/pi.", ".pi/")):
         return "pi"
+    if path == ".pstack/pstack-t3-instances.json":
+        return "t3-gated-instances"
+    if path in ("AGENTS.md", "CLAUDE.md", ".maxstack/workspace-instructions.md"):
+        return "workspace-instructions"
     return None
 
 
@@ -353,11 +370,11 @@ def check_selection(lock: dict, failures: list[str]) -> None:
                     f"stack.lock.json owned[{index}] claims an unselected runtime"
                 )
         elif consumers is None:
-            if runtime is not None and runtime not in runtimes:
+            if runtime in SELECTION_RUNTIMES and runtime not in runtimes:
                 failures.append(
                     f"stack.lock.json owned[{index}] is {path}, which belongs to {runtime}, and {runtime} is not selected"
                 )
-        elif runtime is not None and runtime not in runtimes:
+        elif runtime in SELECTION_RUNTIMES and runtime not in runtimes:
             failures.append(
                 f"stack.lock.json owned[{index}] is {path}, which belongs to {runtime}, and {runtime} is not selected"
             )
