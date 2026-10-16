@@ -29,7 +29,7 @@ Pins:
 
 Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex, Cursor, and Antigravity are opt-in. Codex installs skills and instructions only; its Launch argument selects the workspace project root, and its gate definition lives in owned `.codex/config.toml` (rows 2.1, 2.2, and 2.8). Cursor copies skills only into the explicit workspace root's `.cursor/skills`. Antigravity shares the Codex skill projection under `.agents/skills`. Install at the active project root when a nested repository needs its own skill files.
 
-Harness versions named in the sources: Copilot CLI 1.0.93 and 1.0.89 [ORG, PSC-MAP-CP]; OpenCode 2.0.24 and 2.0.26 [MS-T3]; Pi 1.0 [PSC-PI].
+Harness versions named in the sources: Copilot CLI 1.0.93 and 1.0.89 [ORG, PSC-MAP-CP]; OpenCode 2.0.24, 2.0.26, and 2.0.30 [MS-T3]; Pi 1.0 [PSC-PI].
 
 Source key (short IDs used in cells):
 
@@ -259,7 +259,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 
 - Claude: **same**. Junctions, `--plugin-dir` loading, and the Git Bash launcher were exercised on Windows. Evidence: MS-T3 (Verified), ORG (launcher).
 - Copilot: **differs**: the wrapper, SessionStart and gate are verified live on Windows. The PowerShell rewrite is not measured live, and the PreToolUse checks are a stub (2.10). Evidence: MS-T3 (Verified), ORG (Known limits), FORK-WIN.
-- OpenCode: **same**. OpenCode 2.0.24 and 2.0.26 run from the Windows workspace. Caveat: `glob` with an absolute Windows path can return no matches. Evidence: MS-T3 (OpenCode), FORK-MAP-OC (Tool actions).
+- OpenCode: **same**. OpenCode 2.0.24, 2.0.26, and 2.0.30 run from the Windows workspace. Caveats: `glob` with an absolute Windows path can return no matches, and OpenCode reads the user-level `%USERPROFILE%\.agents\skills` root (G6). Evidence: MS-T3 (OpenCode), FORK-MAP-OC (Tool actions).
 - Pi: **same**. The `pi.cmd` wrapper and the rpc probe ran on Windows. Caveat: Pi also loads `%USERPROFILE%\.agents\skills` (G6). Evidence: MS-T3 (Pi, Verified).
 - Cursor: **unverified**. The skills installer targets Windows, macOS, and Linux, but no live Cursor session was tested on Windows. Evidence: `scripts/Install-Cursor.ps1`, `scripts/Install-Workspace.cursor.test.mjs`.
 - Codex: **not built yet**. `codex-hooks.json` has a `commandWindows` entry that was never run. Evidence: PSC-CXH.
@@ -315,7 +315,7 @@ G4. The gate's live path is unproven on OpenCode and on the Pi T3 instance (rows
 
 G5. The installer is Windows-only, so macOS is unverified or not built in every harness (row 2.18). Plan phase 0 requires a macOS round trip. Evidence: MS-MT (Installer lifecycle), MS-INST, MS-T3. Fix: make the link logic portable (symlinks on POSIX), then run the lifecycle tests on macOS.
 
-G6. Pi loads `%USERPROFILE%\.agents\skills` into every Pi session, so the skill set is not only the pinned one (rows 2.1, 2.17). The spike found 40 skills. `PI_CODING_AGENT_DIR` does not isolate them, and redirecting `USERPROFILE` would move the login. Evidence: MS-T3 (Pi, Known limits). Fix: test whether Pi's `skills` setting can exclude that path; otherwise document the leak as accepted.
+G6. Pi and OpenCode resolve `%USERPROFILE%\.agents\skills` through default skill discovery, so the resolved skill set is not only the pinned one (rows 2.1, 2.17). The 2026-10-09 Pi spike found 40 skills. `PI_CODING_AGENT_DIR` does not isolate them, and redirecting `USERPROFILE` would move the login. An OpenCode 2.0.30 smoke found 41 skills there beside 61 PStack skills. The OpenCode config directory does not move that root, and the Claude Code skill flags do not gate it. Evidence: MS-T3 (Pi, Known limits; OpenCode, Global skills and clean sessions). Fix: test whether Pi's `skills` setting can exclude that path; the OpenCode root is an unresolved isolation limit, and accepting it as a risk is an owner decision.
 
 G7. The Copilot hook files on pstack `main` do not match the contract the org README requires (row 2.8, 2.10). Main's `copilot-hooks.json` uses a single `command` key per entry and has no PowerShell entry. The fork (the pin) uses `bash` and `powershell` keys. If the pin moves back to main, the Copilot wiring changes shape; no install check recorded in MS-INST reads these hook keys, so the change would not show at install time. Evidence: PSC-CPH (main), FORK-CPH, ORG (GitHub Copilot CLI build). Fix: land the fork's hooks file upstream or pin only commits where the contract holds; add a test that reads the pinned file's keys.
 
