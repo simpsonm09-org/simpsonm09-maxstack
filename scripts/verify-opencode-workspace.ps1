@@ -38,6 +38,20 @@ function Get-NormalPath {
     return [IO.Path]::GetFullPath($Path).TrimEnd('\').ToLowerInvariant()
 }
 
+# Whether an entry of `opencode debug config` is the empty config document OpenCode 2.0.31
+# appends after the documents it reads: a `document` with no path and no information. Only
+# that shape is skipped, so a later entry without a path is reported rather than ignored.
+function Test-EmptyConfigDocument {
+    param($Entry)
+
+    $type = $Entry.PSObject.Properties['type']
+    if (-not $type -or -not (Test-OrdinalEqual ([string] $type.Value) 'document')) { return $false }
+    $info = $Entry.PSObject.Properties['info']
+    if (-not $info -or $null -eq $info.Value) { return $true }
+    if ($info.Value -is [string]) { return [string]::IsNullOrWhiteSpace($info.Value) }
+    return (@($info.Value.PSObject.Properties).Count -eq 0)
+}
+
 $command = Get-Command -Name $OpenCodeBinary -CommandType Application, ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $command) { throw "OpenCode CLI not found on PATH: $OpenCodeBinary" }
 if (-not (Test-Path -LiteralPath $Workspace -PathType Container)) { throw "Workspace not found: $Workspace" }
@@ -59,7 +73,18 @@ for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
     if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds 3 }
 }
 
-$sources = @(($sourcesRaw | ConvertFrom-Json) | ForEach-Object { Get-NormalPath $_.path })
+$sources = @()
+foreach ($document in @($sourcesRaw | ConvertFrom-Json)) {
+    $path = $document.PSObject.Properties['path']
+    if ($path -and -not [string]::IsNullOrWhiteSpace([string] $path.Value)) {
+        $sources += Get-NormalPath ([string] $path.Value)
+        continue
+    }
+    if (Test-EmptyConfigDocument $document) { continue }
+    $type = $document.PSObject.Properties['type']
+    $kind = if ($type -and $type.Value -is [string]) { ConvertTo-SafeName ([string] $type.Value) } else { '<no type>' }
+    $failures += "opencode debug config returned a $kind entry without a path; every entry must name where OpenCode read it"
+}
 foreach ($expected in @((Join-Path $Workspace 'opencode.jsonc'), (Join-Path $Workspace '.opencode'))) {
     if (-not (Test-OrdinalIn (Get-NormalPath $expected) $sources)) {
         $failures += "OpenCode does not read $expected from the workspace"
