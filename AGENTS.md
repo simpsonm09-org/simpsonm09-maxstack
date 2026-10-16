@@ -2,7 +2,7 @@
 
 - Keep secrets, tokens, account state, and session databases out of this repository.
 - `maxstack` owns AI composition. `simpsonm09-dev-setup` owns the machine and the human tool set, including `tools.yaml` and the `with-secrets` and Agent Vault wrappers. `docs/relationship.md` names how the repositories and the ordered plugin layers fit together.
-- `maxstack` coordinates AI tooling but does not own the plugin. The PStack plugin lives in the `plugins/pstack` folder of the fork `simpsonm09/pstack-max`, branch `feat/opencode-runtime`. Edit it there, never the installed copies under `.opencode`, `.claude`, or `.maxstack`.
+- `maxstack` coordinates AI tooling but does not own the plugin. The PStack plugin lives in the `plugins/pstack` folder of the fork `simpsonm09/pstack-max`, branch `main`. Edit it there, never the installed copies under `.opencode`, `.claude`, or `.maxstack`.
 - The pstack pin is one commit, written in two places that must agree: the pstack layer's `source` in `layers.json` and `pstack.lock.json`. Change both in the same commit, then run `python scripts/verify-manifests.py`.
 - PStack is scoped to `<workspace>` through that workspace's `opencode.jsonc`, `.opencode`, `.claude`, and `.maxstack` directories. Do not install it globally.
 - maxstack sets no model. Do not add a `model` or `small_model` key to the workspace config, or a `model:` line to an agent profile. The user picks the model in the harness: the T3 Code model picker, or their own OpenCode, Claude Code, or Copilot settings. `Install-Workspace.ps1` regenerates the workspace config without a model and strips a `model:` line from the frontmatter of each profile it installs.
