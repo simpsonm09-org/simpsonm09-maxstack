@@ -24,8 +24,8 @@ Evidence rules:
 
 Pins:
 
-- maxstack pins pstack at commit `61654b660a7ede152b28de7c765b4e4d59bd2a4e` on branch `feat/opencode-runtime` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
-- The `pstack-max` checkout at `pstack-max` is on `feat/opencode-runtime` at the pinned commit `61654b660a7ede152b28de7c765b4e4d59bd2a4e`. Where the pin and upstream `main` differ, the row says so (see G7).
+- maxstack pins pstack at commit `66cdc869fc28aa6503a3922041f1b3e7c72e2bcb` on branch `main` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
+- The `pstack-max` checkout at `pstack-max` is on `main` at the pinned commit `66cdc869fc28aa6503a3922041f1b3e7c72e2bcb`. Where the pin and upstream `main` differ, the row says so (see G7).
 
 Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex, Cursor, and Antigravity are opt-in. Codex installs skills and instructions only; its Launch argument selects the workspace project root, and its gate definition lives in owned `.codex/config.toml` (rows 2.1, 2.2, and 2.8). Cursor copies skills only into the explicit workspace root's `.cursor/skills`. Antigravity shares the Codex skill projection under `.agents/skills`. Install at the active project root when a nested repository needs its own skill files.
 
@@ -51,7 +51,7 @@ Source key (short IDs used in cells):
 | PSC-MAP-CP | pstack-claude/plugins/pstack/skills/poteto-mode/references/copilot-tools.md (main) |
 | PSC-MAP-CX | pstack-claude/plugins/pstack/skills/poteto-mode/references/codex-tools.md (main) |
 | PSC-MAP-PI | pstack-claude/plugins/pstack/skills/poteto-mode/references/pi-tools.md (main) |
-| FORK | pstack-max@feat/opencode-runtime:plugins/pstack (branch feat/opencode-runtime, pin) |
+| FORK | pstack-max@main:plugins/pstack (branch main, pin) |
 | FORK-CPH | FORK/hooks/copilot-hooks.json (bash and powershell command keys) |
 | FORK-WIN | FORK/hooks/pre-tool-use-windows.ps1 |
 | FORK-OC | FORK/opencode/ (index.ts, load.ts, routing.ts, agents/*.md) |
