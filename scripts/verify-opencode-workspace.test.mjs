@@ -41,6 +41,42 @@ function powerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+// Runs the verifier against a stub OpenCode CLI that answers `debug config` with the
+// given entries and `debug agents` with the three PStack agents. The stub leaves no
+// child behind, so the verifier exits as soon as its calls finish.
+function runVerifierWithStub(workspace, documents) {
+  const stub = join(workspace, "stub-opencode.ps1");
+  const agents = JSON.stringify(
+    ["pstack-agent", "pstack-reviewer", "pstack-comment-sicko"].map((id) => ({ id })),
+  );
+  writeFileSync(
+    stub,
+    [
+      "if ($args -contains 'config') {",
+      `    Write-Output ${powerShellLiteral(JSON.stringify(documents))}`,
+      "} else {",
+      `    Write-Output ${powerShellLiteral(agents)}`,
+      "}",
+    ].join("\n"),
+  );
+  return spawnSync(
+    pwsh,
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-File",
+      script,
+      "-Workspace",
+      workspace,
+      "-OpenCodeBinary",
+      stub,
+      "-CallTimeoutSeconds",
+      "30",
+    ],
+    { encoding: "utf8", windowsHide: true, timeout: 60_000 },
+  );
+}
+
 function runWithPipedOutput(args) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(pwsh, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -143,5 +179,56 @@ test("the workspace verifier exits promptly with stdout piped when OpenCode leav
       () => rmSync(base, { recursive: true, force: true }),
       9_000,
     ).unref();
+  }
+});
+
+// OpenCode 2.0.31 appends an empty config document with no path after the entries it
+// reads. The check must skip exactly that entry and still find the workspace paths.
+test("the workspace verifier reads past the empty config document OpenCode 2.0.31 appends", {
+  skip: pwsh ? false : "pwsh is not available",
+}, () => {
+  const base = mkdtempSync(join(tmpdir(), "opencode-empty-doc-"));
+  const workspace = join(base, "workspace");
+  try {
+    mkdirSync(join(workspace, ".opencode"), { recursive: true });
+    writeFileSync(join(workspace, "opencode.jsonc"), "{}\n");
+    const run = runVerifierWithStub(workspace, [
+      {
+        type: "document",
+        path: join(workspace, "opencode.jsonc"),
+        info: { $schema: "https://opencode.ai/config.json" },
+      },
+      { type: "directory", path: join(workspace, ".opencode") },
+      { type: "document", info: {} },
+    ]);
+    assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+    assert.match(
+      plainOutput(`${run.stdout}\n${run.stderr}`),
+      /PASS: OpenCode resolves the workspace config/,
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// An entry that carries information but no path is a shape the check does not know, so
+// it must fail and say so instead of being skipped like the empty document.
+test("the workspace verifier fails on a nonempty config entry without a path", {
+  skip: pwsh ? false : "pwsh is not available",
+}, () => {
+  const base = mkdtempSync(join(tmpdir(), "opencode-nonempty-nopath-"));
+  const workspace = join(base, "workspace");
+  try {
+    mkdirSync(join(workspace, ".opencode"), { recursive: true });
+    writeFileSync(join(workspace, "opencode.jsonc"), "{}\n");
+    const run = runVerifierWithStub(workspace, [
+      { type: "document", path: join(workspace, "opencode.jsonc") },
+      { type: "directory", path: join(workspace, ".opencode") },
+      { type: "document", info: { mcp: { servers: {} } } },
+    ]);
+    assert.notEqual(run.status, 0, `${run.stdout}\n${run.stderr}`);
+    assert.match(plainOutput(`${run.stdout}\n${run.stderr}`), /without a path/);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });
