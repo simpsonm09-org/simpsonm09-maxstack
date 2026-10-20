@@ -257,6 +257,8 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 
 ### 2.17 Windows
 
+The installer fixture lifecycle runs in the `test-node-shard` matrix and is required by `test-node`. It covers install, strict status, reapply, Copilot removal, and uninstall for the seven runtimes listed below; it does not verify live CLI or hook behavior.
+
 - Claude: **same**. Junctions, `--plugin-dir` loading, and the Git Bash launcher were exercised on Windows. Evidence: MS-T3 (Verified), ORG (launcher).
 - Copilot: **differs**: the wrapper, SessionStart and gate are verified live on Windows. The PowerShell rewrite is not measured live, and the PreToolUse checks are a stub (2.10). Evidence: MS-T3 (Verified), ORG (Known limits), FORK-WIN.
 - OpenCode: **same**. OpenCode 2.0.24, 2.0.26, and 2.0.30 run from the Windows workspace. Caveats: `glob` with an absolute Windows path can return no matches, and OpenCode reads the user-level `%USERPROFILE%\.agents\skills` root (G6). Evidence: MS-T3 (OpenCode), FORK-MAP-OC (Tool actions).
@@ -267,13 +269,27 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 
 ### 2.18 macOS
 
-- Claude: **unverified**. This change adds a no-login hosted macOS lifecycle fixture for apply, strict status, reapply, Copilot removal, and uninstall. It has not run on a real Mac. Real Mac hook behavior remains unverified. Evidence: this change, `scripts/Install-Workspace.macos.test.mjs`.
-- Copilot: **unverified**. The fixture checks that macOS writes and records only executable `copilot.sh`, with ordered plugin arguments and argument forwarding, without login. Hosted CI has not run for this change, and the real CLI and hook behavior remain unverified. Evidence: this change, `scripts/Install-Workspace.macos.test.mjs`.
-- OpenCode: **not built yet**. The installer's junction logic is Windows-only. Evidence: MS-MT (Installer lifecycle).
-- Pi: **unverified**. The installer writes `pi.sh`. "On macOS, nothing in this section has been run." Evidence: MS-T3 (Pi, Not verified), MS-INST (Pi).
-- Cursor: **unverified**. The skills installer targets Windows, macOS, and Linux, but no macOS installer run or live Cursor session was tested. Evidence: `scripts/Install-Cursor.ps1`.
-- Codex: **not built yet**. Evidence: MS-T3 (Not set up).
-- Antigravity: **not built yet**. Evidence: MS-MT (Runtimes).
+The informational `test-macos` CI job runs the same installer fixture lifecycle as Linux for all seven runtimes. These fixture checks do not verify live CLI or hook behavior.
+
+- Claude: **unverified**. The fixture verifies the macOS installer lifecycle; real Mac CLI and hook behavior remain unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
+- Copilot: **unverified**. The fixture verifies executable `copilot.sh`, ordered plugin arguments, forwarding, status, and removal; real CLI and hook behavior remain unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
+- OpenCode: **unverified**. The fixture verifies copied plugin files and lifecycle; live OpenCode behavior is unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
+- Pi: **unverified**. The fixture verifies executable `pi.sh`, its agent directory and argument forwarding, plus lifecycle; live Pi behavior is unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
+- Cursor: **unverified**. The fixture verifies the `.cursor/skills` projection and lifecycle; live Cursor behavior is unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
+- Codex: **unverified**. The fixture verifies the `.agents/skills` projection and lifecycle; live Codex behavior is unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
+- Antigravity: **unverified**. The fixture verifies the shared `.agents/skills` projection and lifecycle; live Antigravity behavior is unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
+
+### 2.19 Linux
+
+The informational `test-linux` CI job runs the same POSIX installer fixture lifecycle as macOS for all seven runtimes. These fixture checks do not verify live CLI or hook behavior.
+
+- Claude: **unverified**. The fixture verifies the Linux installer lifecycle; real Linux CLI and hook behavior remain unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
+- Copilot: **unverified**. The fixture verifies executable `copilot.sh`, ordered plugin arguments, forwarding, status, and removal; real CLI and hook behavior remain unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
+- OpenCode: **unverified**. The fixture verifies copied plugin files and lifecycle; live OpenCode behavior is unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
+- Pi: **unverified**. The fixture verifies executable `pi.sh`, its agent directory and argument forwarding, plus lifecycle; live Pi behavior is unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
+- Cursor: **unverified**. The fixture verifies the `.cursor/skills` projection and lifecycle; live Cursor behavior is unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
+- Codex: **unverified**. The fixture verifies the `.agents/skills` projection and lifecycle; live Codex behavior is unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
+- Antigravity: **unverified**. The fixture verifies the shared `.agents/skills` projection and lifecycle; live Antigravity behavior is unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
 
 ## 3. Known intentional differences
 

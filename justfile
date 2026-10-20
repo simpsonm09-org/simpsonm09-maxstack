@@ -54,13 +54,17 @@ test:
     {{python}} scripts/verify-manifests.py
     node --test scripts/ordinal-guard.test.mjs scripts/generate-layers.test.mjs scripts/verify-manifests.test.mjs scripts/verify-pi-harness.test.mjs
 
-# The focused hosted macOS portability set. This job is informational until real Mac owner verification.
-test-macos:
+# The focused POSIX portability set. Hosted macOS and Linux jobs are informational.
+test-posix:
     node --test scripts/ordinal-guard.test.mjs
     node --test scripts/Install-Paths.test.mjs
     node --test scripts/Install-Links.test.mjs
     node --test scripts/verify-manifests.test.mjs
     node --test scripts/Install-Workspace.macos.test.mjs
+
+# Keep the existing macOS recipe name for local callers.
+test-macos:
+    just test-posix
 
 # Run the lint, test, and AI-slop gates.
 verify: lint test aislop

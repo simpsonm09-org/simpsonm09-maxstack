@@ -12,24 +12,47 @@ test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owne
   const ctx = buildWorkspace();
   try {
     const copilot = join(ctx.base, posix ? 'copilot' : 'copilot.cmd');
+    const pi = posix ? join(ctx.base, 'pi') : ctx.fakePi;
     writeFileSync(copilot, posix ? '#!/bin/sh\nprintf "ASK=%s\\n" "$AGENT_ACCESS_COPILOT_ASK"\nfor arg in "$@"; do printf "ARG=%s\\n" "$arg"; done\n' : '@echo off\r\necho ASK=%AGENT_ACCESS_COPILOT_ASK%\r\necho ARGS=%*\r\n');
     if (posix) chmodSync(copilot, 0o755);
-    const layers = writeLayers(ctx);
-    const apply = runInstaller(shell, ctx, ['-CopilotCommand', copilot, '-Runtimes', 'claude,copilot', '-Layers', 'pstack,simpsonm09-org-ai-plugin'], { layersFile: layers });
+    if (posix) {
+      writeFileSync(pi, '#!/bin/sh\nprintf "AGENT_DIR=%s\\n" "$PI_CODING_AGENT_DIR"\nprintf "ASK=%s\\n" "$AGENT_ACCESS_PI_ASK"\nfor arg in "$@"; do printf "ARG=%s\\n" "$arg"; done\n');
+      chmodSync(pi, 0o755);
+    }
+    const layers = writeLayers(ctx, (manifest) => {
+      const pstack = manifest.layers.find((layer) => layer.name === 'pstack');
+      Object.assign(pstack.runtimes, { codex: {}, cursor: {}, antigravity: {} });
+    });
+    const runtimes = 'claude,copilot,opencode,pi,codex,cursor,antigravity';
+    const extra = ['-CopilotCommand', copilot, '-PiCommand', pi, '-Runtimes', runtimes, '-Layers', 'pstack,simpsonm09-org-ai-plugin'];
+    const apply = runInstaller(shell, ctx, extra, { layersFile: layers });
     assert.equal(apply.status, 0, `${apply.stdout}\n${apply.stderr}`);
     const lock = readJson(lockPath(ctx));
     assert.deepEqual(lock.copilot.wrappers, posix ? ['.maxstack/bin/copilot.sh'] : ['.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh']);
+    assert.deepEqual(lock.pi.wrappers, posix ? ['.maxstack/bin/pi.sh'] : ['.maxstack/bin/pi.cmd', '.maxstack/bin/pi.sh']);
     assert.ok(lock.owned.every((record) => !record.path.includes('\\')), 'lock paths use forward slashes');
     const wrapper = join(ctx.workspace, '.maxstack', 'bin', posix ? 'copilot.sh' : 'copilot.cmd');
+    const piWrapper = join(ctx.workspace, '.maxstack', 'bin', posix ? 'pi.sh' : 'pi.cmd');
     assert.ok(existsSync(wrapper));
+    assert.ok(existsSync(piWrapper));
+    assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'pstack', 'opencode', 'index.ts')));
+    assert.ok(existsSync(join(ctx.workspace, '.agents', 'skills', 'demo-skill', 'SKILL.md')));
+    assert.ok(existsSync(join(ctx.workspace, '.cursor', 'skills', 'demo-skill', 'SKILL.md')));
     if (posix) {
       assert.equal(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd')), false);
+      assert.equal(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd')), false);
       const text = readFileSync(wrapper, 'utf8');
       assert.doesNotMatch(text, /\r|\uFEFF/);
       assert.notEqual(statSync(wrapper).mode & 0o111, 0);
       const invocation = spawnSync(bash, [wrapper, '--fixture', 'two words'], { windowsHide: true, cwd: repoRoot, encoding: 'utf8', env: { ...process.env, PATH: `${ctx.base}:${process.env.PATH ?? ''}` } });
       assert.equal(invocation.status, 0, `${invocation.stdout}\n${invocation.stderr}`);
       assert.match(invocation.stdout, /ARG=--plugin-dir[\s\S]*\.claude\/plugins\/pstack[\s\S]*\.claude\/plugins\/simpsonm09-org-ai-plugin[\s\S]*ARG=--fixture\nARG=two words/);
+      const piText = readFileSync(piWrapper, 'utf8');
+      assert.doesNotMatch(piText, /\r|\uFEFF/);
+      assert.notEqual(statSync(piWrapper).mode & 0o111, 0);
+      const piInvocation = spawnSync(bash, [piWrapper, '--fixture', 'two words'], { windowsHide: true, cwd: repoRoot, encoding: 'utf8', env: { ...process.env, PATH: `${ctx.base}:${process.env.PATH ?? ''}` } });
+      assert.equal(piInvocation.status, 0, `${piInvocation.stdout}\n${piInvocation.stderr}`);
+      assert.match(piInvocation.stdout, /AGENT_DIR=.*\.pi\/agent[\s\S]*ARG=--fixture\nARG=two words/);
     } else {
       const cmdText = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd'), 'utf8');
       const shText = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh'), 'utf8');
@@ -39,11 +62,11 @@ test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owne
       assert.ok(!cmdText.startsWith('\uFEFF') && !shText.startsWith('\uFEFF'));
     }
 
-    const clean = runStatus(ctx, ['-Strict', '-CopilotCommand', copilot]);
+    const clean = runStatus(ctx, ['-Strict', '-CopilotCommand', copilot, '-PiCommand', pi]);
     assert.equal(clean.status, 0, clean.stderr);
     assert.ok(statusRows(clean).every((row) => ['matching', 'not selected'].includes(row.state)), `${clean.stdout}\n${clean.stderr}`);
     const before = readFileSync(lockPath(ctx));
-    const again = runInstaller(shell, ctx, ['-CopilotCommand', copilot, '-Runtimes', 'claude,copilot', '-Layers', 'pstack,simpsonm09-org-ai-plugin'], { layersFile: layers });
+    const again = runInstaller(shell, ctx, extra, { layersFile: layers });
     assert.equal(again.status, 0, `${again.stdout}\n${again.stderr}`);
     const firstLock = JSON.parse(before);
     const secondLock = readJson(lockPath(ctx));
@@ -54,6 +77,10 @@ test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owne
     const removed = removal(ctx, ['-Remove', '-Runtimes', 'copilot']);
     assert.equal(removed.status, 0, `${removed.stdout}\n${removed.stderr}`);
     assert.equal(existsSync(join(ctx.workspace, '.maxstack', 'bin', posix ? 'copilot.sh' : 'copilot.cmd')), false);
+    assert.ok(existsSync(piWrapper));
+    assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'pstack', 'opencode', 'index.ts')));
+    assert.ok(existsSync(join(ctx.workspace, '.agents', 'skills', 'demo-skill', 'SKILL.md')));
+    assert.ok(existsSync(join(ctx.workspace, '.cursor', 'skills', 'demo-skill', 'SKILL.md')));
     assert.equal(runStatus(ctx).status, 0);
 
     const ownedPaths = readJson(lockPath(ctx)).owned.map((record) => record.path);
