@@ -8,6 +8,34 @@ import { MISSING_COPILOT, buildWorkspace, lockPath, readJson, removal, repoRoot,
 const posix = process.platform !== 'win32';
 const bash = posix ? 'bash' : join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'usr', 'bin', 'bash.exe');
 
+// The wrappers each platform writes: executable LF shell scripts on POSIX, and the .cmd
+// pair on Windows.
+function assertPlatformWrappers(ctx, wrapper, piWrapper) {
+  if (posix) {
+    assert.equal(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd')), false);
+    assert.equal(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd')), false);
+    const text = readFileSync(wrapper, 'utf8');
+    assert.doesNotMatch(text, /\r|\uFEFF/);
+    assert.notEqual(statSync(wrapper).mode & 0o111, 0);
+    const invocation = spawnSync(bash, [wrapper, '--fixture', 'two words'], { windowsHide: true, cwd: repoRoot, encoding: 'utf8', env: { ...process.env, PATH: `${ctx.base}:${process.env.PATH ?? ''}` } });
+    assert.equal(invocation.status, 0, `${invocation.stdout}\n${invocation.stderr}`);
+    assert.match(invocation.stdout, /ARG=--plugin-dir[\s\S]*\.claude\/plugins\/pstack[\s\S]*\.claude\/plugins\/simpsonm09-org-ai-plugin[\s\S]*ARG=--fixture\nARG=two words/);
+    const piText = readFileSync(piWrapper, 'utf8');
+    assert.doesNotMatch(piText, /\r|\uFEFF/);
+    assert.notEqual(statSync(piWrapper).mode & 0o111, 0);
+    const piInvocation = spawnSync(bash, [piWrapper, '--fixture', 'two words'], { windowsHide: true, cwd: repoRoot, encoding: 'utf8', env: { ...process.env, PATH: `${ctx.base}:${process.env.PATH ?? ''}` } });
+    assert.equal(piInvocation.status, 0, `${piInvocation.stdout}\n${piInvocation.stderr}`);
+    assert.match(piInvocation.stdout, /AGENT_DIR=.*\.pi\/agent[\s\S]*ARG=--fixture\nARG=two words/);
+  } else {
+    const cmdText = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd'), 'utf8');
+    const shText = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh'), 'utf8');
+    assert.match(cmdText, /\r\nset "AGENT_ACCESS_COPILOT_ASK=allow"\r\n/);
+    assert.match(cmdText, /--plugin-dir .*pstack.*--plugin-dir .*simpsonm09-org-ai-plugin/);
+    assert.match(shText, /See copilot\.cmd\./);
+    assert.ok(!cmdText.startsWith('\uFEFF') && !shText.startsWith('\uFEFF'));
+  }
+}
+
 test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owned files', { skip }, () => {
   const ctx = buildWorkspace();
   try {
@@ -38,29 +66,7 @@ test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owne
     assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'pstack', 'opencode', 'index.ts')));
     assert.ok(existsSync(join(ctx.workspace, '.agents', 'skills', 'demo-skill', 'SKILL.md')));
     assert.ok(existsSync(join(ctx.workspace, '.cursor', 'skills', 'demo-skill', 'SKILL.md')));
-    if (posix) {
-      assert.equal(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd')), false);
-      assert.equal(existsSync(join(ctx.workspace, '.maxstack', 'bin', 'pi.cmd')), false);
-      const text = readFileSync(wrapper, 'utf8');
-      assert.doesNotMatch(text, /\r|\uFEFF/);
-      assert.notEqual(statSync(wrapper).mode & 0o111, 0);
-      const invocation = spawnSync(bash, [wrapper, '--fixture', 'two words'], { windowsHide: true, cwd: repoRoot, encoding: 'utf8', env: { ...process.env, PATH: `${ctx.base}:${process.env.PATH ?? ''}` } });
-      assert.equal(invocation.status, 0, `${invocation.stdout}\n${invocation.stderr}`);
-      assert.match(invocation.stdout, /ARG=--plugin-dir[\s\S]*\.claude\/plugins\/pstack[\s\S]*\.claude\/plugins\/simpsonm09-org-ai-plugin[\s\S]*ARG=--fixture\nARG=two words/);
-      const piText = readFileSync(piWrapper, 'utf8');
-      assert.doesNotMatch(piText, /\r|\uFEFF/);
-      assert.notEqual(statSync(piWrapper).mode & 0o111, 0);
-      const piInvocation = spawnSync(bash, [piWrapper, '--fixture', 'two words'], { windowsHide: true, cwd: repoRoot, encoding: 'utf8', env: { ...process.env, PATH: `${ctx.base}:${process.env.PATH ?? ''}` } });
-      assert.equal(piInvocation.status, 0, `${piInvocation.stdout}\n${piInvocation.stderr}`);
-      assert.match(piInvocation.stdout, /AGENT_DIR=.*\.pi\/agent[\s\S]*ARG=--fixture\nARG=two words/);
-    } else {
-      const cmdText = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd'), 'utf8');
-      const shText = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh'), 'utf8');
-      assert.match(cmdText, /\r\nset "AGENT_ACCESS_COPILOT_ASK=allow"\r\n/);
-      assert.match(cmdText, /--plugin-dir .*pstack.*--plugin-dir .*simpsonm09-org-ai-plugin/);
-      assert.match(shText, /See copilot\.cmd\./);
-      assert.ok(!cmdText.startsWith('\uFEFF') && !shText.startsWith('\uFEFF'));
-    }
+    assertPlatformWrappers(ctx, wrapper, piWrapper);
 
     const clean = runStatus(ctx, ['-Strict', '-CopilotCommand', copilot, '-PiCommand', pi]);
     assert.equal(clean.status, 0, clean.stderr);
