@@ -128,14 +128,9 @@ function Get-CodexRecord {
 }
 
 function Assert-CodexSkillsPath {
+    # Folders above the workspace are the user's choice and may be system links (macOS /var is a
+    # link to /private/var), so only the folders below it are checked, as the Cursor installer does.
     $workspace = [IO.Path]::GetFullPath($Workspace)
-    $root = [IO.Path]::GetPathRoot($workspace)
-    $current = $root
-    $relative = [IO.Path]::GetRelativePath($root, $workspace)
-    foreach ($segment in $relative.Split([IO.Path]::DirectorySeparatorChar, [StringSplitOptions]::RemoveEmptyEntries)) {
-        $current = Join-Path $current $segment
-        if ((Test-Path -LiteralPath $current) -and (Test-ReparsePoint $current)) { throw "Workspace path '$current' is a link or reparse point, so nothing was written." }
-    }
     $current = $workspace
     foreach ($segment in @('.agents', 'skills')) {
         $current = Join-Path $current $segment
