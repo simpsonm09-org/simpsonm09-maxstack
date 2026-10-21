@@ -24,8 +24,8 @@ Evidence rules:
 
 Pins:
 
-- maxstack pins pstack at commit `b85ef6356a65e24b951c3411222452733e0c387c` on branch `main` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
-- The `pstack-max` checkout at `pstack-max` is on `main` at the pinned commit `b85ef6356a65e24b951c3411222452733e0c387c`. Where the pin and upstream `main` differ, the row says so (see G7).
+- maxstack pins pstack at commit `671d84b7eb799c2c38ec39b11deac54a45d524fb` on branch `main` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
+- The `pstack-max` checkout at `pstack-max` is on `main` at the pinned commit `671d84b7eb799c2c38ec39b11deac54a45d524fb`. Where the pin and upstream `main` differ, the row says so (see G7).
 
 Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex, Cursor, and Antigravity are opt-in. Codex installs skills and instructions only; its Launch argument selects the workspace project root, and its gate definition lives in owned `.codex/config.toml` (rows 2.1, 2.2, and 2.8). Cursor copies skills only into the explicit workspace root's `.cursor/skills`, and its gate definition lives in owned `.cursor/hooks.json` when a selected layer ships one. Antigravity shares the Codex skill projection under `.agents/skills`, and its gate definition lives in owned `.agents/hooks.json` when a selected layer ships one. Install at the active project root when a nested repository needs its own skill files.
 
