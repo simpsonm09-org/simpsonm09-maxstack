@@ -238,15 +238,15 @@ Verified: `codex debug prompt-input` from a nested repository reads the generate
 
 The opt-in `cursor` runtime copies selected layer skills into `.cursor\skills`. Cursor reads that folder and the generated root `AGENTS.md` when the workspace root is its active project. If a nested repository is the active project, set `-Workspace` to that repository and use the existing local source overrides for sibling layer checkouts. Cursor does not inherit the parent's generated files. If an unowned root `AGENTS.md` blocks generation, the installer keeps it and writes `.maxstack\workspace-instructions.md`; reference that fallback from your own instructions to load it. The fallback is not consumed automatically.
 
-The opt-in `antigravity` runtime copies selected layer skills into `.agents\skills`, shared with Codex. Google documents this workspace location for the Antigravity app, CLI, and IDE. When a selected layer ships the Antigravity gate hook, the installer also writes an owned `.agents\hooks.json` whose command runs the adapter by absolute path. The installer does not configure Antigravity rules, plugins, models, or global settings. Skill loading and the gate hook remain unverified through a live T3 Antigravity session. See [Antigravity skills](features/antigravity.md).
+The opt-in `antigravity` runtime copies selected layer skills into `.agents\skills`, shared with Codex. Google documents this workspace location for the Antigravity app, CLI, and IDE. When a selected layer ships the Antigravity gate hook, the installer also writes an owned `.agents\hooks.json` whose command runs the adapter by absolute path. The installer does not configure Antigravity rules, plugins, models, or global settings. The live probe 2026-10-21 ran three T3 Antigravity sessions on Windows 11. They loaded skills from user-global `~/.gemini/config/skills`, but no workspace skills, workspace instructions, or gate hook. The denied probe write reached GitHub (HTTP 404). Keep Antigravity in `t3.readOnlyInstances` as a read-only helper. A standalone Antigravity app or CLI session in the workspace is untested. See [Antigravity skills](features/antigravity.md).
 
-Cursor has no plugin delivery or layer agent delivery. When a selected layer ships the Cursor gate hook, the installer writes an owned `.cursor\hooks.json` whose command runs the adapter by absolute path. Its live skill load, gate hook, and T3 session remain unverified.
+Cursor has no plugin delivery or layer agent delivery. When a selected layer ships the Cursor gate hook, the installer writes an owned `.cursor\hooks.json` whose command runs the adapter by absolute path. Its live skill load, gate hook, and T3 session remain unverified. The live probe 2026-10-21 stopped at the free plan limit: "Upgrade your plan to continue". Fed a documented `beforeShellExecution` payload by hand, the installed hook command returned `permission: deny` with the catalog denial reason.
 
-Measured: Cursor documentation and T3 source describe active-project discovery; a live session has not verified this install. No Antigravity session was authenticated or run.
+In T3 Antigravity, neither workspace `.agents/hooks.json` nor the per-provider config folder's `hooks.json` loaded the hook. The session cwd was the trusted workspace, and `run_command` arguments matched the adapter. Fed by hand, the installed adapter denied correctly.
 
 ## Not set up
 
-Cursor and Antigravity have no instance or wrapper here.
+Cursor and Antigravity have T3 instances. Cursor remains unverified because of the plan limit; Antigravity is a read-only helper without workspace skills, instructions, or the gate.
 
 ## Checks
 

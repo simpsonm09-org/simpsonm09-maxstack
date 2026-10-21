@@ -16,4 +16,6 @@ Antigravity uses the same layer skill sources and workspace folders as Codex. Wh
 
 ## Scope
 
-This runtime installs skills, and, when a selected layer ships the Antigravity gate hook, an owned `.agents\hooks.json` whose command runs the adapter by absolute path. It does not install Antigravity rules, plugins, model settings, or global files. maxstack has not verified skill loading or the gate hook through a live T3 Antigravity session.
+This runtime installs skills, and, when a selected layer ships the Antigravity gate hook, an owned `.agents\hooks.json` whose command runs the adapter by absolute path. It does not install Antigravity rules, plugins, model settings, or global files. The live probe 2026-10-21 ran three T3 Antigravity sessions on Windows 11. They loaded user-global skills from `~/.gemini/config/skills`, but no workspace skills, workspace instructions, or gate. The probe write reached GitHub (HTTP 404).
+
+Neither workspace `.agents/hooks.json` nor T3's per-provider config folder `hooks.json` loaded the hook. The workspace was trusted, the session cwd was the workspace, and `run_command` arguments matched the adapter. Fed by hand, the installed adapter denied correctly. Keep Antigravity in `t3.readOnlyInstances` as a read-only helper. A standalone Antigravity app or CLI session in the workspace is untested.
