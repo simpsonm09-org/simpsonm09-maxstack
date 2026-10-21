@@ -16,4 +16,4 @@ Antigravity uses the same layer skill sources and workspace folders as Codex. Wh
 
 ## Scope
 
-This runtime installs skills only. It does not install Antigravity rules, hooks, plugins, model settings, or global files. maxstack has not verified skill loading through a live T3 Antigravity session.
+This runtime installs skills, and, when a selected layer ships the Antigravity gate hook, an owned `.agents\hooks.json` whose command runs the adapter by absolute path. It does not install Antigravity rules, plugins, model settings, or global files. maxstack has not verified skill loading or the gate hook through a live T3 Antigravity session.

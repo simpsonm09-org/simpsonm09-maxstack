@@ -264,7 +264,11 @@ def owned_runtime(path: str) -> str | None:
         return "codex"
     if path == ".codex/config.toml":
         return "codex"
+    if path == ".agents/hooks.json":
+        return "antigravity"
     if path.startswith(".cursor/skills/"):
+        return "cursor"
+    if path == ".cursor/hooks.json":
         return "cursor"
     if path.startswith(".claude/plugins/"):
         return "claude"

@@ -161,7 +161,7 @@ $retiredOpenCodeFolders = @('pstack-opencode')
 # each record's runtime and layers, which -Remove and -Uninstall need to pick the records to delete.
 $ownedSchemaVersion = 2
 # File outputs whose creation state is recorded for uninstall. Config and Pi settings can also have backups.
-$replacedFileNames = @('opencode.jsonc', '.pi/agent/settings.json', 'AGENTS.md', 'CLAUDE.md', '.maxstack/workspace-instructions.md', '.pstack/pstack-t3-instances.json', '.codex/config.toml')
+$replacedFileNames = @('opencode.jsonc', '.pi/agent/settings.json', 'AGENTS.md', 'CLAUDE.md', '.maxstack/workspace-instructions.md', '.pstack/pstack-t3-instances.json', '.codex/config.toml', '.cursor/hooks.json', '.agents/hooks.json')
 
 # The text an installed profile holds once its model line is removed, or $null when the profile
 # has no frontmatter, which leaves the copy as it is.
@@ -799,8 +799,9 @@ $runtimeArtifacts = @{
     # The codex skill folders sit in .agents\skills, which other tools also read, so no top-level path is judged by the
     # selection. Only the records the lock holds for codex are.
     codex    = @('.codex/config.toml')
-    cursor   = @('.cursor/skills')
-    antigravity = @()
+    cursor   = @('.cursor/skills', '.cursor/hooks.json')
+    # The Antigravity gate hook shares .agents with the Codex and Antigravity skills, so only its own file is judged.
+    antigravity = @('.agents/hooks.json')
 }
 
 # The names a -Runtimes or -Layers value picks. A value splits on commas, and all picks every name.
@@ -961,7 +962,8 @@ function Get-OwnedRuntime {
     if ((Test-OrdinalIn $Path @('.maxstack/bin/copilot.cmd', '.maxstack/bin/copilot.sh'))) { return 'copilot' }
     if ($Path.StartsWith('.maxstack/bin/pi.', [StringComparison]::Ordinal) -or $Path.StartsWith('.pi/', [StringComparison]::Ordinal)) { return 'pi' }
     if ($Path.StartsWith('.agents/skills/', [StringComparison]::Ordinal) -or (Test-OrdinalEqual $Path '.codex/config.toml')) { return 'codex' }
-    if ($Path.StartsWith('.cursor/skills/', [StringComparison]::Ordinal)) { return 'cursor' }
+    if ((Test-OrdinalEqual $Path '.agents/hooks.json')) { return 'antigravity' }
+    if ($Path.StartsWith('.cursor/skills/', [StringComparison]::Ordinal) -or (Test-OrdinalEqual $Path '.cursor/hooks.json')) { return 'cursor' }
     if ((Test-OrdinalEqual $Path '.pstack/pstack-t3-instances.json')) { return 't3-gated-instances' }
     return $null
 }
@@ -1914,7 +1916,7 @@ function Get-OwnedPlan {
         [string[]] $SkillRuntimeClaims = @('codex'),
         [object[]] $CursorSkills = @(),
         [object[]] $WorkspaceInstructionFiles = @(),
-        $CodexHookConfigPlan = $null
+        [object[]] $AgentHookPlans = @()
     )
 
     $records = [System.Collections.Generic.List[object]]::new()
@@ -2008,16 +2010,18 @@ function Get-OwnedPlan {
         }
     }
 
-    if ($null -ne $CodexHookConfigPlan -and -not (Test-IsTrue (Get-Field $CodexHookConfigPlan 'remove'))) {
-        if (Test-IsTrue (Get-Field $CodexHookConfigPlan 'preserve')) {
-            $priorHook = Get-PriorOwnedFileRecord $CodexHookConfigPlan.path
+    foreach ($hookPlan in @($AgentHookPlans | Where-Object { $null -ne $_ })) {
+        if (Test-IsTrue (Get-Field $hookPlan 'remove')) { continue }
+        if (Test-IsTrue (Get-Field $hookPlan 'preserve')) {
+            $priorHook = Get-PriorOwnedFileRecord $hookPlan.path
             if ($null -ne $priorHook) {
-                $preservedHook = [pscustomobject]@{ path = $priorHook.path; kind = $priorHook.kind; sha256 = $priorHook.sha256; runtime = $priorHook.runtime; layers = @($priorHook.layers); preserve = $true; hookHash = (Get-Field $priorHook 'hookHash') }
+                $preservedHook = [pscustomobject]@{ path = $priorHook.path; kind = $priorHook.kind; sha256 = $priorHook.sha256; runtime = $priorHook.runtime; layers = @($priorHook.layers); preserve = $true }
+                if ($null -ne (Get-Field $priorHook 'hookHash')) { $preservedHook | Add-Member -NotePropertyName hookHash -NotePropertyValue (Get-Field $priorHook 'hookHash') }
                 $records.Add($preservedHook)
             }
         } else {
-            $hookRecord = New-OwnedRecord -Path $CodexHookConfigPlan.path -Kind 'file' -Sha256 $CodexHookConfigPlan.sha256 -Runtime 'codex' -Layers @($CodexHookConfigPlan.layers)
-            if ($null -ne $CodexHookConfigPlan.hookHash) { $hookRecord | Add-Member -NotePropertyName hookHash -NotePropertyValue $CodexHookConfigPlan.hookHash }
+            $hookRecord = New-OwnedRecord -Path $hookPlan.path -Kind 'file' -Sha256 $hookPlan.sha256 -Runtime $hookPlan.runtime -Layers @($hookPlan.layers)
+            if ($null -ne (Get-Field $hookPlan 'hookHash')) { $hookRecord | Add-Member -NotePropertyName hookHash -NotePropertyValue $hookPlan.hookHash }
             $records.Add($hookRecord)
         }
     }
@@ -3696,15 +3700,22 @@ if ($removing) { $t3InstancesPlan = $null }
 $codexSkills = @()
 $cursorSkills = @()
 $codexHookConfigPlan = $null
+$cursorHookConfigPlan = $null
+$antigravityHookConfigPlan = $null
 if ($codexSelected -or $antigravitySelected) {
     $codexSkills = @(Get-LayerSkills -Layers $layers)
-    if ($codexSelected -and -not ($removing -or $uninstalling)) { $codexHookConfigPlan = Get-CodexHookConfigPlan -Layers $layers }
     if ($Apply) { Assert-CodexSkillTargets -Skills $codexSkills -Owned $priorOwned -PreserveModified:$antigravitySelected }
 }
 if ($cursorSelected) {
     $cursorSkills = @(Get-LayerSkills -Layers $layers -Runtime 'cursor')
     if ($Apply) { Assert-CursorSkillTargets -Skills $cursorSkills -Owned $priorOwned }
 }
+# A gate hook is planned whenever its runtime stays selected, so a removal that leaves the runtime keeps its record.
+# An uninstall removes every record, so it plans none. Codex keeps its older rule and plans none during a removal.
+if ($codexSelected -and -not ($removing -or $uninstalling)) { $codexHookConfigPlan = Get-CodexHookConfigPlan -Layers $layers }
+if ($cursorSelected -and -not $uninstalling) { $cursorHookConfigPlan = Get-CursorHookConfigPlan -Layers $layers }
+if ($antigravitySelected -and -not $uninstalling) { $antigravityHookConfigPlan = Get-AntigravityHookConfigPlan -Layers $layers }
+$agentHookPlans = @(@($codexHookConfigPlan, $cursorHookConfigPlan, $antigravityHookConfigPlan) | Where-Object { $null -ne $_ })
 
 $claudeRecords = @($layers | ForEach-Object { Get-ClaudeRecord $_ } | Where-Object { $null -ne $_ })
 
@@ -3892,7 +3903,7 @@ if ($Apply -or $removing -or $updating -or ($null -ne $priorOwned)) {
         -OpenCodeSpecs $openCodeSpecs -CopilotCmdText $copilotCmdText -CopilotShText $copilotShText `
         -PiCmdText $piCmdText -PiShText $piShText -PiSettings $piSettings -PiPending $piPending -PiUnknown $piUnknown `
         -CodexSkills $codexSkills -SkillRuntimeClaims @(if ($codexSelected) { 'codex' }; if ($antigravitySelected) { 'antigravity' }) `
-        -CursorSkills $cursorSkills -WorkspaceInstructionFiles $workspaceInstructionFiles -CodexHookConfigPlan $codexHookConfigPlan
+        -CursorSkills $cursorSkills -WorkspaceInstructionFiles $workspaceInstructionFiles -AgentHookPlans $agentHookPlans
     if ($null -ne $t3InstancesPlan) { $plan += [pscustomobject]@{ path = $t3InstancesPlan.path; kind = 'file'; sha256 = $t3InstancesPlan.sha256; runtime = $t3InstancesPlan.runtime; layers = @($t3InstancesPlan.layers); preserve = $t3InstancesPlan.preserve } }
 }
 $priorT3Snapshot = @($priorOwned | Where-Object { (Test-OrdinalEqual (Get-Field $_ 'path') '.maxstack/t3/settings.snapshot.json') -and (Test-OrdinalEqual (Get-Field $_ 'kind') 'file') })
@@ -4269,7 +4280,10 @@ if ($piKept) {
 # codex's skill folders come after the Pi wrappers, and before the lock records what was written.
 if ($Apply -and ($codexSelected -or $antigravitySelected) -and -not ($removing -or $uninstalling)) { Write-CodexSkills -Skills $codexSkills -Owned $priorOwned -RemoveStale $true }
 if ($Apply -and $cursorSelected) { Write-CursorSkills -Skills $cursorSkills -Owned $priorOwned -RemoveStale (-not $removing) }
-if ($Apply -and $codexSelected -and -not $removing) { Write-CodexHookConfig -Plan $codexHookConfigPlan }
+if ($Apply -and $codexSelected -and -not $removing) { Write-GateHookConfig -Plan $codexHookConfigPlan }
+# Cursor and Antigravity rewrite their hook during a removal that keeps the runtime, so the record matches the disk.
+if ($Apply -and $cursorSelected) { Write-GateHookConfig -Plan $cursorHookConfigPlan }
+if ($Apply -and $antigravitySelected) { Write-GateHookConfig -Plan $antigravityHookConfigPlan }
 
 $claudeByLayer = [hashtable]::new([StringComparer]::Ordinal)
 foreach ($record in $claudeRecords) { $claudeByLayer[$record.layer] = $record }

@@ -3,10 +3,36 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { MISSING_COPILOT, buildWorkspace, lockPath, readJson, removal, repoRoot, runInstaller, runStatus, shell, skip, snapshotTree, statusRows, writeLayers } from './lib/installer-test-kit.mjs';
+import { MISSING_COPILOT, buildWorkspace, lockPath, readJson, removal, repoRoot, runInstaller, runStatus, shell, skip, snapshotTree, statusRows, writeFile, writeLayers } from './lib/installer-test-kit.mjs';
 
 const posix = process.platform !== 'win32';
 const bash = posix ? 'bash' : join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'usr', 'bin', 'bash.exe');
+
+const ORG_STUB = 'projects/repos/simpsonm09-org-ai-plugin';
+
+const posixPath = (path) => path.replaceAll('\\', '/');
+
+const CURSOR_DEFINITION = `${JSON.stringify({
+  version: 1,
+  hooks: { beforeShellExecution: [{ command: 'node hooks/cursor.mjs', timeout: 30, failClosed: true }] },
+}, null, 2)}\n`;
+
+const ANTIGRAVITY_DEFINITION = `${JSON.stringify({
+  hooks: { PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: 'node hooks/antigravity.mjs', timeout: 30 }] }] },
+}, null, 2)}\n`;
+
+// The org layer stub ships both gate definitions and their adapters, and lists hooks among its OpenCode items so the
+// installed copy carries them. The definitions name the adapter relative to the plugin folder, as the org plugin does.
+function addGateHooks(ctx) {
+  const root = join(ctx.workspace, ORG_STUB);
+  const layer = readJson(join(root, 'layer.json'));
+  if (!layer.files.includes('hooks')) layer.files.push('hooks');
+  writeFileSync(join(root, 'layer.json'), JSON.stringify(layer));
+  writeFile(root, 'hooks/cursor-hooks.json', CURSOR_DEFINITION);
+  writeFile(root, 'hooks/cursor.mjs', 'process.exit(0);\n');
+  writeFile(root, 'hooks/antigravity-hooks.json', ANTIGRAVITY_DEFINITION);
+  writeFile(root, 'hooks/antigravity.mjs', 'process.exit(0);\n');
+}
 
 // The wrappers each platform writes: executable LF shell scripts on POSIX, and the .cmd
 // pair on Windows.
@@ -39,6 +65,7 @@ function assertPlatformWrappers(ctx, wrapper, piWrapper) {
 test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owned files', { skip }, () => {
   const ctx = buildWorkspace();
   try {
+    addGateHooks(ctx);
     const copilot = join(ctx.base, posix ? 'copilot' : 'copilot.cmd');
     const pi = posix ? join(ctx.base, 'pi') : ctx.fakePi;
     writeFileSync(copilot, posix ? '#!/bin/sh\nprintf "ASK=%s\\n" "$AGENT_ACCESS_COPILOT_ASK"\nfor arg in "$@"; do printf "ARG=%s\\n" "$arg"; done\n' : '@echo off\r\necho ASK=%AGENT_ACCESS_COPILOT_ASK%\r\necho ARGS=%*\r\n');
@@ -66,6 +93,14 @@ test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owne
     assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'pstack', 'opencode', 'index.ts')));
     assert.ok(existsSync(join(ctx.workspace, '.agents', 'skills', 'demo-skill', 'SKILL.md')));
     assert.ok(existsSync(join(ctx.workspace, '.cursor', 'skills', 'demo-skill', 'SKILL.md')));
+    // OpenCode is selected, so both gate hooks run the adapter from its installed copy of the org layer.
+    const cursorHook = join(ctx.workspace, '.cursor', 'hooks.json');
+    const antigravityHook = join(ctx.workspace, '.agents', 'hooks.json');
+    const installedHooks = posixPath(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'hooks'));
+    assert.ok(existsSync(cursorHook), 'the cursor gate hook was not written');
+    assert.ok(existsSync(antigravityHook), 'the antigravity gate hook was not written');
+    assert.equal(readJson(cursorHook).hooks.beforeShellExecution[0].command, `node "${installedHooks}/cursor.mjs"`);
+    assert.equal(readJson(antigravityHook).hooks.PreToolUse[0].hooks[0].command, `node "${installedHooks}/antigravity.mjs"`);
     assertPlatformWrappers(ctx, wrapper, piWrapper);
 
     const clean = runStatus(ctx, ['-Strict', '-CopilotCommand', copilot, '-PiCommand', pi]);
@@ -87,11 +122,15 @@ test('Claude and Copilot lifecycle uses the platform wrappers and leaves no owne
     assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'pstack', 'opencode', 'index.ts')));
     assert.ok(existsSync(join(ctx.workspace, '.agents', 'skills', 'demo-skill', 'SKILL.md')));
     assert.ok(existsSync(join(ctx.workspace, '.cursor', 'skills', 'demo-skill', 'SKILL.md')));
+    assert.ok(existsSync(cursorHook), 'removing copilot removed the cursor gate hook');
+    assert.ok(existsSync(antigravityHook), 'removing copilot removed the antigravity gate hook');
     assert.equal(runStatus(ctx).status, 0);
 
     const ownedPaths = readJson(lockPath(ctx)).owned.map((record) => record.path);
     const uninstalled = removal(ctx, ['-Uninstall']);
     assert.equal(uninstalled.status, 0, `${uninstalled.stdout}\n${uninstalled.stderr}`);
+    assert.equal(existsSync(cursorHook), false, 'uninstall left the cursor gate hook');
+    assert.equal(existsSync(antigravityHook), false, 'uninstall left the antigravity gate hook');
     for (const path of ownedPaths) assert.equal(existsSync(join(ctx.workspace, ...path.split('/'))), false, `${path} remains owned`);
     assert.equal(existsSync(lockPath(ctx)), false);
   } finally {
