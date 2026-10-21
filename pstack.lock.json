@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/simpsonm09/pstack-max.git",
   "path": "plugins/pstack",
-  "commit": "b85ef6356a65e24b951c3411222452733e0c387c",
+  "commit": "671d84b7eb799c2c38ec39b11deac54a45d524fb",
   "ref": "main",
   "notes": "The one pin for the pstack plugin, in every runtime: Claude Code, OpenCode, and GitHub Copilot CLI. The installer syncs path at exactly commit from the fork into a cache and copies it from there. The same values sit in the pstack layer's source block in layers.json; scripts/verify-manifests.py checks that they agree. --online also checks that ref still points at commit."
 }
