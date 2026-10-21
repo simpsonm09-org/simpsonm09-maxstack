@@ -36,8 +36,9 @@ test('Cursor and Antigravity setup documents the opt-in skills target and remain
   assert.match(section, /workspace root/);
   assert.match(section, /\.cursor\\skills/);
   assert.match(section, /not consumed automatically/);
-  assert.match(section, /no gate/);
-  assert.match(section, /live skill load and T3 session remain unverified/);
+  assert.match(section, /owned `\.cursor\\hooks\.json` whose command runs the adapter by absolute path/);
+  assert.match(section, /owned `\.agents\\hooks\.json` whose command runs the adapter by absolute path/);
+  assert.match(section, /live skill load, gate hook, and T3 session remain unverified/);
 });
 
 test('finding F9/F10: dependency size and all generated runtime folders are documented', () => {
