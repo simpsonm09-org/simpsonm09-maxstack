@@ -3,6 +3,9 @@
 # Each folder is recorded as one owned path so apply, status, remove, and uninstall use the common lock lifecycle.
 
 $script:CursorSkillFolder = '.cursor/skills'
+# The Cursor gate hook: a version-1 .cursor/hooks.json whose beforeShellExecution command runs the installed adapter.
+$script:CursorHookConfigPath = '.cursor/hooks.json'
+$script:CursorHookDefinition = 'hooks/cursor-hooks.json'
 
 function Get-CursorRecord {
     param([object[]] $Owned, [string] $Relative)
@@ -124,4 +127,11 @@ function Write-CursorSkills {
         Copy-SkillTree -Source $skill.source -Destination $full
         Write-Host "Copied cursor skill '$($skill.name)' from layer '$($skill.layer)' into $full"
     }
+}
+
+# The Cursor gate hook plan, owned like the Codex config: a changed copy or one maxstack did not write is kept.
+function Get-CursorHookConfigPlan {
+    param([object[]] $Layers)
+
+    return Get-GateHookConfigPlan -Layers $Layers -Runtime 'cursor' -Relative $script:CursorHookConfigPath -Definition $script:CursorHookDefinition -Label 'Cursor'
 }

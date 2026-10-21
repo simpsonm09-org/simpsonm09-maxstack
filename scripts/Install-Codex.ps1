@@ -232,6 +232,43 @@ function Get-CodexGateFolder {
     return (Join-MaxstackPath $Workspace ($script:CodexGateFolder + '/' + $Layer.name))
 }
 
+# The folder a gate definition is read from: the layer root when it is known, then the installed OpenCode copy, then
+# the Claude plugin folder. A definition that none of them holds is not installed.
+function Get-GateSourceFolder {
+    param([object] $Layer, [string] $Definition)
+
+    $folders = [System.Collections.Generic.List[string]]::new()
+    if ($null -ne $Layer.root) { $folders.Add($Layer.root) }
+    $folders.Add((Join-MaxstackPath $Workspace ($script:CodexGateFolder + '/' + $Layer.name)))
+    $folders.Add((Join-MaxstackPath $Workspace ('.claude/plugins/' + $Layer.name)))
+    foreach ($folder in $folders) {
+        if (Test-Path -LiteralPath (Join-MaxstackPath $folder $Definition) -PathType Leaf) { return $folder }
+    }
+    return $null
+}
+
+# The folder a gate hook's command runs the adapter from: the installed OpenCode copy when OpenCode is selected, the
+# Claude plugin folder when only Claude is, and the layer root when neither runtime writes an installed copy.
+function Get-GatePluginFolder {
+    param([object] $Layer)
+
+    if ($openCodeSelected -and $Layer.runtimes.ContainsKey('opencode')) { return (Join-MaxstackPath $Workspace ($script:CodexGateFolder + '/' + $Layer.name)) }
+    if ($claudeSelected -and $Layer.runtimes.ContainsKey('claude')) { return (Join-MaxstackPath $Workspace ('.claude/plugins/' + $Layer.name)) }
+    return $Layer.root
+}
+
+# The selected layers whose copy carries a gate definition, in layer order, for the runtimes that take part.
+function Get-GateHookLayers {
+    param([object[]] $Layers, [string] $Runtime, [string] $Definition)
+
+    $found = [System.Collections.Generic.List[object]]::new()
+    foreach ($layer in @($Layers | Where-Object { $_.runtimes.ContainsKey($Runtime) })) {
+        if ($null -eq (Get-GateSourceFolder -Layer $layer -Definition $Definition)) { continue }
+        $found.Add($layer)
+    }
+    return $found.ToArray()
+}
+
 # The selected layers whose installed copy carries a Codex gate hook: the hook script and the codex runtime library.
 # A layer is checked in layer order, and only the layers that selected codex take part.
 function Get-CodexGateLayers {
@@ -248,6 +285,78 @@ function Get-CodexGateLayers {
     return $found.ToArray()
 }
 
+# Rewrites each command in a gate definition to run the adapter by absolute path. A definition writes its command as
+# `node <adapter relative to the plugin folder>`, and any arguments after the adapter are kept. The adapter is checked
+# in the source folder, because the installed copy is written later in the run and does not exist yet on a first apply.
+function Set-GateHookCommand {
+    param($Value, [string] $Folder, [string] $Source)
+
+    if ($null -eq $Value) { return }
+    if ($Value -is [System.Collections.IList]) {
+        foreach ($item in $Value) { Set-GateHookCommand -Value $item -Folder $Folder -Source $Source }
+        return
+    }
+    if ($Value -isnot [System.Management.Automation.PSCustomObject]) { return }
+    foreach ($property in @($Value.PSObject.Properties)) {
+        if ((Test-OrdinalEqual $property.Name 'command') -and ($property.Value -is [string])) {
+            $match = [regex]::Match($property.Value, '^node\s+(?<script>\S+)(?<rest>.*)$')
+            if (-not $match.Success) { continue }
+            $script = $match.Groups['script'].Value.Trim('"', "'")
+            if (-not (Test-Path -LiteralPath (Join-MaxstackPath $Source $script) -PathType Leaf)) {
+                throw "A gate definition names '$script', which is not in '$Source', so nothing was written."
+            }
+            $adapter = Join-MaxstackPath $Folder $script
+            $property.Value = 'node "' + $adapter.Replace('\', '/') + '"' + $match.Groups['rest'].Value
+            continue
+        }
+        Set-GateHookCommand -Value $property.Value -Folder $Folder -Source $Source
+    }
+}
+
+# The plan for a gate hook file. It follows the Codex config plan: an unchanged owned file is rewritten, a changed one
+# or one maxstack did not write is kept, and a definition that no layer ships now removes an unchanged owned file.
+function Get-GateHookConfigPlan {
+    param(
+        [object[]] $Layers,
+        [string] $Runtime,
+        [string] $Relative,
+        [string] $Definition,
+        [string] $Label
+    )
+
+    $full = Join-Path $Workspace ($Relative -replace '/', '\')
+    $prior = Get-PriorOwnedFileRecord $Relative
+    $gateLayers = @(Get-GateHookLayers -Layers $Layers -Runtime $Runtime -Definition $Definition)
+    if ($gateLayers.Count -eq 0) {
+        if ($null -eq $prior) { return $null }
+        if ((Test-Path -LiteralPath $full) -and ((Test-ReparsePoint $full) -or (-not (Test-Path -LiteralPath $full -PathType Leaf)) -or (-not (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $prior.sha256)))) {
+            Write-Host "Kept ${Relative}: it changed since the last apply, so it was not removed."
+            return [pscustomobject]@{ path = $Relative; text = $null; sha256 = $prior.sha256; runtime = $Runtime; layers = @($prior.layers); preserve = $true; label = $Label; remove = $true }
+        }
+        return [pscustomobject]@{ path = $Relative; text = $null; sha256 = $prior.sha256; runtime = $Runtime; layers = @($prior.layers); label = $Label; remove = $true }
+    }
+    if ((Test-Path -LiteralPath $full) -and $null -eq $prior) {
+        Write-Host "Kept ${Relative}: it exists and was not written by maxstack; add the $Label gate hook by hand."
+        return $null
+    }
+    $preserve = $false
+    if ((Test-Path -LiteralPath $full) -and $null -ne $prior) {
+        $preserve = (Test-ReparsePoint $full) -or (-not (Test-Path -LiteralPath $full -PathType Leaf))
+        if (-not $preserve) { $preserve = -not (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $prior.sha256) }
+    }
+    if ($preserve) {
+        Write-Host "Kept ${Relative}: it changed since the last apply, so it was not overwritten."
+        return [pscustomobject]@{ path = $Relative; text = $null; sha256 = $prior.sha256; runtime = $Runtime; layers = @($prior.layers); preserve = $true; label = $Label }
+    }
+    $layer = $gateLayers[0]
+    $source = Get-GateSourceFolder -Layer $layer -Definition $Definition
+    $folder = Get-GatePluginFolder -Layer $layer
+    $definitionJson = Get-Content -LiteralPath (Join-MaxstackPath $source $Definition) -Raw | ConvertFrom-Json
+    Set-GateHookCommand -Value $definitionJson -Folder $folder -Source $source
+    $text = (ConvertTo-Json -InputObject $definitionJson -Depth 20).Replace("`r`n", "`n").Replace("`r", "`n") + "`n"
+    return [pscustomobject]@{ path = $Relative; text = $text; sha256 = Get-TextSha256 $text; runtime = $Runtime; layers = @($layer.name); preserve = $false; label = $Label }
+}
+
 function Get-CodexHookConfigPlan {
     param([object[]] $Layers)
 
@@ -259,9 +368,9 @@ function Get-CodexHookConfigPlan {
         if ($null -eq $prior) { return $null }
         if ((Test-Path -LiteralPath $full) -and ((Test-ReparsePoint $full) -or (-not (Test-Path -LiteralPath $full -PathType Leaf)) -or (-not (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $prior.sha256)))) {
             Write-Host 'Kept .codex/config.toml: it changed since the last apply, so it was not removed.'
-            return [pscustomobject]@{ path = $relative; text = $null; sha256 = $prior.sha256; runtime = 'codex'; layers = @($prior.layers); preserve = $true; hookHash = (Get-Field $prior 'hookHash'); remove = $true }
+            return [pscustomobject]@{ path = $relative; text = $null; sha256 = $prior.sha256; runtime = 'codex'; layers = @($prior.layers); preserve = $true; label = 'Codex'; hookHash = (Get-Field $prior 'hookHash'); remove = $true }
         }
-        return [pscustomobject]@{ path = $relative; text = $null; sha256 = $prior.sha256; runtime = 'codex'; layers = @($prior.layers); remove = $true }
+        return [pscustomobject]@{ path = $relative; text = $null; sha256 = $prior.sha256; runtime = 'codex'; layers = @($prior.layers); label = 'Codex'; remove = $true }
     }
     if ((Test-Path -LiteralPath $full) -and $null -eq $prior) {
         Write-Host 'Kept .codex/config.toml: it exists and was not written by maxstack; add the Codex gate hook by hand.'
@@ -274,7 +383,7 @@ function Get-CodexHookConfigPlan {
     }
     if ($preserve) {
         Write-Host 'Kept .codex/config.toml: it changed since the last apply, so it was not overwritten.'
-        return [pscustomobject]@{ path = $relative; text = $null; sha256 = $prior.sha256; runtime = 'codex'; layers = @($prior.layers); preserve = $true; hookHash = (Get-Field $prior 'hookHash') }
+        return [pscustomobject]@{ path = $relative; text = $null; sha256 = $prior.sha256; runtime = 'codex'; layers = @($prior.layers); preserve = $true; label = 'Codex'; hookHash = (Get-Field $prior 'hookHash') }
     }
     $layer = $gateLayers[0]
     $hook = Join-Path (Get-CodexGateFolder -Layer $layer) ($script:CodexGateHookRelative -replace '/', '\')
@@ -291,30 +400,39 @@ function Get-CodexHookConfigPlan {
         } else { Write-Warning "Codex could not report the hook hash; the hook file will still be written: $(($output -join ' ').Trim())" }
     }
     if ($null -eq $hookHash -and $null -ne $prior) { $hookHash = Get-Field $prior 'hookHash' }
-    return [pscustomobject]@{ path = $relative; text = $text; sha256 = Get-TextSha256 $text; runtime = 'codex'; layers = @($layer.name); preserve = $false; hookHash = $hookHash }
+    return [pscustomobject]@{ path = $relative; text = $text; sha256 = Get-TextSha256 $text; runtime = 'codex'; layers = @($layer.name); preserve = $false; label = 'Codex'; hookHash = $hookHash }
 }
 
-function Write-CodexHookConfig {
+# Antigravity's gate hook lives in the shared .agents folder, beside the skills Codex and Antigravity read.
+function Get-AntigravityHookConfigPlan {
+    param([object[]] $Layers)
+
+    return Get-GateHookConfigPlan -Layers $Layers -Runtime 'antigravity' -Relative '.agents/hooks.json' -Definition 'hooks/antigravity-hooks.json' -Label 'Antigravity'
+}
+
+# Writes, keeps, or removes one gate hook file from its plan. A changed file or one maxstack did not write is kept.
+function Write-GateHookConfig {
     param($Plan)
 
-    $relative = $script:CodexConfigPath
+    if ($null -eq $Plan) { return }
+    $relative = [string] (Get-Field $Plan 'path')
+    $label = [string] (Get-Field $Plan 'label')
     $full = Join-Path $Workspace ($relative -replace '/', '\')
     $prior = Get-PriorOwnedFileRecord $relative
-    if ($null -eq $Plan) { return }
     if (Test-IsTrue (Get-Field $Plan 'preserve')) { return }
     if (Test-IsTrue (Get-Field $Plan 'remove')) {
         if ($null -eq $prior -or -not (Test-Path -LiteralPath $full -PathType Leaf)) { return }
         Remove-Item -LiteralPath $full -Force
-        Write-Host 'Removed .codex/config.toml: no selected layer ships a Codex gate hook.'
+        Write-Host "Removed ${relative}: no selected layer ships a $label gate hook."
         return
     }
     if ((Test-Path -LiteralPath $full -PathType Leaf) -and (Test-OrdinalEqual (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash $Plan.sha256) -and (Test-OrdinalEqual ([IO.File]::ReadAllText($full)) $Plan.text)) {
-        Write-Host 'Codex hook config already matches: .codex/config.toml'
+        Write-Host "$label hook config already matches: $relative"
         return
     }
     New-Item -ItemType Directory -Path (Split-Path -Parent $full) -Force | Out-Null
     Write-FileAtomically $full $Plan.text
-    Write-Host 'Wrote .codex/config.toml'
+    Write-Host "Wrote $relative"
 }
 
 # Codex output uses one fixed Launch argument. A selected gate hook adds a one-time approval step and a hash-change note.

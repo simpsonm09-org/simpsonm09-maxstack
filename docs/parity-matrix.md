@@ -27,7 +27,7 @@ Pins:
 - maxstack pins pstack at commit `66cdc869fc28aa6503a3922041f1b3e7c72e2bcb` on branch `main` [MS-LAY]. The pstack-max worktree HEAD is the same commit [FORK].
 - The `pstack-max` checkout at `pstack-max` is on `main` at the pinned commit `66cdc869fc28aa6503a3922041f1b3e7c72e2bcb`. Where the pin and upstream `main` differ, the row says so (see G7).
 
-Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex, Cursor, and Antigravity are opt-in. Codex installs skills and instructions only; its Launch argument selects the workspace project root, and its gate definition lives in owned `.codex/config.toml` (rows 2.1, 2.2, and 2.8). Cursor copies skills only into the explicit workspace root's `.cursor/skills`. Antigravity shares the Codex skill projection under `.agents/skills`. Install at the active project root when a nested repository needs its own skill files.
+Installed runtimes: the installer writes four runtimes by default (claude, opencode, copilot, pi) [MS-LAY, MS-INST]. Codex, Cursor, and Antigravity are opt-in. Codex installs skills and instructions only; its Launch argument selects the workspace project root, and its gate definition lives in owned `.codex/config.toml` (rows 2.1, 2.2, and 2.8). Cursor copies skills only into the explicit workspace root's `.cursor/skills`, and its gate definition lives in owned `.cursor/hooks.json` when a selected layer ships one. Antigravity shares the Codex skill projection under `.agents/skills`, and its gate definition lives in owned `.agents/hooks.json` when a selected layer ships one. Install at the active project root when a nested repository needs its own skill files.
 
 Harness versions named in the sources: Copilot CLI 1.0.93 and 1.0.89 [ORG, PSC-MAP-CP]; OpenCode 2.0.24, 2.0.26, and 2.0.30 [MS-T3]; Pi 1.0 [PSC-PI].
 
@@ -81,9 +81,9 @@ Summary grid (status only; the detail below holds the reason and evidence). Gene
 | Ask the user a question | same | differs | differs | differs | not built yet | differs | unverified |
 | Scheduled wakeup and /loop | same | cannot | cannot | differs | not built yet | cannot | unverified |
 | Session-start routing mandate | same | differs | differs | differs | not built yet | differs | unverified |
-| Access gate denies the same commands | same | same | differs | same | not built yet | differs | not built yet |
-| Gate ask handling | differs | differs | differs | differs | not built yet | differs | not built yet |
-| pstack PreToolUse hooks | differs | cannot | cannot | not built yet | not built yet | not built yet | unverified |
+| Access gate denies the same commands | same | same | differs | same | differs | differs | differs |
+| Gate ask handling | differs | differs | differs | differs | differs | differs | differs |
+| pstack PreToolUse hooks | differs | cannot | cannot | not built yet | not built yet | not built yet | not built yet |
 | MCP servers | not built yet | not built yet | differs | unverified | not built yet | not built yet | unverified |
 | Custom agent files and their format | same | differs | differs | differs | not built yet | not built yet | unverified |
 | Model selection and family names | same | differs | differs | differs | not built yet | differs | unverified |
@@ -93,7 +93,7 @@ Summary grid (status only; the detail below holds the reason and evidence). Gene
 | Windows | same | differs | same | same | not built yet | not built yet | unverified |
 | macOS | not built yet | unverified | not built yet | unverified | not built yet | not built yet | not built yet |
 
-Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, not built yet 33, unverified 17.
+Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 56, cannot 6, not built yet 30, unverified 16.
 
 ### 2.1 Skills load (same SKILL.md; naming and prefix)
 
@@ -103,7 +103,7 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 - Pi: **differs**: bare names; `/skill:<name>` forces one. The `pstack:` prefix is dropped; only agent types keep it. `user-invocable: false` is ignored, so the 23 `principle-*` skills show in completion. Pi also loads `%USERPROFILE%\.agents\skills`, which held 40 skills on this machine. Verified: `get_commands` in rpc lists 68 skills (pstack 58, org 6, personal 4) with no model call. Evidence: PSC-PI (T11, T12, S07a), MS-T3 (Pi known limits, Verified).
 - Cursor: **differs**: the opt-in `cursor` runtime copies each selected layer's skills into `.cursor/skills/<skill>`, with one lock record per folder. Cursor scans project skill folders recursively. When a nested repository is the active project, select that repository as `-Workspace`; maxstack does not assume parent workspace inheritance. Installer output and Node projection are covered by focused tests. A live Cursor turn and T3 session are not verified. Documented: [Cursor Agent Skills](https://cursor.com/docs/skills); T3 source: `CursorSkills.ts`.
 - Codex: **differs**. The opt-in `codex` runtime copies each selected layer's skills into `.agents\skills\<name>`, a byte copy with one lock record per folder. Codex finds a skill by its folder name, and reads it from the project root down to the working directory. The project root is the git root by default, so the workspace skills reach a repository only when the T3 launch arguments name the marker `stack.lock.json`. Verified with codex-cli 0.162.1: `codex debug prompt-input` from a repository under a scratch workspace lists the three installed skills only with the marker. No login, no model call. A live turn is not verified. The `.agents\skills` folder may also be read by other tools; this row does not claim that. Evidence: research-codex-surfaces.md (PROBE-1, PROBE-6, PROBE-15), CODEX-PROBE (this change, `codex debug prompt-input`), scripts/Install-Codex.ps1.
-- Antigravity: **partial**: `-Runtimes antigravity` copies selected layer skills to `<workspace-root>/.agents/skills/<skill>/SKILL.md`, the documented workspace skill location for the Antigravity app, CLI, and IDE. It shares these folders with Codex. Antigravity rules, hooks, plugins, models, and global settings are not installed. Skill loading through a live T3 Antigravity session is unverified. Source: [Antigravity skills](https://antigravity.google/docs/skills?tab=ide).
+- Antigravity: **partial**: `-Runtimes antigravity` copies selected layer skills to `<workspace-root>/.agents/skills/<skill>/SKILL.md`, the documented workspace skill location for the Antigravity app, CLI, and IDE. It shares these folders with Codex. When a selected layer ships the Antigravity gate hook, the installer also writes an owned `.agents/hooks.json` that runs the adapter by absolute path. Antigravity rules, plugins, models, and global settings are not installed. Skill loading and the gate hook through a live T3 Antigravity session are unverified. Source: [Antigravity skills](https://antigravity.google/docs/skills?tab=ide).
 
 ### 2.2 AGENTS.md and CLAUDE.md instructions
 
@@ -171,9 +171,9 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 - Copilot: **same**. The same gate.mjs decides through `preToolUse` JSON (`permissionDecision: deny`). Verified live on Windows through the `copilotSimpsonm09` instance. Not measured live: the PowerShell rewrite form and the hook timeout. Evidence: ORG (GitHub Copilot CLI build, Known limits), MS-T3 (Verified).
 - OpenCode: **differs**: the same decision, but the adapter rewrites a denied command in the `create.before` shell hook; it does not block the call. The rewrite's effect is not measured live. Parity is checked against golden outcomes only. Evidence: ORG (Repo facts, Differences), ORG-AGENTS (Repo facts).
 - Pi: **same**. The `tool_call` handler blocks a denied bash call with the gate's reason. Verified live in print, rpc and child agents. The edit and write tools are not gated (see G10). Evidence: BRIEF-LIVE, ORG (Pi coding agent build, Known limits).
-- Cursor: **not built yet**. Cursor documents hooks and permissions, but maxstack has no gate adapter and T3 integration is unverified. Documented: [Cursor hooks](https://cursor.com/docs/hooks) (2026-10-13); ORG (Contents).
+- Cursor: **differs**: the org layer's `hooks/cursor.mjs` answers `beforeShellExecution` from the same `decideShell`, mapping a deny to `permission: deny`. maxstack writes an owned `.cursor/hooks.json` whose command runs the adapter by absolute path, from the installed OpenCode copy when OpenCode is selected. A live Cursor session is not verified. Evidence: ORG (The agent access gate), `scripts/Install-Workspace.hooks.test.mjs`.
 - Codex: **differs**. The org layer's `hooks/lib/codex.mjs` reads the gate's answer from a `PreToolUse` hook for `Bash`, including unified exec. maxstack writes its definition to owned `.codex/config.toml`; Launch arguments contain only the fixed project-root marker. The user must trust the workspace and approve the hook once with `/hooks`. Status compares the current hook hash from `codex app-server` `hooks/list` with the lock, but cannot see approval state. By owner decision, the gate applies in every repository because Codex does not report a command's working folder. It is a guardrail: Codex skips an unapproved hook or one that cannot start or times out, and only the exit-0 JSON deny blocks on Windows. Hook trust discovery is verified with a temporary `CODEX_HOME`; a live T3 turn is not verified. Evidence: ORG (The agent access gate), MS-T3 (Codex (maxstack)), docs/t3-setup.md (The access gate line).
-- Antigravity: **not built yet**. Antigravity documents hooks, but maxstack has no gate adapter and T3 integration is unverified. Documented: [Antigravity hooks](https://antigravity.google/docs/hooks) (2026-10-13); ORG (Contents).
+- Antigravity: **differs**: the org layer's `hooks/antigravity.mjs` answers `PreToolUse` for `run_command` through the same `decideShell`, mapping a deny to `decision: deny`. maxstack writes an owned `.agents/hooks.json` whose command runs the adapter by absolute path, from the installed OpenCode copy when OpenCode is selected. A live Antigravity session is not verified. Evidence: ORG (The agent access gate), `scripts/Install-Workspace.hooks.test.mjs`.
 
 ### 2.9 Gate ask handling (prompt versus AGENT_ACCESS_*_ASK)
 
@@ -181,9 +181,9 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 - Copilot: **differs**: `ask` prompts unless the hook process has `AGENT_ACCESS_COPILOT_ASK=allow`. The `copilot.cmd` wrapper sets it, because ACP auto-denies an ask. A plain `copilot` keeps the prompt. Verified live through copilotSimpsonm09. Evidence: MS-T3 (The ask switch, Verified), ORG (GitHub Copilot CLI build).
 - OpenCode: **differs**: no ask step in the adapter. An allowed gh command gets the App token at once, with no prompt. No switch exists. Evidence: ORG (Known limits: OpenCode gives these commands the App token without a prompt), RS-AG (Agent-side gates).
 - Pi: **differs**: with `AGENT_ACCESS_PI_ASK=allow`, asks are rewritten with no prompt in rpc and no-UI sessions. A TUI session still prompts. In rpc an unanswered confirm resolves false after 3 s, which is why the wrapper sets the switch. Child asks are rewritten too. Verified: BRIEF-LIVE. Evidence: ORG (Pi coding agent build), MS-T3 (Pi).
-- Cursor: **not built yet**. Evidence: ORG (Contents).
+- Cursor: **differs**: an allowed gh write is answered `permission: ask`, so Cursor asks the person. No `AGENT_ACCESS_*_ASK` switch exists for it. A live session is not verified. Evidence: ORG (The agent access gate).
 - Codex: **differs**. The adapter converts a gate `ask` to a deny, because Codex PreToolUse cannot request human approval, and there is no allow-on-ask switch. Evidence: MS-CXG, ORG (The agent access gate).
-- Antigravity: **not built yet**. Evidence: ORG (Contents).
+- Antigravity: **differs**: an allowed gh write is answered `decision: ask`, so Antigravity asks the person. No `AGENT_ACCESS_*_ASK` switch exists for it. A live session is not verified. Evidence: ORG (The agent access gate).
 
 ### 2.10 pstack PreToolUse hooks (file-read and subagent-model checks)
 
@@ -191,9 +191,9 @@ Counts over 18 rows and 7 harnesses (126 cells): same 18, differs 52, cannot 6, 
 - Copilot: **cannot**: on Windows, `pre-tool-use-windows.ps1` is a stub that prints nothing and exits 0, so neither check runs. The POSIX `pre-tool-use.sh` implements both (approves plugin `view` and registered scripts; denies a `pstack:` task on an unsaved model), but it was not run on macOS. Evidence: FORK-WIN, PSC-PRE, PSC-MAP-CP (Plugin file access, Model names), MS-T3 (What works on Copilot).
 - OpenCode: **cannot**: the plugin has no tool hook. The subagent-model check has nothing to check, because `subagent` takes no per-call model. Evidence: FORK-OC (index.ts), FORK-MAP-OC (Model names).
 - Pi: **not built yet**. The extension has no file-read or subagent-model check. Aliases resolve through models.json only (T03). Evidence: PSC-PI (T03), PSC-MAP-PI (Model names).
-- Cursor: **not built yet**. Cursor documents project and user hooks, but maxstack has no hook delivery and T3 integration is unverified. Documented: [Cursor hooks](https://cursor.com/docs/hooks) (2026-10-13).
+- Cursor: **not built yet**. maxstack installs the org layer's gate hook, which covers shell commands only; the file-read approval and the subagent-model deny are not implemented for Cursor. Evidence: ORG (The agent access gate).
 - Codex: **not built yet**. `codex-hooks.json` has SessionStart only. Evidence: PSC-CXH.
-- Antigravity: **not built yet**. Antigravity documents workspace and user hooks, but maxstack has no hook delivery and T3 integration is unverified. Documented: [Antigravity hooks](https://antigravity.google/docs/hooks) (2026-10-13).
+- Antigravity: **not built yet**. maxstack installs the org layer's gate hook, which covers shell commands only; the file-read approval and the subagent-model deny are not implemented for Antigravity. Evidence: ORG (The agent access gate).
 
 ### 2.11 MCP servers
 
@@ -321,7 +321,7 @@ Each item is a difference the docs call deliberate, or a limit the docs accept. 
 
 Ranked by how much the plan's goals depend on the gap. Each gap names the evidence.
 
-G1. The access gate is absent on Cursor and Antigravity (rows 2.8, 2.9, 2.10). Codex has an adapter, an owned project hook definition, and a one-time trust step. Hook discovery and trust-state changes are measured with `hooks/list`; a live T3 turn is not verified. Cursor and Antigravity have no adapter, no hook delivery and no proof. The master template's phase table requires a blocked denied command in a Codex session (Phase 2) and the gate working in Cursor and Antigravity (Phase 3, "quota permitting"). Evidence: ORG (Contents), PSC-CXH, MS-MT (Phases), MS-CXG. Fix: record a blocked denied command in a Codex T3 session after hook approval, and build the Cursor and Antigravity adapters.
+G1. The access gate is unproven in live Cursor and Antigravity sessions (rows 2.8, 2.9, 2.10). Codex has an adapter, an owned project hook definition, and a one-time trust step. Hook discovery and trust-state changes are measured with `hooks/list`; a live T3 turn is not verified. Cursor and Antigravity now have adapters and owned hook definitions: maxstack writes `.cursor/hooks.json` and `.agents/hooks.json` with the adapter's absolute path, and an install, status, change, removal, and uninstall are covered by `scripts/Install-Workspace.hooks.test.mjs`. No live session has run a denied command through either. Evidence: ORG (Contents), PSC-CXH, MS-MT (Phases), MS-CXG, scripts/Install-Workspace.hooks.test.mjs. Fix: record a blocked denied command in a Codex T3 session after hook approval, and run a denied command in a live Cursor and Antigravity session.
 
 G2. Copilot PreToolUse is a no-op on Windows (row 2.10). The file-read approval and the subagent-model deny do not run on the machine this workspace uses. The POSIX port exists for bash only. Fix: port `pre-tool-use.awk` to PowerShell or Node and run the same fixtures on both. Evidence: FORK-WIN, PSC-PRE, MS-T3.
 
