@@ -6,7 +6,7 @@
       "source": {
         "url": "https://github.com/simpsonm09/pstack-max.git",
         "path": "plugins/pstack",
-        "commit": "66cdc869fc28aa6503a3922041f1b3e7c72e2bcb",
+        "commit": "b85ef6356a65e24b951c3411222452733e0c387c",
         "ref": "main"
       },
       "runtimes": {
