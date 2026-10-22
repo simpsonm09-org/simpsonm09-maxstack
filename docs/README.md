@@ -21,3 +21,7 @@ Index for this repository.
 - [Parity matrix](parity-matrix.md) records which AI behaviors are the same, different, or impossible in each of the seven runtimes, with evidence.
 - [Setup plan](setup-plan.md) is the historical OpenCode setup plan. T3 Code hosts the sessions now.
 - [Decisions](decisions.tsv) is the append-only decision trail.
+
+## Release notes
+
+- [Skill metadata fixture](release-notes/2026-10-22-skill-metadata-fixture.md) records the bounded byte-preservation fixture and its documentation contract.
