@@ -193,9 +193,14 @@ To test the wrapper without an install, pass a different executable: `-CopilotCo
 
 ### Update Pi
 
-The workspace Pi CLI is managed by npm under `.maxstack/npm`. `pi update --self` cannot update it because Pi does not
-self-update a workspace-local npm dependency. Run the installer from the maxstack checkout to update it to the latest
-version:
+When the selected Pi is the workspace managed copy under `.maxstack/npm`, the generated wrapper handles
+`pi update --self` by asking npm for `@earendil-works/pi-coding-agent@latest` with lifecycle scripts disabled. On
+Windows, `pi.cmd` dispatches this command to the installer-owned Node helper in `.maxstack/bin`; Node validates the
+complete argument vector before starting npm. It
+refuses the command if the managed package has been removed, `MAXSTACK_PI_BIN` overrides the selected Pi, or any extra
+argument (including an empty argument) follows `--self`. When the selected Pi is external or global, the wrapper names
+its path and refuses the update without running npm. Run the installer from the maxstack checkout to audit an update or
+pin a version:
 
   ```powershell
   pwsh -File scripts/Install-Workspace.ps1 -Workspace <workspace> -UpdatePi
@@ -209,6 +214,9 @@ install scripts that are not covered. This is expected because scripts are not r
 initial npm install normally saves a caret range. An exact pin means npm used `save-exact` when the dependency was
 saved, or the range was set explicitly. Updating Pi does not require another installer apply. Its wrapper paths and
 `.pi\agent\settings.json` do not depend on the Pi version.
+
+The wrapper always selects `latest`; use `-PiVersion <version>` with `Install-Workspace.ps1 -UpdatePi -Apply` when you
+need a pinned installer update.
 
 ## Audit and apply
 

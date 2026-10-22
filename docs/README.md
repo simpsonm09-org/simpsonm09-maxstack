@@ -4,6 +4,7 @@ Index for this repository.
 
 ## Guides
 
+- [Pi update compatibility](release-notes/2026-10-21-pi-update-compatibility.md) describes the managed Pi wrapper's `update --self` behavior and safety checks.
 - [Install and reload](install.md) covers the model rule, the runtime and layer selection, the runtimes, layer sources and their overrides, `-Update`, the ownership record, removing a runtime or layer, and uninstalling.
 - [T3 settings snapshot](features/t3-settings.md) documents the explicit source, allowlisted workspace snapshot, and read-only drift report.
 - [Workspace settings](features/settings.md) describes workspace discovery and the optional selection file's additive behavior. Discovery is implemented in `scripts/Install-WorkspaceDiscovery.ps1` and tested by `scripts/Install-WorkspaceDiscovery.test.mjs`.
