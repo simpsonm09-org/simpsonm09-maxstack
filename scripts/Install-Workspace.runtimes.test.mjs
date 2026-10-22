@@ -69,6 +69,19 @@ function fakePiNpm(ctx) {
   return { env, argsLog };
 }
 
+function assertPiBridgeDispatch(ctx, shPath, bash, npmEnv, argsLog, fake) {
+  const shCases = process.platform === 'win32' ? [['update', '--self']] : [['update', '--self'], ['update'], ['status']];
+  for (const args of shCases) {
+    const result = spawnSync(bash, [shPath, ...args], { windowsHide: true, encoding: 'utf8', env: { ...npmEnv, MAXSTACK_PI_BIN: args.length === 1 ? fake : undefined } });
+    assert.equal(result.status, 0, plainOutput(result));
+    if (args.length === 2) {
+      assert.deepEqual(JSON.parse(readFileSync(argsLog, 'utf8')), ['install', '--prefix', join(ctx.workspace, '.maxstack', 'npm').replaceAll('\\', '/'), '--ignore-scripts', '--no-audit', '--no-fund', '@earendil-works/pi-coding-agent@latest']);
+    } else {
+      assert.match(plainOutput(result), new RegExp(`ARGS=${args.join(' ')}`));
+    }
+  }
+}
+
 withWorkspace('Pi update audit does not invoke npm or change the package', (ctx) => {
   seedPiPackage(ctx);
   const { env, argsLog } = fakePiNpm(ctx);
@@ -155,17 +168,7 @@ withWorkspace('Pi wrappers bridge update self to the managed npm package and pas
   assert.ok(bash, 'Git Bash is needed to execute pi.sh');
   const shPath = join(ctx.workspace, '.maxstack', 'bin', 'pi.sh');
   assert.match(readFileSync(shPath, 'utf8'), /\[ "\$2" = --self \]/);
-  const shCases = process.platform === 'win32' ? [['update', '--self']] : [['update', '--self'], ['update'], ['status']];
-  for (const args of shCases) {
-    const result = spawnSync(bash, [shPath, ...args], { windowsHide: true, encoding: 'utf8', env: { ...npmEnv, MAXSTACK_PI_BIN: args.length === 1 ? fake : undefined } });
-    if (args.length === 2) {
-      assert.equal(result.status, 0, plainOutput(result));
-      assert.deepEqual(JSON.parse(readFileSync(argsLog, 'utf8')), ['install', '--prefix', join(ctx.workspace, '.maxstack', 'npm').replaceAll('\\', '/'), '--ignore-scripts', '--no-audit', '--no-fund', '@earendil-works/pi-coding-agent@latest']);
-    } else {
-      assert.equal(result.status, 0, plainOutput(result));
-      assert.match(plainOutput(result), new RegExp(`ARGS=${args.join(' ')}`));
-    }
-  }
+  assertPiBridgeDispatch(ctx, shPath, bash, npmEnv, argsLog, fake);
   const refused = spawnSync(bash, [shPath, 'update', '--self'], { windowsHide: true, encoding: 'utf8', env: { ...npmEnv, MAXSTACK_PI_BIN: fake } });
   assert.equal(refused.status, 2, plainOutput(refused));
   assert.match(plainOutput(refused), /Refusing to update an overridden Pi/);

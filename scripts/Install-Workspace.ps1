@@ -1437,7 +1437,7 @@ function New-PiShText {
     $reference = if ($IsWindows) { ' See pi.cmd.' } else { '' }
     if ($PiLocal) {
         $updateAction = (@(
-            '  [ "$#" -eq 2 ] || { echo "Usage: pi update --self" >&2; exit 2; }',
+            '  [ "$#" -eq 2 ] || { echo "Usage: pi update --self" >&2; exit 2; } # ordinal-ok: POSIX shell argument count is numeric ASCII',
             '  [ -z "${MAXSTACK_PI_BIN:-}" ] || { echo "MAXSTACK_PI_BIN is set. Refusing to update an overridden Pi; selected local Pi: __SELECTED__" >&2; exit 2; }',
             '  [ -f "__PREFIX__/node_modules/@earendil-works/pi-coding-agent/package.json" ] || { echo "Managed Pi package is missing at __PREFIX__. Refusing to create a new install." >&2; exit 2; }',
             '  command -v npm >/dev/null 2>&1 || { echo "npm was not found on PATH. Refusing to update selected local Pi: __SELECTED__" >&2; exit 127; }',
