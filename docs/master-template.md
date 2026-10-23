@@ -50,7 +50,7 @@ Three behaviors constrain the design:
 
 ## Installer lifecycle
 
-The installer selects runtimes and layers, records what it wrote, and removes it with `-Remove` and `-Uninstall`. Both are dry runs until `-Apply`, and [install.md](install.md#removing-and-uninstalling) states their rules. It still declares itself Windows-only. On Windows, `update` is built as `-Update` and `-Update -Check`, with the rules in [install.md](install.md#updating-the-sources). The target is one entry point with these commands, the same on Windows and macOS:
+The installer selects runtimes and layers, records what it wrote, and removes it with `-Remove` and `-Uninstall`. Both are dry runs until `-Apply`, and [install.md](install.md#removing-and-uninstalling) states their rules. Its platform declaration includes Windows, macOS, and Linux. On Windows, `update` is built as `-Update` and `-Update -Check`, with the rules in [install.md](install.md#updating-the-sources). The target is one entry point with these commands, the same on Windows and macOS:
 
 | Command | Effect |
 | --- | --- |

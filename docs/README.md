@@ -25,5 +25,6 @@ Index for this repository.
 
 ## Release notes
 
+- [POSIX installer fixture coverage](release-notes/2026-10-23-posix-installer-fixture-coverage.md) records the existing macOS and Linux fixture lifecycle coverage and keeps live macOS CLI and hook behavior explicitly unverified.
 - [Skill metadata fixture](release-notes/2026-10-22-skill-metadata-fixture.md) records the bounded byte-preservation fixture and its documentation contract.
 - [Codex discovery check](release-notes/2026-10-22-codex-discovery-check.md) records the portable, model-free marker acceptance tool.
