@@ -125,6 +125,8 @@ Summary grid (status only; the detail below holds the reason and evidence). Gene
 
 Counts over 18 rows and 7 harnesses (126 cells): same 22, differs 58, cannot 8, not built yet 22, unverified 16.
 
+The macOS row marks live harness behavior as unverified; it does not mean fixture coverage is absent. Hosted fixture coverage is recorded in rows 2.18-2.19.
+
 ### 2.1 Skills load (same SKILL.md; naming and prefix)
 
 - Claude: **same**. Plugin skills load with a plugin prefix: `pstack:poteto-mode`, `simpsonm09-org-ai-plugin:repo-standard`. Evidence: MS-T3 (Claude Code table), RS-AS (Harnesses).
@@ -299,7 +301,7 @@ The installer fixture lifecycle runs in the `test-node-shard` matrix and is requ
 
 ### 2.18 macOS
 
-The informational `test-macos` CI job runs the same installer fixture lifecycle as Linux for all seven runtimes. These fixture checks do not verify live CLI or hook behavior.
+The `test-macos` CI job runs POSIX installer fixture lifecycles for all seven runtimes outside the required `test-node` aggregate. It is not configured with `continue-on-error`, so a failure makes the workflow run fail. These fixture checks do not verify live CLI or hook behavior.
 
 - Claude: **unverified**. The fixture verifies the macOS installer lifecycle; real Mac CLI and hook behavior remain unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
 - Copilot: **unverified**. The fixture verifies executable `copilot.sh`, ordered plugin arguments, forwarding, status, and removal; real CLI and hook behavior remain unverified. Evidence: `test-macos`, `scripts/Install-Workspace.macos.test.mjs`.
@@ -311,7 +313,7 @@ The informational `test-macos` CI job runs the same installer fixture lifecycle 
 
 ### 2.19 Linux
 
-The informational `test-linux` CI job runs the same POSIX installer fixture lifecycle as macOS for all seven runtimes. These fixture checks do not verify live CLI or hook behavior.
+The `test-linux` CI job runs the same POSIX installer fixture lifecycle as macOS for all seven runtimes, outside the required `test-node` aggregate. It is not configured with `continue-on-error`, so a failure makes the workflow run fail. These fixture checks do not verify live CLI or hook behavior.
 
 - Claude: **unverified**. The fixture verifies the Linux installer lifecycle; real Linux CLI and hook behavior remain unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
 - Copilot: **unverified**. The fixture verifies executable `copilot.sh`, ordered plugin arguments, forwarding, status, and removal; real CLI and hook behavior remain unverified. Evidence: `test-linux`, `scripts/Install-Workspace.macos.test.mjs`.
@@ -359,7 +361,7 @@ G3. Gate fail-open paths are unmeasured or silent. Claude: a hook killed at Clau
 
 G4. OpenCode passed the live probe 2026-10-21, and Pi passed the same probe on 2026-10-20. These checks cover skills, workspace instructions, an allowed read, a denied write, and a subagent reply. The ask-level check in section 5.2 remains open. Evidence: LIVE-1020, LIVE-1021.
 
-G5. The installer is Windows-only, so macOS is unverified or not built in every harness (row 2.18). Plan phase 0 requires a macOS round trip. Evidence: MS-MT (Installer lifecycle), MS-INST, MS-T3. Fix: make the link logic portable (symlinks on POSIX), then run the lifecycle tests on macOS.
+G5. POSIX installer fixture lifecycles run in the macOS and Linux CI jobs for all seven runtimes (rows 2.18-2.19). Both jobs are outside the required `test-node` aggregate and have no `continue-on-error`, so a failure makes the workflow run fail. Branch protection requirements are not established by repository evidence. These fixtures do not establish live macOS CLI or hook behavior, which remains unverified and explicitly deferred. Evidence: `.github/workflows/ci.yml` (`test-macos`, `test-linux`), `justfile` (`test-macos`, `test-posix`), and `scripts/Install-Workspace.macos.test.mjs`.
 
 G6. Pi and OpenCode resolve `%USERPROFILE%\.agents\skills` through default skill discovery, so the resolved skill set is not only the pinned one (rows 2.1, 2.17). The 2026-10-09 Pi spike found 40 skills. `PI_CODING_AGENT_DIR` does not isolate them, and redirecting `USERPROFILE` would move the login. An OpenCode 2.0.30 smoke found 41 skills there beside 61 PStack skills. The OpenCode config directory does not move that root, and the Claude Code skill flags do not gate it. Evidence: MS-T3 (Pi, Known limits; OpenCode, Global skills and clean sessions). Fix: test whether Pi's `skills` setting can exclude that path; the OpenCode root is an unresolved isolation limit, and accepting it as a risk is an owner decision.
 
@@ -407,7 +409,7 @@ The aim is that the matrix stays honest. Each `same` and each `verified` claim m
 10. Agent profiles. Installed OpenCode profiles contain no `model:` line, and the workspace config has no `model` or `small_model` key. `verify-manifests.py` covers the config half; add the profile half to the workspace verifier (rows 2.12, 2.13).
 11. MCP empty set. The composed `mcp.servers` is empty for every layer, and no `.mcp.json` or Copilot MCP file exists in the workspace. This fails the day a layer adds a server without a writer (G18).
 12. Transcript readers. Fixture sessions for Claude (`projects/<encoded-cwd>`), Copilot (`events.jsonl` with `workspace.yaml`), and Pi (a tree with `parentId`, two branches). Assert each reader returns the same opening prompt for the same conversation (row 2.14). `find-transcript.mjs` already has a Pi case.
-13. Installer lifecycle. Install then uninstall on a snapshot returns the same tree. Remove one runtime leaves the other runtimes byte-identical. Run both on `windows-latest` and `macos-latest` (rows 2.17, 2.18; G5).
+13. Installer lifecycle. Install then uninstall on a snapshot returns the same tree. Remove one runtime leaves the other runtimes byte-identical. Windows coverage runs in the required node test aggregate (row 2.17); the existing POSIX fixture lifecycle runs in `test-macos`, outside that aggregate (row 2.18; G5).
 14. Model tables. models.json has the four family names for each provider column. `tests/pi/catalog.test.mjs` already checks the installed Pi catalog; extend the check to every column (row 2.13).
 15. Live-evidence rule. A cell may move from `unverified` to `same` only with a dated record file in the repo: harness version, instance ID, command, observed result. The generator reads those records. Rows 2.16 and 2.17 cannot be `same` without one.
 16. Docs drift. A lint over the docs flags the phrases "get no token" for `gh.exe` and "not measured against a live Pi" against the classifier's actual output and the verified-facts file (G8a, G8b).
@@ -423,6 +425,6 @@ These need a real harness, a real model, or a real machine. Each run is recorded
 5. Codex: a T3 turn after the user trusts the workspace and approves the hook through `/hooks`, with one allowed shell command and one denied `gh` write, to show the deny blocks and no marker is written; the SessionStart output; a repo with AGENTS.md at the root and a parent folder with one. Rows 2.2, 2.7, 2.8, 2.16. The hook's hash and trust-state behavior are checked with `hooks/list` and a temporary `CODEX_HOME` (MS-CXG); the live deny is not.
 6. Cursor: a scratch repo under a workspace folder with AGENTS.md above it; the rules location; any hook. Rows 2.1, 2.2, 2.8.
 7. Antigravity: `.agents/` at the workspace root, opened against a repo inside it; whether AGENTS.md is read; hooks. Rows 2.1, 2.2, 2.7, 2.8.
-8. macOS: run the installer and the lifecycle tests on a Mac; run `copilot.sh` and `pi.sh` with the real CLIs. Rows 2.17, 2.18.
+8. macOS live behavior: run `copilot.sh` and `pi.sh` with the real CLIs and exercise their hooks. The hosted `test-macos` job already covers POSIX installer fixtures for all seven runtimes; those fixtures do not verify live CLI or hook behavior. Rows 2.17, 2.18.
 9. Model names: diff `pi --list-models` against models.json; read Copilot's `task` model enum against the sheet; check Codex slugs on a ChatGPT account. Row 2.13 (G12).
 10. Cost: one `anthropic/*` call through Pi to confirm the per-token billing warning and the extra-usage line the mapping describes (row 2.13, G12).
