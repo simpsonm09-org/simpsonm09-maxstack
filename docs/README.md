@@ -10,6 +10,7 @@ Index for this repository.
 - [Workspace settings](features/settings.md) describes workspace discovery and the optional selection file's additive behavior. Discovery is implemented in `scripts/Install-WorkspaceDiscovery.ps1` and tested by `scripts/Install-WorkspaceDiscovery.test.mjs`.
 - [Current alignment](features/current-alignment.md) records the verified delivery state and the remaining acceptance work against the end goal.
 - [Antigravity skills](features/antigravity.md) documents the opt-in Antigravity runtime and its shared skill ownership.
+- [Codex discovery check](features/codex-discovery-check.md) describes the local marker acceptance tool and its limits.
 - [Layout](layout.md) describes every top-level path.
 - [Repository relationships](relationship.md) names the repository ownership, the one cross-repo edge, and the workspace definition.
 - [MCP servers](mcp.md) defines the workspace MCP servers and their default states.
@@ -25,3 +26,4 @@ Index for this repository.
 ## Release notes
 
 - [Skill metadata fixture](release-notes/2026-10-22-skill-metadata-fixture.md) records the bounded byte-preservation fixture and its documentation contract.
+- [Codex discovery check](release-notes/2026-10-22-codex-discovery-check.md) records the portable, model-free marker acceptance tool.
