@@ -391,6 +391,7 @@ function Get-WorkspaceInstructionPlan {
     if ($ValidateOnly) { return [pscustomobject]@{ text = $composed; files = @(); sourceLayers = @($sources | ForEach-Object { $_.layer }) } }
     $collisionNames = @()
     foreach ($name in @('AGENTS.md', 'CLAUDE.md')) {
+        if ($name -eq 'CLAUDE.md' -and -not (Test-OrdinalIn 'claude' $SelectedRuntimes)) { continue }
         $path = Join-MaxstackPath $Workspace $name
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $record = Get-PriorWorkspaceInstructionRecord $name
