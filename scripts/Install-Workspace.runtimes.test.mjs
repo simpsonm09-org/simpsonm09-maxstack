@@ -459,7 +459,16 @@ withWorkspace('copilot.cmd runs the executable with the switch, the plugin folde
 }, {});
 
 withWorkspaceNeeding('bash', findBash(), 'copilot.sh runs copilot from PATH with the same folders and arguments', (ctx) => {
+  const apostropheWorkspace = join(ctx.base, "O'Brien workspace");
+  renameSync(ctx.workspace, apostropheWorkspace);
+  ctx.workspace = apostropheWorkspace;
   const bash = findBash();
+  const orgLayer = join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+  const orgManifestPath = join(orgLayer, 'layer.json');
+  const orgManifest = JSON.parse(readFileSync(orgManifestPath, 'utf8'));
+  orgManifest.workspaceInstructions = 'workspace.md';
+  writeFileSync(orgManifestPath, JSON.stringify(orgManifest));
+  writeFileSync(join(orgLayer, 'workspace.md'), 'shell projection sentinel\n');
   mustApply(ctx);
   const sh = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh'), 'utf8');
   assert.match(sh, /^export AGENT_ACCESS_COPILOT_ASK=allow$/m, 'the script sets the switch');
@@ -467,16 +476,49 @@ withWorkspaceNeeding('bash', findBash(), 'copilot.sh runs copilot from PATH with
 
   const fakeBin = join(ctx.base, 'fake-bin');
   mkdirSync(fakeBin);
-  writeFileSync(join(fakeBin, 'copilot'), '#!/bin/sh\nprintf "ASK=%s\\n" "$AGENT_ACCESS_COPILOT_ASK"\nfor arg in "$@"; do printf "ARG=%s\\n" "$arg"; done\n');
+  writeFileSync(join(fakeBin, 'copilot'), '#!/bin/sh\nprintf "ASK=%s\\n" "$AGENT_ACCESS_COPILOT_ASK"\nprintf "INSTRUCTIONS=%s\\n" "$COPILOT_CUSTOM_INSTRUCTIONS_DIRS"\nfor arg in "$@"; do printf "ARG=%s\\n" "$arg"; done\n');
   chmodSync(join(fakeBin, 'copilot'), 0o755);
-  const env = { ...process.env };
+  const env = { ...process.env, COPILOT_CUSTOM_INSTRUCTIONS_DIRS: 'existing-dir' };
   const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
   env[pathKey] = `${fakeBin}${process.platform === 'win32' ? ';' : ':'}${env[pathKey] ?? ''}`;
   const run = spawnSync(bash, [join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh').replaceAll('\\', '/'), '--foo', 'a b'], { windowsHide: true, encoding: 'utf8', env });
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
   assert.match(run.stdout, /ASK=allow/);
+  assert.match(run.stdout, new RegExp(`INSTRUCTIONS=existing-dir,${join(ctx.workspace, '.maxstack', 'copilot-instructions').replaceAll('\\', '/')}`));
   assert.match(run.stdout, /ARG=--plugin-dir/);
   assert.match(run.stdout, /ARG=--foo\nARG=a b/, 'the caller arguments follow, unsplit');
+}, {});
+
+withWorkspace('Copilot instruction path rejects comma during planning when CLI is absent', (ctx) => {
+  const layerRoot = join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+  const manifestPath = join(layerRoot, 'layer.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  manifest.workspaceInstructions = 'workspace.md';
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  writeFileSync(join(layerRoot, 'workspace.md'), 'planning validation sentinel\n');
+  const commaWorkspace = join(ctx.base, 'comma,workspace');
+  renameSync(ctx.workspace, commaWorkspace);
+  ctx.workspace = commaWorkspace;
+  const run = runInstaller(shell, ctx, ['-Runtimes', 'claude,copilot'], { layersFile: writeLayers(ctx), includeRuntimeCommands: false });
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /contains a comma/);
+  assert.ok(!existsSync(join(ctx.workspace, '.maxstack')), 'validation happens before projection writes');
+}, {});
+
+withWorkspace('Copilot instruction path rejects delayed-expansion exclamation before projection writes', (ctx) => {
+  const layerRoot = join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+  const manifestPath = join(layerRoot, 'layer.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  manifest.workspaceInstructions = 'workspace.md';
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  writeFileSync(join(layerRoot, 'workspace.md'), 'planning validation sentinel\n');
+  const unsafeWorkspace = join(ctx.base, 'bang!workspace');
+  renameSync(ctx.workspace, unsafeWorkspace);
+  ctx.workspace = unsafeWorkspace;
+  const run = runInstaller(shell, ctx, ['-Runtimes', 'claude,copilot'], { layersFile: writeLayers(ctx), includeRuntimeCommands: false });
+  assert.notEqual(run.status, 0, plainOutput(run));
+  assert.match(plainOutput(run), /contains '!'/);
+  assert.ok(!existsSync(join(ctx.workspace, '.maxstack')), 'validation happens before projection writes');
 }, {});
 
 withWorkspace('copilot with no executable found warns, keeps the recorded wrappers, and the lock keeps their records', (ctx) => {
