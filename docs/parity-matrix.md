@@ -280,7 +280,7 @@ The macOS row marks live harness behavior as unverified; it does not mean fixtur
 ### 2.16 Works in headless or RPC mode (T3-driven)
 
 - Claude: **same**. The live probe 2026-10-20 inside T3 passed all five checks: skills, workspace instructions, an allowed read, a denied write, and a subagent reply. Evidence: LIVE-1020.
-- Copilot: **same**. Verified live through the `copilotSimpsonm09` instance: SessionStart context, skills, and org gate. The PreToolUse stub from 2.10 still applies. Evidence: MS-T3 (Verified).
+- Copilot: **partial / live pending**. The offline fake-CLI fixture verifies wrapper delivery of the selected-layer `AGENTS.md` projection through `COPILOT_CUSTOM_INSTRUCTIONS_DIRS`, including nested repositories. The existing `copilotSimpsonm09` live check covered SessionStart context, skills, and org gate only; it did not verify instruction consumption. The PreToolUse stub from 2.10 still applies. T3 ACP environment inheritance and live instruction loading remain unverified.
 - OpenCode: **same**. Verified by the live probe 2026-10-21 through the T3 OpenCode instance (opencode/deepseek-v4.1-flash-free): the probe listed the skills, quoted the workspace instructions, ran an allowed `gh repo view`, was denied the `gh label create` write, and a subagent replied. Evidence: MS-T3 (OpenCode, Checks), MS-INST (Install and reload), LIVE-1021.
 - Pi: **same**. The live probe 2026-10-20 inside T3 passed all five checks: skills, workspace instructions, an allowed read, a denied write, and a subagent reply. Evidence: LIVE-1020.
 - Cursor: **unverified**. The T3 `cursorAcp` instance could not run the live probe 2026-10-21 because of the free plan limit. Evidence: LIVE-1021.

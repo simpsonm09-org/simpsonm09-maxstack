@@ -25,6 +25,7 @@ Index for this repository.
 
 ## Release notes
 
+- [Copilot workspace instructions](release-notes/2026-10-23-copilot-workspace-instructions.md) describes the offline wrapper projection and keeps live T3 ACP/Copilot consumption explicitly pending.
 - [POSIX installer fixture coverage](release-notes/2026-10-23-posix-installer-fixture-coverage.md) records the existing macOS and Linux fixture lifecycle coverage and keeps live macOS CLI and hook behavior explicitly unverified.
 - [Non-Claude instruction collision](release-notes/2026-10-23-non-claude-claude-instructions-collision.md) records that a user `CLAUDE.md` does not block generated `AGENTS.md` when Claude is not selected.
 - [Skill metadata fixture](release-notes/2026-10-22-skill-metadata-fixture.md) records the bounded byte-preservation fixture and its documentation contract.

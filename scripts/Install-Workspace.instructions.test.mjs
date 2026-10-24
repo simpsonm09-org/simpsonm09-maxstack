@@ -207,6 +207,67 @@ withWorkspace('workspace instructions are runtime independent while harness refe
   assert.ok(!existsSync(join(ctx.workspace, 'opencode.jsonc')));
 });
 
+withWorkspace('Copilot wrapper delivers composed instructions to a nested repository without changing user instructions', (ctx) => {
+  declare(ctx, names.org, 'workspace.md', 'copilot projection sentinel 4d2c8a\n');
+  const userRoot = Buffer.from('user root AGENTS stays intact\r\n');
+  writeFileSync(join(ctx.workspace, 'AGENTS.md'), userRoot);
+  const nestedRepo = join(ctx.workspace, 'projects', 'nested-repo');
+  mkdirSync(nestedRepo, { recursive: true });
+  writeFileSync(join(nestedRepo, 'AGENTS.md'), 'nested repository instructions\n');
+  const fake = join(ctx.base, 'fake-copilot.cmd');
+  writeFileSync(fake, '@echo off\r\n> "%MAXSTACK_FAKE_CAPTURE%" echo COPILOT_CUSTOM_INSTRUCTIONS_DIRS=%COPILOT_CUSTOM_INSTRUCTIONS_DIRS%\r\n>> "%MAXSTACK_FAKE_CAPTURE%" echo ARGS=%*\r\n');
+  const run = install(ctx, ['-Runtimes', 'claude,copilot', '-CopilotCommand', fake]);
+  assert.equal(run.status, 0, plainOutput(run));
+  assert.deepEqual(readFileSync(join(ctx.workspace, 'AGENTS.md')), userRoot);
+  assert.equal(readFileSync(join(nestedRepo, 'AGENTS.md'), 'utf8'), 'nested repository instructions\n');
+  assert.match(readFileSync(join(ctx.workspace, '.maxstack', 'copilot-instructions', 'AGENTS.md'), 'utf8'), /copilot projection sentinel 4d2c8a/);
+  assert.ok(readJson(lockPath(ctx)).owned.some((entry) => entry.path === '.maxstack/copilot-instructions/AGENTS.md' && entry.runtime === 'workspace-instructions'));
+  const status = runStatus(ctx);
+  assert.match(plainOutput(status), /matching \.maxstack[\\/]copilot-instructions[\\/]AGENTS\.md/i, plainOutput(status));
+
+  if (process.platform === 'win32') {
+    const wrapper = join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd');
+    const capture = join(ctx.base, 'copilot-capture.txt');
+    const result = spawnSync('cmd.exe', ['/d', '/s', '/c', `""${wrapper}" --fixture two-words"`], {
+      windowsHide: true, encoding: 'utf8', windowsVerbatimArguments: true,
+      cwd: nestedRepo,
+      env: { ...process.env, COPILOT_CUSTOM_INSTRUCTIONS_DIRS: 'existing-dir', MAXSTACK_FAKE_CAPTURE: capture, MAXSTACK_FAKE_COPILOT: fake },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const captured = readFileSync(capture, 'utf8');
+    assert.match(captured, /COPILOT_CUSTOM_INSTRUCTIONS_DIRS=existing-dir,[^\r\n]*\\\.maxstack\\copilot-instructions/);
+    assert.match(captured, /ARGS=.*--plugin-dir/);
+    assert.match(captured, /ARGS=[\s\S]*--fixture two-words/);
+
+    const withoutSentinel = { ...process.env, MAXSTACK_FAKE_CAPTURE: capture };
+    delete withoutSentinel.COPILOT_CUSTOM_INSTRUCTIONS_DIRS;
+    const emptyResult = spawnSync('cmd.exe', ['/d', '/s', '/c', `""${wrapper}" --fixture empty-env"`], {
+      windowsHide: true, encoding: 'utf8', windowsVerbatimArguments: true, cwd: nestedRepo, env: withoutSentinel,
+    });
+    assert.equal(emptyResult.status, 0, `${emptyResult.stdout}\n${emptyResult.stderr}`);
+    const emptyCaptured = readFileSync(capture, 'utf8');
+    assert.match(emptyCaptured, /COPILOT_CUSTOM_INSTRUCTIONS_DIRS=[^,\r\n]*\\\.maxstack\\copilot-instructions/);
+    assert.doesNotMatch(emptyCaptured, /COPILOT_CUSTOM_INSTRUCTIONS_DIRS=,/);
+  }
+
+  const removed = install(ctx, ['-Remove', '-Runtimes', 'copilot']);
+  assert.equal(removed.status, 0, plainOutput(removed));
+  assert.ok(!existsSync(join(ctx.workspace, '.maxstack', 'copilot-instructions', 'AGENTS.md')), plainOutput(removed));
+  assert.ok(!existsSync(join(ctx.workspace, '.maxstack', 'copilot-instructions')), plainOutput(removed));
+  assert.ok(!readJson(lockPath(ctx)).owned.some((entry) => entry.path === '.maxstack/copilot-instructions/AGENTS.md'));
+}, {});
+
+withWorkspace('Copilot selection without declared instructions creates no projection or env path', (ctx) => {
+  const fake = join(ctx.base, 'fake-copilot.cmd');
+  writeFileSync(fake, '@echo off\r\n');
+  const run = install(ctx, ['-Runtimes', 'claude,copilot', '-CopilotCommand', fake]);
+  assert.equal(run.status, 0, plainOutput(run));
+  assert.ok(!existsSync(join(ctx.workspace, '.maxstack', 'copilot-instructions', 'AGENTS.md')));
+  assert.ok(!existsSync(join(ctx.workspace, '.maxstack', 'copilot-instructions')), 'no projection directory is created when no instructions are declared');
+  assert.doesNotMatch(readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.cmd'), 'utf8'), /COPILOT_CUSTOM_INSTRUCTIONS_DIRS/);
+  assert.ok(!readJson(lockPath(ctx)).owned.some((entry) => entry.path === '.maxstack/copilot-instructions/AGENTS.md'));
+}, {});
+
 withWorkspace('Codex runtime gets shared instructions without an OpenCode config', (ctx) => {
   declare(ctx, names.org);
   const run = install(ctx, ['-Runtimes', 'codex', '-Layers', names.org]);
