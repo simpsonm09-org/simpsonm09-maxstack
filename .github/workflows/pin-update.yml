@@ -11,11 +11,11 @@ permissions:
 
 jobs:
   pin:
-    if: github.repository_owner == 'simpsonm09-org'
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
-      STANDARD: simpsonm09-org/simpsonm09-repo-standard
+      STANDARD: ${{ github.repository_owner }}/simpsonm09-repo-standard
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -25,7 +25,7 @@ jobs:
         id: drift
         run: |
           latest="$(gh api "repos/${STANDARD}/commits/main" --jq .sha)"
-          stale="$(grep -ohE "${STANDARD}/\.github/workflows/[a-z0-9-]+\.yml@[0-9a-f]{40}" .github/workflows/ci.yml | grep -v "@${latest}$" || true)"
+          stale="$(grep -ohE 'simpsonm09-(org|projects)/simpsonm09-repo-standard/\.github/workflows/[a-z0-9-]+\.yml@[0-9a-f]{40}' .github/workflows/ci.yml | grep -v "@${latest}$" || true)"
           if [ -z "$stale" ]; then
             echo "pin is current at ${latest}"
             exit 0

@@ -14,28 +14,28 @@ concurrency:
 
 jobs:
   lint:
-    if: github.repository_owner == 'simpsonm09-org'
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@334d3660fb8fb7cec5e24b61be68b7535774313d # repo-standard 334d366
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/lint.yml@c732c65876683ff08f02a191a932a36eed434d78 # repo-standard 334d366
   aislop:
-    if: github.repository_owner == 'simpsonm09-org'
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
     permissions:
       contents: read
       security-events: write
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@334d3660fb8fb7cec5e24b61be68b7535774313d # repo-standard 334d366
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/aislop.yml@c732c65876683ff08f02a191a932a36eed434d78 # repo-standard 334d366
   security:
-    if: github.repository_owner == 'simpsonm09-org'
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
     permissions:
       contents: read
       security-events: write
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@334d3660fb8fb7cec5e24b61be68b7535774313d # repo-standard 334d366
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/security.yml@c732c65876683ff08f02a191a932a36eed434d78 # repo-standard 334d366
   standard:
-    if: github.repository_owner == 'simpsonm09-org'
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
     permissions:
       contents: read
-    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@334d3660fb8fb7cec5e24b61be68b7535774313d # repo-standard 334d366
+    uses: simpsonm09-org/simpsonm09-repo-standard/.github/workflows/standard.yml@c732c65876683ff08f02a191a932a36eed434d78 # repo-standard 334d366
 
   test:
-    if: github.repository_owner == 'simpsonm09-org'
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -48,7 +48,7 @@ jobs:
   # The installer suite is split across four Windows runners; each shard drives Install-Workspace.ps1
   # under PowerShell 7 and compares against upstream main. fetch-depth 0 provides that commit.
   test-node-shard:
-    if: github.repository_owner == 'simpsonm09-org'
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -83,7 +83,7 @@ jobs:
         run: just test-node-shard ${{ matrix.shard }} 4
 
   test-node:
-    if: always() && github.repository_owner == 'simpsonm09-org'
+    if: always() && (github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects')
     runs-on: ubuntu-24.04
     needs: [test-node-shard]
     timeout-minutes: 5
@@ -96,7 +96,7 @@ jobs:
 
   # Informational portability signals only; neither job is part of the required test-node aggregate.
   test-macos:
-    if: github.repository_owner == 'simpsonm09-org'
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
     runs-on: macos-latest
     timeout-minutes: 30
     permissions:
@@ -124,7 +124,7 @@ jobs:
         run: just test-macos
 
   test-linux:
-    if: github.repository_owner == 'simpsonm09-org'
+    if: github.repository_owner == 'simpsonm09-org' || github.repository_owner == 'simpsonm09-projects'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
