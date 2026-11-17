@@ -17,4 +17,4 @@ Commits on a branch must be signed. The standard requires signed commits on `mai
 
 ## Scope
 
-Keep changes inside the repository's purpose. Do not commit secrets or machine-specific paths. The [`repo-standard` governance doc](https://github.com/simpsonm09-org/simpsonm09-repo-standard/blob/main/docs/governance.md) defines the branch model and the protection rules.
+Keep changes inside the repository's purpose. Do not commit secrets or machine-specific paths. The [`repo-standard` governance doc](https://github.com/simpsonm09-projects/simpsonm09-repo-standard/blob/main/docs/governance.md) defines the branch model and the protection rules.
