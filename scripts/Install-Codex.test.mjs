@@ -131,7 +131,10 @@ function writeTreeLayers(ctx, treeRoot, fileName) {
   return path;
 }
 
-// The installer of BASE_COMMIT, extracted from git archive, with its own layers.json.
+// The installer of BASE_COMMIT, extracted from git archive. The manifest is an
+// input the comparison holds constant, so both installers read this checkout's
+// layers.json; only the installer code differs. A manifest change is tested on
+// its own, not as a difference between installer versions.
 function exportBaseTree(ctx) {
   const archive = spawnSync('git', ['-C', repoRoot, 'archive', '--format=tar', BASE_COMMIT], { windowsHide: true, maxBuffer: 512 * 1024 * 1024 });
   assert.equal(archive.status, 0, `git archive ${BASE_COMMIT} failed: ${archive.stderr}`);
@@ -139,7 +142,7 @@ function exportBaseTree(ctx) {
   mkdirSync(tree);
   const extracted = spawnSync('tar', ['-x', '-f', '-', '-C', tree], { windowsHide: true, input: archive.stdout });
   assert.equal(extracted.status, 0, `tar could not extract ${BASE_COMMIT}: ${extracted.stderr}`);
-  return { installer: join(tree, 'scripts', 'Install-Workspace.ps1'), layersFile: writeTreeLayers(ctx, tree, 'layers-base.json') };
+  return { installer: join(tree, 'scripts', 'Install-Workspace.ps1'), layersFile: writeTreeLayers(ctx, repoRoot, 'layers-base.json') };
 }
 
 function mustRun(ctx, extra = [], options = {}) {

@@ -87,7 +87,7 @@
       "name": "simpsonm09-org-ai-plugin",
       "kind": "config",
       "path": "projects/repos/simpsonm09-org-ai-plugin",
-      "source": "https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin.git",
+      "source": "https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin.git",
       "commit": null,
       "claude": {
         "enabled": true,
@@ -119,7 +119,7 @@
       "name": "simpsonm09-personal-ai-plugin",
       "kind": "config",
       "path": "projects/repos/simpsonm09-personal-ai-plugin",
-      "source": "https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin.git",
+      "source": "https://github.com/simpsonm09-projects/simpsonm09-personal-ai-plugin.git",
       "commit": null,
       "claude": {
         "enabled": true,

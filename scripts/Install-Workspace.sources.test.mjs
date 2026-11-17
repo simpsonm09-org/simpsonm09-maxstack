@@ -980,7 +980,7 @@ withWorkspace('finding F4: a missing default layer names the clone URL and first
   rmSync(ORG_DEFAULT_FOLDER(ctx), { recursive: true, force: true });
   const apply = runInstaller(shell, ctx, []);
   assert.notEqual(apply.status, 0, 'an apply wrote past a missing default folder');
-  assert.ok(plainOutput(apply).includes(`Clone https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin.git to ${ORG_DEFAULT_FOLDER(ctx)}`), plainOutput(apply));
+  assert.ok(plainOutput(apply).includes(`Clone https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin.git to ${ORG_DEFAULT_FOLDER(ctx)}`), plainOutput(apply));
   assert.match(plainOutput(apply), /-Source simpsonm09-org-ai-plugin=local:<path>/);
   assert.match(plainOutput(apply), /layers\.simpsonm09-org-ai-plugin\.source in maxstack\.settings\.json/);
 }, {});
