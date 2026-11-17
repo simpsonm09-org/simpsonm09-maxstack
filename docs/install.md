@@ -26,8 +26,8 @@ Choose an empty workspace folder and clone the two local layers to the paths dec
 $Workspace = '<absolute workspace path>'
 New-Item -ItemType Directory -Force -Path $Workspace | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Workspace 'projects/repos') | Out-Null
-git clone https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin.git (Join-Path $Workspace 'projects/repos/simpsonm09-org-ai-plugin')
-git clone https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin.git (Join-Path $Workspace 'projects/repos/simpsonm09-personal-ai-plugin')
+git clone https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin.git (Join-Path $Workspace 'projects/repos/simpsonm09-org-ai-plugin')
+git clone https://github.com/simpsonm09-projects/simpsonm09-personal-ai-plugin.git (Join-Path $Workspace 'projects/repos/simpsonm09-personal-ai-plugin')
 npm install --prefix (Join-Path $Workspace '.maxstack/npm') '@earendil-works/pi-coding-agent'
 $PiCommand = Join-Path $Workspace '.maxstack/npm/node_modules/.bin/pi.cmd'
 
