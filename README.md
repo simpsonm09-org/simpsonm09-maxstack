@@ -2,7 +2,10 @@
 
 Personal AI tooling for OpenCode, Claude Code, GitHub Copilot CLI, and Pi, run from T3 Code, and for OpenAI Codex, which gets the workspace skills and instructions (opt-in). It coordinates the workspace config and the installer, and it pins the PStack plugin. maxstack sets no model: you pick the model in the harness.
 
-The original lives in `simpsonm09-org/simpsonm09-maxstack`; work happens on the personal fork. See [`repo-standard`](https://github.com/simpsonm09-org/simpsonm09-repo-standard).
+This repository lives in `simpsonm09-projects/simpsonm09-maxstack`. Work happens on a branch
+with a pull request into `main`.
+See [`repo-standard`](https://github.com/simpsonm09-projects/simpsonm09-repo-standard)
+for the branch model and the protection rules.
 
 ## What it does
 
@@ -60,8 +63,8 @@ MIT. See [`LICENSE`](LICENSE).
 ## Related repositories
 
 - [`simpsonm09/pstack-max`](https://github.com/simpsonm09/pstack-max) (fork) owns the PStack plugin in `plugins/pstack`, for all four runtimes.
-- [`org-ai-plugin`](https://github.com/simpsonm09-org/simpsonm09-org-ai-plugin) owns the shared MCP servers and skills.
-- [`personal-ai-plugin`](https://github.com/simpsonm09-org/simpsonm09-personal-ai-plugin) owns the personal MCP servers and skills.
-- [`simpsonm09-dev-setup`](https://github.com/simpsonm09-org/simpsonm09-dev-setup) owns the machine and app setup.
-- [`repo-standard`](https://github.com/simpsonm09-org/simpsonm09-repo-standard) owns the shared CI, linting, security, and governance.
-- [`repo-template`](https://github.com/simpsonm09-org/simpsonm09-repo-template) is the generated-repo starting point.
+- [`org-ai-plugin`](https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin) owns the shared MCP servers and skills.
+- [`personal-ai-plugin`](https://github.com/simpsonm09-projects/simpsonm09-personal-ai-plugin) owns the personal MCP servers and skills.
+- [`simpsonm09-dev-setup`](https://github.com/simpsonm09-projects/simpsonm09-dev-setup) owns the machine and app setup.
+- [`repo-standard`](https://github.com/simpsonm09-projects/simpsonm09-repo-standard) owns the shared CI, linting, security, and governance.
+- [`repo-template`](https://github.com/simpsonm09-projects/simpsonm09-repo-template) is the generated-repo starting point.
