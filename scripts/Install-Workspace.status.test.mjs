@@ -33,7 +33,7 @@ withWorkspace('the lock records each layer once, with its runtimes and no absolu
   assert.ok(!('primaryModel' in lock), 'the lock records no model');
   assert.match(lock.configSha256, /^[0-9a-fA-F]{64}$/);
   assert.equal(lock.layers.length, 3, 'one record per layer in layers.json');
-  assert.deepEqual(lock.layers.map((record) => record.name), ['org-ai-plugin', 'personal-ai-plugin', 'pstack']);
+  assert.deepEqual(lock.layers.map((record) => record.name), ['pstack', 'org-ai-plugin', 'personal-ai-plugin']);
   for (const record of lock.layers) {
     assert.equal(typeof record.name, 'string');
     assert.equal(typeof record.kind, 'string');

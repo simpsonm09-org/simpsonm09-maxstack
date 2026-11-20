@@ -1067,8 +1067,8 @@ withWorkspace('a link retargeted by hand is modified, and a file changed in a pi
   appendFileSync(join(ctx.workspace, '.claude', 'plugins', 'pstack', 'skills', 'poteto-mode', 'SKILL.md'), 'edit\n');
 
   assert.deepEqual(problemRows(runStatus(ctx)), [
-    { state: 'modified', label: '.claude/plugins/pstack' },
     { state: 'modified', label: '.claude/plugins/org-ai-plugin' },
+    { state: 'modified', label: '.claude/plugins/pstack' },
   ]);
   assert.equal(readFileSync(join(other, 'keep.txt'), 'utf8'), 'outside bytes', 'status followed the escaped link');
   mustApply(ctx);
