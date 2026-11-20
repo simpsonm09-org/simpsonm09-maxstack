@@ -10,7 +10,7 @@ const t3 = readFileSync(join(root, 'docs', 't3-setup.md'), 'utf8');
 
 test('finding F4: the new workspace guide gives prerequisites, layer sources, commands, T3 setup, and ignore paths', () => {
   const section = install.split('## New workspace\n')[1]?.split('\n## ')[0] ?? '';
-  for (const expected of ['PowerShell 7', 'Git', 'Node.js and npm', 'network access', 'simpsonm09-org-ai-plugin.git', 'simpsonm09-personal-ai-plugin.git', '-Status -Strict', 't3-setup.md#pi-maxstack']) {
+  for (const expected of ['PowerShell 7', 'Git', 'Node.js and npm', 'network access', 'org-ai-plugin.git', 'personal-ai-plugin.git', '-Status -Strict', 't3-setup.md#pi-maxstack']) {
     assert.ok(section.includes(expected), `new workspace guide is missing ${expected}`);
   }
   for (const ignored of ['.agents/', '.maxstack/', '.pi/', '.opencode/agents/', '.opencode/plugins/', 'opencode.jsonc*', 'stack.lock.json*']) {

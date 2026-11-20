@@ -35,13 +35,13 @@ Source key (short IDs used in cells):
 
 | ID | Path, relative to the repository named first |
 | --- | --- |
-| MS-MT | simpsonm09-maxstack/docs/master-template.md |
-| MS-T3 | simpsonm09-maxstack/docs/t3-setup.md |
-| MS-INST | simpsonm09-maxstack/docs/install.md |
-| MS-PUB | simpsonm09-maxstack/docs/plugin-publishing.md |
-| MS-MCP | simpsonm09-maxstack/docs/mcp.md |
-| MS-LAY | simpsonm09-maxstack/layers.json and pstack.lock.json |
-| MS-CXG | simpsonm09-maxstack/scripts/codex-hook-status.mjs and docs/t3-setup.md (Codex (maxstack)) |
+| MS-MT | maxstack/docs/master-template.md |
+| MS-T3 | maxstack/docs/t3-setup.md |
+| MS-INST | maxstack/docs/install.md |
+| MS-PUB | maxstack/docs/plugin-publishing.md |
+| MS-MCP | maxstack/docs/mcp.md |
+| MS-LAY | maxstack/layers.json and pstack.lock.json |
+| MS-CXG | maxstack/scripts/codex-hook-status.mjs and docs/t3-setup.md (Codex (maxstack)) |
 | PSC-PI | pstack-claude/docs/pi-equivalence.md |
 | PSC-HK | pstack-claude/plugins/pstack/hooks/hooks.json (main) |
 | PSC-CPH | pstack-claude/plugins/pstack/hooks/copilot-hooks.json (main) |
@@ -57,11 +57,11 @@ Source key (short IDs used in cells):
 | FORK-OC | FORK/opencode/ (index.ts, load.ts, routing.ts, agents/*.md) |
 | FORK-MAP-OC | FORK/skills/poteto-mode/references/opencode-tools.md (fork only) |
 | FORK-CXM | FORK/.codex-plugin/plugin.json |
-| ORG | simpsonm09-org-ai-plugin/README.md |
-| ORG-AGENTS | simpsonm09-org-ai-plugin/AGENTS.md |
-| PER | simpsonm09-personal-ai-plugin/README.md |
-| RS-AS | simpsonm09-repo-standard/docs/agents-and-skills.md |
-| RS-AG | simpsonm09-repo-standard/docs/features/agent-access.md |
+| ORG | org-ai-plugin/README.md |
+| ORG-AGENTS | org-ai-plugin/AGENTS.md |
+| PER | personal-ai-plugin/README.md |
+| RS-AS | repo-standard/docs/agents-and-skills.md |
+| RS-AG | repo-standard/docs/features/agent-access.md |
 | BRIEF-LIVE | Live checks made against Pi 1.1.0 with a local mock model on 2026-10-09 (not a document in the repos): on Pi the gate blocks and rewrites via tool_call; denied commands are blocked in print, rpc and child agents; an unanswered confirm resolves false after 3 s in rpc; the wrapper sets AGENT_ACCESS_PI_ASK=allow. |
 | LIVE-1020 | Live probe inside T3 on 2026-10-20: Claude, Codex, and Pi passed the same five checks described in LIVE-1021. Copilot was not run because of monthly quota; its earlier evidence remains separate. |
 | LIVE-1021 | Live probe made inside T3 on 2026-10-21, Windows 11 (not a document in the repos): one turn per harness that lists skills, quotes the workspace instructions, runs an allowed `gh repo view`, runs `gh label create` on simpsonm09-org/simpsonm09-gate-probe-missing (a repository missing from the fleet catalog, which the gate must deny), and starts a subagent. OpenCode (the T3 OpenCode instance, opencode/deepseek-v4.1-flash-free): all five passed, with 107 skills visible and the write denied with the reason `agent-access: denied: the destination simpsonm09-org/simpsonm09-gate-probe-missing denies admin at level "none"`. Cursor (the T3 `cursorAcp` instance, Auto): not run, the free plan limit answered "Upgrade your plan to continue"; fed a documented `beforeShellExecution` payload by hand, the installed `.cursor/hooks.json` command answers `{"permission":"deny",...}` with the same reason. Antigravity (the T3 `antigravity` instance, gemini-3.8-flash-low, three sessions): skills visible come from the user-global `~/.gemini/config/skills`, not the workspace; no workspace instructions loaded; the gate hook never ran and the probe write reached GitHub (HTTP 404); the hook was loaded neither from workspace `.agents/hooks.json` nor from T3's per-provider Antigravity config folder `hooks.json`; fed by hand, the installed adapter denies correctly. |
@@ -129,7 +129,7 @@ The macOS row marks live harness behavior as unverified; it does not mean fixtur
 
 ### 2.1 Skills load (same SKILL.md; naming and prefix)
 
-- Claude: **same**. Plugin skills load with a plugin prefix: `pstack:poteto-mode`, `simpsonm09-org-ai-plugin:repo-standard`. Evidence: MS-T3 (Claude Code table), RS-AS (Harnesses).
+- Claude: **same**. Plugin skills load with a plugin prefix: `pstack:poteto-mode`, `org-ai-plugin:repo-standard`. Evidence: MS-T3 (Claude Code table), RS-AS (Harnesses).
 - Copilot: **differs**: same files, invoked by bare name through the `skill` tool. The user types `/pstack:<skill>`; a bare `/<skill>` reports unknown on CLI 1.0.89. The skill list in the prompt is cut by a character budget. How Copilot treats the `user-invocable` and `paths` keys is not recorded (G8d). Evidence: PSC-MAP-CP (Tool actions, Per-skill notes).
 - OpenCode: **differs**: IDs are unprefixed (`poteto-mode`). The fork plugin registers `skills/` through `ctx.skill.transform`, so each skill and each `principle-*` loads by ID. A repo skill with the same ID collides (the prefix is what separates them on Claude). Verified by the live probe 2026-10-21: a T3 OpenCode session listed 107 skills, including `poteto-mode`, `repo-standard`, and `agent-vault`. Evidence: FORK-OC (index.ts, load.ts), FORK-MAP-OC (Tool actions), RS-AS (Skill rules), LIVE-1021.
 - Pi: **differs**: bare names; `/skill:<name>` forces one. The `pstack:` prefix is dropped; only agent types keep it. `user-invocable: false` is ignored, so `principle-*` skills show in completion. Pi also loads `%USERPROFILE%\.agents\skills`. Evidence: PSC-PI (T11, T12, S07a), MS-T3 (Pi known limits, Verified).

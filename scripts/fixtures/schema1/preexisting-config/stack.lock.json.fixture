@@ -10,8 +10,8 @@
     ],
     "layers": [
       "pstack",
-      "simpsonm09-org-ai-plugin",
-      "simpsonm09-personal-ai-plugin"
+      "org-ai-plugin",
+      "personal-ai-plugin"
     ]
   },
   "configSha256": "AEC56DC23EEAA537FBFFF10093DB7D5DEFBA789B67233217CD143CF7D8EF0B98",
@@ -40,8 +40,8 @@
     ],
     "skills": [
       "../../.claude/plugins/pstack/skills",
-      "../../.claude/plugins/simpsonm09-org-ai-plugin/skills",
-      "../../.claude/plugins/simpsonm09-personal-ai-plugin/skills"
+      "../../.claude/plugins/org-ai-plugin/skills",
+      "../../.claude/plugins/personal-ai-plugin/skills"
     ]
   },
   "layers": [
@@ -84,22 +84,22 @@
       }
     },
     {
-      "name": "simpsonm09-org-ai-plugin",
+      "name": "org-ai-plugin",
       "kind": "config",
-      "path": "projects/repos/simpsonm09-org-ai-plugin",
-      "source": "https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin.git",
+      "path": "projects/repos/org-ai-plugin",
+      "source": "https://github.com/simpsonm09-projects/org-ai-plugin.git",
       "commit": null,
       "claude": {
         "enabled": true,
-        "plugin": "simpsonm09-org-ai-plugin",
+        "plugin": "org-ai-plugin",
         "kind": "junction",
-        "child": ".claude/plugins/simpsonm09-org-ai-plugin",
-        "target": ".opencode/plugins/simpsonm09-org-ai-plugin",
+        "child": ".claude/plugins/org-ai-plugin",
+        "target": ".opencode/plugins/org-ai-plugin",
         "treeSha256": "8D9322C7D0BFFCB20F8AA468BD4C2D6CC141BA12A9DAF7C4E41B626455AB0A93"
       },
       "opencode": {
         "enabled": true,
-        "folder": ".opencode/plugins/simpsonm09-org-ai-plugin",
+        "folder": ".opencode/plugins/org-ai-plugin",
         "entry": "index.ts",
         "loader": "discovery",
         "plugin": null,
@@ -107,31 +107,31 @@
       },
       "copilot": {
         "enabled": true,
-        "pluginDir": ".claude/plugins/simpsonm09-org-ai-plugin"
+        "pluginDir": ".claude/plugins/org-ai-plugin"
       },
       "pi": {
         "enabled": true,
         "package": null,
-        "skills": ".claude/plugins/simpsonm09-org-ai-plugin/skills"
+        "skills": ".claude/plugins/org-ai-plugin/skills"
       }
     },
     {
-      "name": "simpsonm09-personal-ai-plugin",
+      "name": "personal-ai-plugin",
       "kind": "config",
-      "path": "projects/repos/simpsonm09-personal-ai-plugin",
-      "source": "https://github.com/simpsonm09-projects/simpsonm09-personal-ai-plugin.git",
+      "path": "projects/repos/personal-ai-plugin",
+      "source": "https://github.com/simpsonm09-projects/personal-ai-plugin.git",
       "commit": null,
       "claude": {
         "enabled": true,
-        "plugin": "simpsonm09-personal-ai-plugin",
+        "plugin": "personal-ai-plugin",
         "kind": "junction",
-        "child": ".claude/plugins/simpsonm09-personal-ai-plugin",
-        "target": ".opencode/plugins/simpsonm09-personal-ai-plugin",
+        "child": ".claude/plugins/personal-ai-plugin",
+        "target": ".opencode/plugins/personal-ai-plugin",
         "treeSha256": "6EE951B8391012BD54379D807B4313AE7D11DDFFBA8121673BC27DE6E504889F"
       },
       "opencode": {
         "enabled": true,
-        "folder": ".opencode/plugins/simpsonm09-personal-ai-plugin",
+        "folder": ".opencode/plugins/personal-ai-plugin",
         "entry": "index.ts",
         "loader": "discovery",
         "plugin": null,
@@ -139,12 +139,12 @@
       },
       "copilot": {
         "enabled": true,
-        "pluginDir": ".claude/plugins/simpsonm09-personal-ai-plugin"
+        "pluginDir": ".claude/plugins/personal-ai-plugin"
       },
       "pi": {
         "enabled": true,
         "package": null,
-        "skills": ".claude/plugins/simpsonm09-personal-ai-plugin/skills"
+        "skills": ".claude/plugins/personal-ai-plugin/skills"
       }
     }
   ],
@@ -156,19 +156,19 @@
       "sha256": "FEBFFDA8A42DD7BA4A6473B88315B92ED5C2B5DE3D8DD421F2D00531D59602C2"
     },
     {
+      "path": ".claude/plugins/org-ai-plugin",
+      "kind": "link",
+      "target": ".opencode/plugins/org-ai-plugin"
+    },
+    {
+      "path": ".claude/plugins/personal-ai-plugin",
+      "kind": "link",
+      "target": ".opencode/plugins/personal-ai-plugin"
+    },
+    {
       "path": ".claude/plugins/pstack",
       "kind": "dir",
       "sha256": "0BF82F192A626FD13EBA887D5ED44255D9DA1DDC98A49D85F4C15ECDFC0A87B0"
-    },
-    {
-      "path": ".claude/plugins/simpsonm09-org-ai-plugin",
-      "kind": "link",
-      "target": ".opencode/plugins/simpsonm09-org-ai-plugin"
-    },
-    {
-      "path": ".claude/plugins/simpsonm09-personal-ai-plugin",
-      "kind": "link",
-      "target": ".opencode/plugins/simpsonm09-personal-ai-plugin"
     },
     {
       "path": ".maxstack/bin/copilot.cmd",
@@ -206,19 +206,19 @@
       "sha256": "F12F36C536D99DAD7BAFE1226D0FE303223EC83F5660478F798608E27B675ACF"
     },
     {
-      "path": ".opencode/plugins/pstack",
-      "kind": "dir",
-      "sha256": "7D39BE45599C27C04B799E4E176D0C0F1F9E3C720265622CE20471256593A1FB"
-    },
-    {
-      "path": ".opencode/plugins/simpsonm09-org-ai-plugin",
+      "path": ".opencode/plugins/org-ai-plugin",
       "kind": "dir",
       "sha256": "8D9322C7D0BFFCB20F8AA468BD4C2D6CC141BA12A9DAF7C4E41B626455AB0A93"
     },
     {
-      "path": ".opencode/plugins/simpsonm09-personal-ai-plugin",
+      "path": ".opencode/plugins/personal-ai-plugin",
       "kind": "dir",
       "sha256": "6EE951B8391012BD54379D807B4313AE7D11DDFFBA8121673BC27DE6E504889F"
+    },
+    {
+      "path": ".opencode/plugins/pstack",
+      "kind": "dir",
+      "sha256": "7D39BE45599C27C04B799E4E176D0C0F1F9E3C720265622CE20471256593A1FB"
     },
     {
       "path": ".pi/agent/settings.json",
@@ -234,8 +234,8 @@
       "key": "skills",
       "entries": [
         "../../.claude/plugins/pstack/skills",
-        "../../.claude/plugins/simpsonm09-org-ai-plugin/skills",
-        "../../.claude/plugins/simpsonm09-personal-ai-plugin/skills"
+        "../../.claude/plugins/org-ai-plugin/skills",
+        "../../.claude/plugins/personal-ai-plugin/skills"
       ]
     },
     {
@@ -255,16 +255,16 @@
     ".claude/cache/pstack",
     ".claude/plugins",
     ".claude/plugins/pstack",
-    ".claude/plugins/simpsonm09-org-ai-plugin",
-    ".claude/plugins/simpsonm09-personal-ai-plugin",
+    ".claude/plugins/org-ai-plugin",
+    ".claude/plugins/personal-ai-plugin",
     ".maxstack",
     ".maxstack/bin",
     ".opencode",
     ".opencode/agents",
     ".opencode/plugins",
     ".opencode/plugins/pstack",
-    ".opencode/plugins/simpsonm09-org-ai-plugin",
-    ".opencode/plugins/simpsonm09-personal-ai-plugin",
+    ".opencode/plugins/org-ai-plugin",
+    ".opencode/plugins/personal-ai-plugin",
     ".pi",
     ".pi/agent"
   ],

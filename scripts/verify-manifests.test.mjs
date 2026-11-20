@@ -330,8 +330,8 @@ test('the layer names and the single plugin layer are checked', { skip }, () => 
 // An ownership record in the order the installer writes it: by path, then kind, then key.
 const OWNED = [
   { path: '.claude/cache/pstack', kind: 'dir', sha256: 'A'.repeat(64), runtime: null, layers: ['pstack'] },
+  { path: '.claude/plugins/org-ai-plugin', kind: 'link', target: '.opencode/plugins/org-ai-plugin', runtime: 'claude', layers: ['org-ai-plugin'] },
   { path: '.claude/plugins/pstack', kind: 'dir', sha256: 'B'.repeat(64), runtime: 'claude', layers: ['pstack'] },
-  { path: '.claude/plugins/simpsonm09-org-ai-plugin', kind: 'link', target: '.opencode/plugins/simpsonm09-org-ai-plugin', runtime: 'claude', layers: ['simpsonm09-org-ai-plugin'] },
   { path: '.maxstack/bin/pi.cmd', kind: 'file', sha256: 'C'.repeat(64), runtime: 'pi', layers: [] },
   { path: '.pi/agent/settings.json', kind: 'json-entries', key: 'packages', entries: ['../../.claude/cache/pstack'], runtime: 'pi', layers: ['pstack'] },
   { path: '.pi/agent/settings.json', kind: 'json-entries', key: 'skills', entries: ['../../.claude/plugins/pstack/skills'], runtime: 'pi', layers: ['pstack'] },
@@ -373,7 +373,7 @@ test('an owned record with a short hash, an unknown kind, or an extra field is r
     [{ ...OWNED[0], sha256: 'a'.repeat(64) }, /sha256 must be 64 upper-case hex digits/],
     [{ ...OWNED[0], kind: 'folder' }, /kind must be one of/],
     [{ ...OWNED[0], note: 'extra' }, /must hold exactly/],
-    [{ ...OWNED[2], target: '' }, /target must be a workspace-relative path/],
+    [{ ...OWNED[1], target: '' }, /target must be a workspace-relative path/],
   ];
   for (const [record, pattern] of cases) {
     const owned = OWNED.map((existing, index) => (index === 0 ? record : existing));

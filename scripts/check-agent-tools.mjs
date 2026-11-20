@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Check that the agent tool set in simpsonm09-dev-setup covers every service
+// Check that the agent tool set in dev-setup covers every service
 // owner the org integration registry names.
 //
 // This is a workspace-local check, not a CI gate. It reads two sibling
-// checkouts (simpsonm09-dev-setup and simpsonm09-org-ai-plugin) that CI does
+// checkouts (dev-setup and org-ai-plugin) that CI does
 // not have, so it runs from the workspace root and only when those exist.
 //
 //   node scripts/check-agent-tools.mjs
@@ -25,8 +25,8 @@ const OWNER_ALIASES = new Map([
   ['playwright/cli', 'playwright-cli'],
 ]);
 
-const DEV_SETUP_REL = join('projects', 'repos', 'simpsonm09-dev-setup', 'tools.yaml');
-const ORG_PLUGIN_REL = join('projects', 'repos', 'simpsonm09-org-ai-plugin', 'skills', 'service-integrations', 'SKILL.md');
+const DEV_SETUP_REL = join('projects', 'repos', 'dev-setup', 'tools.yaml');
+const ORG_PLUGIN_REL = join('projects', 'repos', 'org-ai-plugin', 'skills', 'service-integrations', 'SKILL.md');
 
 function commandWord(text) {
   let token = text.trim();

@@ -26,8 +26,8 @@ Choose an empty workspace folder and clone the two local layers to the paths dec
 $Workspace = '<absolute workspace path>'
 New-Item -ItemType Directory -Force -Path $Workspace | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Workspace 'projects/repos') | Out-Null
-git clone https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin.git (Join-Path $Workspace 'projects/repos/simpsonm09-org-ai-plugin')
-git clone https://github.com/simpsonm09-projects/simpsonm09-personal-ai-plugin.git (Join-Path $Workspace 'projects/repos/simpsonm09-personal-ai-plugin')
+git clone https://github.com/simpsonm09-projects/org-ai-plugin.git (Join-Path $Workspace 'projects/repos/org-ai-plugin')
+git clone https://github.com/simpsonm09-projects/personal-ai-plugin.git (Join-Path $Workspace 'projects/repos/personal-ai-plugin')
 npm install --prefix (Join-Path $Workspace '.maxstack/npm') '@earendil-works/pi-coding-agent'
 $PiCommand = Join-Path $Workspace '.maxstack/npm/node_modules/.bin/pi.cmd'
 
@@ -97,7 +97,7 @@ The selection is recorded in `stack.lock.json`, with each list sorted:
 ```json
 "selection": {
   "runtimes": ["claude", "copilot"],
-  "layers": ["pstack", "simpsonm09-org-ai-plugin", "simpsonm09-personal-ai-plugin"]
+  "layers": ["pstack", "org-ai-plugin", "personal-ai-plugin"]
 }
 ```
 
@@ -238,7 +238,7 @@ A layer installs from one source. `layers.json` gives each layer its default sou
 
 ```powershell
 pwsh -File scripts/Install-Workspace.ps1 -Source pstack=simpsonm09/pstack-max@feat/opencode-runtime -Apply
-pwsh -File scripts/Install-Workspace.ps1 -Source simpsonm09-personal-ai-plugin=local:<absolute path> -Apply
+pwsh -File scripts/Install-Workspace.ps1 -Source personal-ai-plugin=local:<absolute path> -Apply
 pwsh -File scripts/Install-Workspace.ps1 -Source pstack=default -Apply
 ```
 
@@ -307,7 +307,7 @@ A local source records HEAD and the dirty flag of its checkout. It never records
 ```text
 Layer sources not at their committed pin:
   pstack: override, git <url> ref feat/opencode-runtime at <commit>
-  simpsonm09-org-ai-plugin: local, default projects/repos/simpsonm09-org-ai-plugin (not a git checkout)
+  org-ai-plugin: local, default projects/repos/org-ai-plugin (not a git checkout)
 ```
 
 Every override, every local source, and every branch or tag override is listed. A git layer pinned by commit in `layers.json` is not.
@@ -404,7 +404,7 @@ Use `-Remove` with `-Runtimes` or `-Layers` to remove selected recorded outputs 
 ```powershell
 pwsh -File scripts/Install-Workspace.ps1 -Remove -Runtimes pi
 pwsh -File scripts/Install-Workspace.ps1 -Remove -Runtimes pi -Apply
-pwsh -File scripts/Install-Workspace.ps1 -Remove -Layers simpsonm09-personal-ai-plugin -Apply
+pwsh -File scripts/Install-Workspace.ps1 -Remove -Layers personal-ai-plugin -Apply
 pwsh -File scripts/Install-Workspace.ps1 -Uninstall -Apply
 ```
 

@@ -15,7 +15,7 @@ export const installer = join(repoRoot, 'scripts', 'Install-Workspace.ps1');
 
 // The two local layers. Each declares every runtime, and each needs a manifest whose name
 // matches its layer name. pstack is pinned to a git source and needs no local checkout.
-export const LOCAL_LAYERS = ['projects/repos/simpsonm09-org-ai-plugin', 'projects/repos/simpsonm09-personal-ai-plugin'];
+export const LOCAL_LAYERS = ['projects/repos/org-ai-plugin', 'projects/repos/personal-ai-plugin'];
 
 export const MISSING_COPILOT = 'maxstack-test-no-such-copilot';
 
@@ -393,7 +393,7 @@ export const escapedChar = (char) => `\\u${char.charCodeAt(0).toString(16).toUpp
 export const lockText = (ctx) => readFileSync(lockPath(ctx), 'utf8');
 
 // A checkout the -Source flag can name: a stub layer folder under the temp base, initialised as a git repository.
-export function localCheckout(ctx, name, layer = 'simpsonm09-org-ai-plugin') {
+export function localCheckout(ctx, name, layer = 'org-ai-plugin') {
   const checkout = join(ctx.base, name);
   writeLayerStub(checkout, { claudePlugin: layer });
   gitRun(checkout, ['init', '-q']);
@@ -515,9 +515,9 @@ export function ownedRecord(lock, path, kind, key = '') {
   return lock.owned.find((record) => record.path === path && record.kind === kind && (record.key ?? '') === key);
 }
 
-export const ORG_FOLDER = '.opencode/plugins/simpsonm09-org-ai-plugin';
+export const ORG_FOLDER = '.opencode/plugins/org-ai-plugin';
 
-export const ORG_SOURCE = 'projects/repos/simpsonm09-org-ai-plugin';
+export const ORG_SOURCE = 'projects/repos/org-ai-plugin';
 
 // The runtime and layer selection. The selection is recorded in stack.lock.json, and each test reads
 // the lock and the tree the apply wrote.

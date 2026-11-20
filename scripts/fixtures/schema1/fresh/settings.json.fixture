@@ -4,7 +4,7 @@
   ],
   "skills": [
     "../../.claude/plugins/pstack/skills",
-    "../../.claude/plugins/simpsonm09-org-ai-plugin/skills",
-    "../../.claude/plugins/simpsonm09-personal-ai-plugin/skills"
+    "../../.claude/plugins/org-ai-plugin/skills",
+    "../../.claude/plugins/personal-ai-plugin/skills"
   ]
 }

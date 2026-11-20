@@ -21,10 +21,10 @@
       }
     },
     {
-      "name": "simpsonm09-org-ai-plugin",
+      "name": "org-ai-plugin",
       "kind": "config",
-      "path": "projects/repos/simpsonm09-org-ai-plugin",
-      "source": "https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin.git",
+      "path": "projects/repos/org-ai-plugin",
+      "source": "https://github.com/simpsonm09-projects/org-ai-plugin.git",
       "runtimes": {
         "opencode": {},
         "claude": {},
@@ -33,10 +33,10 @@
       }
     },
     {
-      "name": "simpsonm09-personal-ai-plugin",
+      "name": "personal-ai-plugin",
       "kind": "config",
-      "path": "projects/repos/simpsonm09-personal-ai-plugin",
-      "source": "https://github.com/simpsonm09-projects/simpsonm09-personal-ai-plugin.git",
+      "path": "projects/repos/personal-ai-plugin",
+      "source": "https://github.com/simpsonm09-projects/personal-ai-plugin.git",
       "runtimes": {
         "opencode": {},
         "claude": {},

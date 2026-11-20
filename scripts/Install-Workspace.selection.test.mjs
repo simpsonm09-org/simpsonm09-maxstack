@@ -68,9 +68,9 @@ withWorkspace('-InitSettings converts recorded git and in-workspace local overri
   pstack.source = { kind: 'git', url: 'https://github.com/example-org/example-repo.git', ref: 'feature/settings', commit: ctx.fixture.commit, override: true };
   const localPath = join(ctx.workspace, 'seed-checkout');
   cpSync(ctx.fixture.dir, localPath, { recursive: true });
-  const org = lock.layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin');
+  const org = lock.layers.find((layer) => layer.name === 'org-ai-plugin');
   org.source = { kind: 'local', url: null, ref: null, commit: ctx.fixture.commit, dirty: false, override: true, path: localPath };
-  const personal = lock.layers.find((layer) => layer.name === 'simpsonm09-personal-ai-plugin');
+  const personal = lock.layers.find((layer) => layer.name === 'personal-ai-plugin');
   personal.source = { kind: 'git', url: 'https://git.example.invalid/team/example-layer.git', ref: 'v2', commit: ctx.fixture.commit, override: true };
   writeFileSync(lockPath, JSON.stringify(lock, null, 2));
 
@@ -80,8 +80,8 @@ withWorkspace('-InitSettings converts recorded git and in-workspace local overri
   assert.equal(existsSync(trace), false, 'seeding invoked Git to resolve the recorded branch');
   const value = JSON.parse(seed.stdout.slice(seed.stdout.indexOf('{')));
   assert.equal(value.layers.pstack.source, 'example-org/example-repo@feature/settings');
-  assert.equal(value.layers['simpsonm09-org-ai-plugin'].source, 'local:seed-checkout');
-  assert.equal(value.layers['simpsonm09-personal-ai-plugin'].source, 'https://git.example.invalid/team/example-layer.git@v2');
+  assert.equal(value.layers['org-ai-plugin'].source, 'local:seed-checkout');
+  assert.equal(value.layers['personal-ai-plugin'].source, 'https://git.example.invalid/team/example-layer.git@v2');
   assert.equal(existsSync(join(ctx.workspace, 'maxstack.settings.json')), false);
 
   org.source.path = join(ctx.base, 'outside-seed-checkout');
@@ -90,7 +90,7 @@ withWorkspace('-InitSettings converts recorded git and in-workspace local overri
   const absoluteSeed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
   assertOk(absoluteSeed);
   const absoluteValue = JSON.parse(absoluteSeed.stdout.slice(absoluteSeed.stdout.indexOf('{')));
-  assert.equal(absoluteValue.layers['simpsonm09-org-ai-plugin'].source, `local:${org.source.path}`);
+  assert.equal(absoluteValue.layers['org-ai-plugin'].source, `local:${org.source.path}`);
   assert.match(plainOutput(absoluteSeed), /machine path/i);
 }, {});
 
@@ -117,15 +117,15 @@ withWorkspace('findings 9 and 10: a malformed lock source, selection, or InitSet
 // Finding 11: an InitSettings seed refuses a recorded layer whose lock name holds a zero width space.
 withWorkspace('finding 11: -InitSettings refuses a lock layer record named with a zero width space, and prints no seed', (ctx) => {
   const extA = localCheckout(ctx, 'ext-a');
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${extA}`]);
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${extA}`]);
   const lock = readJson(lockPath(ctx));
-  const record = lock.layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin');
-  record.name = `simpsonm09-org-ai-plugin${ZWSP}`;
+  const record = lock.layers.find((layer) => layer.name === 'org-ai-plugin');
+  record.name = `org-ai-plugin${ZWSP}`;
   writeFileSync(lockPath(ctx), JSON.stringify(lock));
   const run = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
   assert.notEqual(run.status, 0, plainOutput(run));
   assert.match(plainOutput(run), /holds the character \\u200B/);
-  assert.doesNotMatch(plainOutput(run), /"simpsonm09-org-ai-plugin": \{/, 'the seed printed the layer');
+  assert.doesNotMatch(plainOutput(run), /"org-ai-plugin": \{/, 'the seed printed the layer');
 }, {});
 
 // Finding 14: a lock key in the wrong case is refused by -InitSettings and by apply, and the lock is unchanged.
@@ -205,12 +205,12 @@ withWorkspace('a recorded selection that names only runtimes and layers layers.j
   writeFileSync(lockPath(ctx), JSON.stringify(lock));
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
   assertOk(status, plainOutput(status));
-  assert.match(plainOutput(status), /Selection: runtimes claude, copilot, opencode, pi; layers pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin/);
+  assert.match(plainOutput(status), /Selection: runtimes claude, copilot, opencode, pi; layers org-ai-plugin, personal-ai-plugin, pstack/);
   // A plain apply after that lock writes every name, so the retired names are not kept in the selection.
   const apply = runInstaller(shell, ctx, []);
   assertOk(apply, plainOutput(apply));
   assert.deepEqual(readJson(lockPath(ctx)).selection.runtimes, ['claude', 'copilot', 'opencode', 'pi']);
-  assert.deepEqual(readJson(lockPath(ctx)).selection.layers, ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']);
+  assert.deepEqual(readJson(lockPath(ctx)).selection.layers, ['org-ai-plugin', 'personal-ai-plugin', 'pstack']);
 }, {});
 
 withWorkspace('-InitSettings refuses a lock with no ownedSchema, and never overwrites a settings file made by a hard link', (ctx) => {
@@ -258,14 +258,14 @@ withWorkspace('-InitSettings seeds the migration fixture selection exactly: four
   mustApply(ctx);
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   assert.deepEqual([...lock.selection.runtimes].sort(), ['claude', 'copilot', 'opencode', 'pi']);
-  assert.deepEqual([...lock.selection.layers].sort(), ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']);
+  assert.deepEqual([...lock.selection.layers].sort(), ['org-ai-plugin', 'personal-ai-plugin', 'pstack']);
   const seed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
   assertOk(seed);
   const value = JSON.parse(seed.stdout.slice(seed.stdout.indexOf('{')));
   assert.deepEqual(value, {
     version: 1,
     runtimes: { claude: {}, copilot: {}, opencode: {}, pi: {} },
-    layers: { pstack: {}, 'simpsonm09-org-ai-plugin': {}, 'simpsonm09-personal-ai-plugin': {} },
+    layers: { pstack: {}, 'org-ai-plugin': {}, 'personal-ai-plugin': {} },
   });
 }, {});
 
@@ -343,14 +343,14 @@ withWorkspace('-InitSettings local source seed reapplies in a fresh workspace wi
   const orgOverride = join(ctx.workspace, 'org-override');
   cpSync(ctx.fixture.dir, pstackOverride, { recursive: true });
   cpSync(join(ctx.workspace, LOCAL_LAYERS[0]), orgOverride, { recursive: true });
-  const firstApply = runInstaller(shell, ctx, ['-Source', `pstack=local:${pstackOverride},simpsonm09-org-ai-plugin=local:${orgOverride}`]);
+  const firstApply = runInstaller(shell, ctx, ['-Source', `pstack=local:${pstackOverride},org-ai-plugin=local:${orgOverride}`]);
   assertOk(firstApply);
   const firstLock = readJson(join(ctx.workspace, 'stack.lock.json'));
   const seedRun = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
   assertOk(seedRun);
   const seed = JSON.parse(seedRun.stdout.slice(seedRun.stdout.indexOf('{')));
   assert.equal(seed.layers.pstack.source, 'local:pstack-override');
-  assert.equal(seed.layers['simpsonm09-org-ai-plugin'].source, 'local:org-override');
+  assert.equal(seed.layers['org-ai-plugin'].source, 'local:org-override');
 
   const fresh = buildWorkspace();
   try {
@@ -361,7 +361,7 @@ withWorkspace('-InitSettings local source seed reapplies in a fresh workspace wi
     assertOk(secondApply);
     const secondLock = readJson(join(fresh.workspace, 'stack.lock.json'));
     assert.deepEqual(secondLock.selection, firstLock.selection);
-    for (const name of ['pstack', 'simpsonm09-org-ai-plugin']) {
+    for (const name of ['org-ai-plugin', 'pstack']) {
       const oldSource = firstLock.layers.find((layer) => layer.name === name).source;
       const newSource = secondLock.layers.find((layer) => layer.name === name).source;
       assert.equal(newSource.kind, oldSource.kind);
@@ -410,7 +410,7 @@ withWorkspace('-InitSettings refuses an absent lock and malformed recorded overr
 
 withWorkspace('a layer that stops naming a folder leaves no copy of it in the owned folder', (ctx) => {
   // docs is not a Pi skills folder, so the layer can stop naming it without tripping the Pi check.
-  const root = join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+  const root = join(ctx.workspace, 'projects', 'repos', 'org-ai-plugin');
   writeFile(root, 'docs/readme.md', 'docs\n');
   const withDocs = readJson(join(root, 'layer.json'));
   writeFile(root, 'layer.json', JSON.stringify({ ...withDocs, files: [...withDocs.files, 'docs'] }));
@@ -424,7 +424,7 @@ withWorkspace('a layer that stops naming a folder leaves no copy of it in the ow
   assert.deepEqual(problemRows(runStatus(ctx)), []);
 }, {});
 
-const ALL_LAYERS = ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin'];
+const ALL_LAYERS = ['org-ai-plugin', 'personal-ai-plugin', 'pstack'];
 
 withWorkspace('a fresh -Runtimes claude,copilot writes only those runtimes, and records the selection', (ctx) => {
   mustApply(ctx, ['-Runtimes', 'claude,copilot']);
@@ -436,11 +436,11 @@ withWorkspace('a fresh -Runtimes claude,copilot writes only those runtimes, and 
     assert.ok(existsSync(at(present)), `${present} is missing`);
   }
   // With no OpenCode copy to link to, each local layer is a copy of the items it names.
-  for (const plugin of ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']) {
+  for (const plugin of ['org-ai-plugin', 'personal-ai-plugin']) {
     assert.ok(!isLink(at(`.claude/plugins/${plugin}`)), `${plugin} links to a folder that was not written`);
     assert.ok(existsSync(at(`.claude/plugins/${plugin}/.claude-plugin/plugin.json`)), `${plugin} has no manifest`);
     // The copy holds the layer's own bytes for each item it names.
-    const source = plugin === 'simpsonm09-org-ai-plugin' ? ORG_SOURCE : 'projects/repos/simpsonm09-personal-ai-plugin';
+    const source = plugin === 'org-ai-plugin' ? ORG_SOURCE : 'projects/repos/personal-ai-plugin';
     for (const item of ['index.ts', 'package.json', 'skills/demo-skill/SKILL.md', '.claude-plugin/plugin.json']) {
       assert.deepEqual(readFileSync(at(`.claude/plugins/${plugin}/${item}`)), readFileSync(at(`${source}/${item}`)), `${plugin}/${item} is not the layer's file`);
     }
@@ -484,15 +484,15 @@ withWorkspace('-Runtimes opencode -Layers pstack writes one layer, and a later -
   mustApply(ctx, ['-Runtimes', 'opencode', '-Layers', 'pstack']);
   const at = (path) => join(ctx.workspace, ...path.split('/'));
   assert.ok(existsSync(at('.opencode/plugins/pstack/opencode/index.ts')), 'the pstack entry is missing');
-  assert.ok(!existsSync(at('.opencode/plugins/simpsonm09-org-ai-plugin')), 'the org layer is not selected');
-  assert.ok(!existsSync(at('.opencode/plugins/simpsonm09-personal-ai-plugin')), 'the personal layer is not selected');
+  assert.ok(!existsSync(at('.opencode/plugins/org-ai-plugin')), 'the org layer is not selected');
+  assert.ok(!existsSync(at('.opencode/plugins/personal-ai-plugin')), 'the personal layer is not selected');
   assert.ok(!existsSync(at('.claude/plugins')), 'claude is not selected');
   assert.deepEqual(selectionOf(ctx), { runtimes: ['opencode'], layers: ['pstack'] });
 
-  mustApply(ctx, ['-Layers', 'simpsonm09-org-ai-plugin']);
-  assert.ok(existsSync(at('.opencode/plugins/simpsonm09-org-ai-plugin/index.ts')), 'the org layer did not install');
-  assert.ok(!existsSync(at('.opencode/plugins/simpsonm09-personal-ai-plugin')), 'the personal layer was added');
-  assert.deepEqual(selectionOf(ctx), { runtimes: ['opencode'], layers: ['pstack', 'simpsonm09-org-ai-plugin'] });
+  mustApply(ctx, ['-Layers', 'org-ai-plugin']);
+  assert.ok(existsSync(at('.opencode/plugins/org-ai-plugin/index.ts')), 'the org layer did not install');
+  assert.ok(!existsSync(at('.opencode/plugins/personal-ai-plugin')), 'the personal layer was added');
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['opencode'], layers: ['org-ai-plugin', 'pstack'] });
 }, {});
 
 // The bytes of each output file, as latin1 text so that one character is one byte. Each temporary base
@@ -550,7 +550,7 @@ withWorkspace('an unknown runtime or layer name fails, lists the valid names, an
   assert.match(plainOutput(runtime), /-Runtimes names an unknown name 'gemini'\. Valid names: claude, opencode, copilot, pi, codex, cursor, antigravity, or all\./);
   const layer = runInstaller(shell, ctx, ['-Layers', 'nope']);
   assert.notEqual(layer.status, 0, 'the installer accepted an unknown layer');
-  assert.match(plainOutput(layer), /-Layers names an unknown name 'nope'\. Valid names: pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin, or all\./);
+  assert.match(plainOutput(layer), /-Layers names an unknown name 'nope'\. Valid names: pstack, org-ai-plugin, personal-ai-plugin, or all\./);
   assert.ok(!existsSync(lockPath(ctx)), 'a rejected run wrote the lock');
   assert.ok(!existsSync(join(ctx.workspace, '.claude')), 'a rejected run wrote the Claude folder');
 }, {});
@@ -562,7 +562,7 @@ withWorkspaceNeeding('python', python, 'a lock with no selection reads as all, a
   writeFileSync(lockPath(ctx), JSON.stringify(lock));
 
   const status = runStatus(ctx);
-  assert.match(status.stdout, /^Selection: runtimes claude, copilot, opencode, pi; layers pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin \(the lock predates the selection, so all\)\r?$/m, status.stdout);
+  assert.match(status.stdout, /^Selection: runtimes claude, copilot, opencode, pi; layers org-ai-plugin, personal-ai-plugin, pstack \(the lock predates the selection, so all\)\r?$/m, status.stdout);
   const home = join(ctx.base, 'home');
   mkdirSync(home);
   const verify = spawnSync(python, [verifyWorkspaceScript, '--workspace', ctx.workspace, '--home', home], { windowsHide: true, encoding: 'utf8' });
@@ -578,7 +578,7 @@ withWorkspace('status prints the selection first, names an unselected file, and 
   assert.equal(run.status, 0, run.stdout);
   // Warnings also print to stdout, and the discovery line names the resolved target, so the first line that is neither must be the selection.
   const [first] = run.stdout.split(/\r?\n/).filter((line) => !line.includes('WARNING:') && !line.startsWith(`Workspace: ${ctx.workspace} (from -Workspace)`));
-  assert.equal(first, 'Selection: runtimes claude, copilot; layers pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin', 'the selection is not the first line');
+  assert.equal(first, 'Selection: runtimes claude, copilot; layers org-ai-plugin, personal-ai-plugin, pstack', 'the selection is not the first line');
   assert.match(run.stdout, /^not selected +\.maxstack\/bin\/pi\.cmd\r?$/m, run.stdout);
   assert.doesNotMatch(run.stdout, /^(matching|drifted|modified|missing|untracked) .*opencode/m, 'status judged an OpenCode path');
   // The file, plus the two runtimes layers.json names that this selection leaves out.
@@ -620,25 +620,25 @@ withWorkspace('a runtime that is not selected is never looked up, so its CLI is 
 }, {});
 
 withWorkspace('comma-separated -Runtimes and -Layers values bind under pwsh -File, one token each', (ctx) => {
-  mustApply(ctx, ['-Runtimes', 'claude,opencode', '-Layers', 'pstack,simpsonm09-org-ai-plugin']);
-  assert.deepEqual(selectionOf(ctx), { runtimes: ['claude', 'opencode'], layers: ['pstack', 'simpsonm09-org-ai-plugin'] });
-  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'index.ts')), 'the named org layer is missing');
+  mustApply(ctx, ['-Runtimes', 'claude,opencode', '-Layers', 'pstack,org-ai-plugin']);
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['claude', 'opencode'], layers: ['org-ai-plugin', 'pstack'] });
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin', 'index.ts')), 'the named org layer is missing');
 }, {});
 
 withWorkspace('a later -Runtimes opencode replaces the claude copies with links to the OpenCode copies', (ctx) => {
   mustApply(ctx, ['-Runtimes', 'claude']);
-  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
+  const child = join(ctx.workspace, '.claude', 'plugins', 'org-ai-plugin');
   assert.ok(!isLink(child), 'the claude copy is a link before opencode is selected');
   mustApply(ctx, ['-Runtimes', 'opencode']);
   assert.ok(isLink(child), 'the copy was not replaced by a link');
   assert.ok(existsSync(join(child, '.claude-plugin', 'plugin.json')), 'the link does not reach the manifest');
-  assert.equal(readJson(lockPath(ctx)).layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin').claude.kind, expectedClaudeLinkKind);
+  assert.equal(readJson(lockPath(ctx)).layers.find((layer) => layer.name === 'org-ai-plugin').claude.kind, expectedClaudeLinkKind);
 }, {});
 
 // The review fixes. A recorded name that layers.json no longer names is dropped with a warning, a new layer
 // or runtime is named until a flag adds it, an unreadable lock is refused with the cost of deleting it, the
 // lock is replaced whole, and the verifiers refuse a block that is enabled for an unselected runtime.
-const LAYER_PERSONAL = 'simpsonm09-personal-ai-plugin';
+const LAYER_PERSONAL = 'personal-ai-plugin';
 
 withWorkspace('a layer removed from layers.json is dropped from the selection with a warning, and every command still runs', (ctx) => {
   mustApply(ctx);
@@ -663,7 +663,7 @@ withWorkspace('a layer removed from layers.json is dropped from the selection wi
   assert.match(plainOutput(applied), warning);
   assert.ok(!existsSync(personalFolder), 'the removed layer kept its OpenCode folder');
   assert.ok(!existsSync(personalLink), 'the removed layer kept its Claude folder');
-  assert.deepEqual(selectionOf(ctx), { runtimes: ALL_RUNTIMES, layers: ['pstack', 'simpsonm09-org-ai-plugin'] });
+  assert.deepEqual(selectionOf(ctx), { runtimes: ALL_RUNTIMES, layers: ['org-ai-plugin', 'pstack'] });
 
   const after = runInstaller(shell, ctx, ['-Status'], { apply: false, layersFile: withoutPersonal });
   assert.equal(after.status, 0, after.stdout);
@@ -687,7 +687,7 @@ withWorkspace('a layer added to layers.json later is not installed by a plain ap
   mustApply(ctx, [], { layersFile: withoutPersonal });
   const personalFolder = join(ctx.workspace, '.opencode', 'plugins', LAYER_PERSONAL);
   assert.ok(!existsSync(personalFolder));
-  assert.deepEqual(selectionOf(ctx).layers, ['pstack', 'simpsonm09-org-ai-plugin']);
+  assert.deepEqual(selectionOf(ctx).layers, ['org-ai-plugin', 'pstack']);
 
   const applied = mustApply(ctx);
   const note = `layer '${LAYER_PERSONAL}' is in layers.json but not selected, so this run does not install it. Add it with -Layers ${LAYER_PERSONAL}.`;
@@ -704,7 +704,7 @@ withWorkspace('a layer added to layers.json later is not installed by a plain ap
 
   const flagged = mustApply(ctx, ['-Layers', LAYER_PERSONAL]);
   assert.ok(existsSync(personalFolder), 'the named layer was not installed');
-  assert.deepEqual(selectionOf(ctx).layers, ['pstack', 'simpsonm09-org-ai-plugin', LAYER_PERSONAL]);
+  assert.deepEqual(selectionOf(ctx).layers, ['org-ai-plugin', LAYER_PERSONAL, 'pstack']);
   assert.doesNotMatch(plainOutput(flagged), /is in layers\.json but not selected/);
 }, {});
 
@@ -781,16 +781,16 @@ withWorkspace('pstack installs from a local checkout, comma-separated with anoth
   const head = gitRun(pstackCheckout, ['rev-parse', 'HEAD']);
   writeFile(pstackCheckout, SKILL_PATH, '---\nname: poteto-mode\ndescription: fixture\n---\nlocal edit\n');
   const orgCheckout = join(ctx.base, 'org-plain');
-  writeLayerStub(orgCheckout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(orgCheckout, { claudePlugin: 'org-ai-plugin' });
 
-  mustApply(ctx, ['-Source', `pstack=local:${pstackCheckout},simpsonm09-org-ai-plugin=local:${orgCheckout}`]);
+  mustApply(ctx, ['-Source', `pstack=local:${pstackCheckout},org-ai-plugin=local:${orgCheckout}`]);
   assert.match(readFileSync(installedSkill(ctx), 'utf8'), /local edit/, 'pstack was not installed from its checkout');
   assert.ok(existsSync(join(ctx.workspace, '.claude', 'plugins', 'pstack', '.claude-plugin', 'plugin.json')), 'the Claude copy lacks the manifest');
   assert.equal(existsSync(join(ctx.workspace, '.claude', 'plugins', 'pstack', '.git')), false, 'the Claude copy carries .git');
   assert.deepEqual(sourceOf(ctx, 'pstack').source, { kind: 'local', url: null, ref: null, commit: head, dirty: true, override: true, path: pstackCheckout });
   assert.equal(existsSync(join(ctx.workspace, '.claude', 'cache', 'pstack')), false, 'a local source keeps no git cache');
 
-  const org = sourceOf(ctx, 'simpsonm09-org-ai-plugin');
+  const org = sourceOf(ctx, 'org-ai-plugin');
   assert.equal(org.commit, null, 'a folder that is not a git checkout records no commit');
   assert.equal(org.source.dirty, null, 'a folder that is not a git checkout records no dirty flag');
 }, {});

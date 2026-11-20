@@ -33,8 +33,8 @@ const standin = join(here, "fixtures", "pi-standin.mjs");
 const verifier = join(here, "verify-pi-harness.mjs");
 const LAYERS = {
   pstack: "poteto-mode",
-  "simpsonm09-org-ai-plugin": "repo-standard",
-  "simpsonm09-personal-ai-plugin": "dev-tools",
+  "org-ai-plugin": "repo-standard",
+  "personal-ai-plugin": "dev-tools",
 };
 
 const temps = [];
@@ -169,12 +169,12 @@ test("the workspace is the explicit path, then MAXSTACK_WORKSPACE, then a marker
 });
 
 test("a skill is picked per layer from its settings folder, and a missing layer is named", () => {
-  const ws = makeWorkspace({ omitLayer: "simpsonm09-personal-ai-plugin" });
+  const ws = makeWorkspace({ omitLayer: "personal-ai-plugin" });
   const settings = readPiSettings(ws);
   const picked = pickLayerSkills(Object.keys(LAYERS), settings.skills);
   assert.equal(picked[0].name, "poteto-mode");
   assert.equal(picked[0].layerPath, "plugins/pstack/skills/poteto-mode/SKILL.md");
-  assert.match(picked[2].error, /no skills folder for simpsonm09-personal-ai-plugin/);
+  assert.match(picked[2].error, /no skills folder for personal-ai-plugin/);
 });
 
 test("the Pi binary is read from the wrapper, and MAXSTACK_PI_BIN wins as the wrapper does", () => {
@@ -256,12 +256,12 @@ test("the verifier fails when Pi does not start", async () => {
 
 test("the verifier names the layer whose skill is missing from the settings", async () => {
   const { checks } = await runPiHarness({
-    workspace: makeWorkspace({ omitLayer: "simpsonm09-personal-ai-plugin" }),
+    workspace: makeWorkspace({ omitLayer: "personal-ai-plugin" }),
     standin,
     standinMode: "gate",
   });
   const failed = checks.filter((check) => !check.ok).map((check) => check.name);
-  assert.deepEqual(failed, ["pstack-pi-extension-loaded", "skill-simpsonm09-personal-ai-plugin-in-system-prompt"]);
+  assert.deepEqual(failed, ["pstack-pi-extension-loaded", "skill-personal-ai-plugin-in-system-prompt"]);
 });
 
 test("a workspace with no Pi settings is a setup error, not a check failure", async () => {

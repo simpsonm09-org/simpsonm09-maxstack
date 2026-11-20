@@ -15,7 +15,7 @@ withWorkspace('cursor is opt-in, copies selected layer skills byte for byte, and
   assert.equal(existsSync(join(ctx.workspace, '.cursor')), false, 'the default apply writes no Cursor folder');
 
   const sources = readJson(lockPath(ctx)).layers;
-  const org = sources.find((layer) => layer.name === 'simpsonm09-org-ai-plugin');
+  const org = sources.find((layer) => layer.name === 'org-ai-plugin');
   const source = org.source.kind === 'local' ? join(ctx.workspace, org.source.path) : join(ctx.workspace, LOCAL_LAYERS[0]);
   const skill = join(source, 'skills', 'demo-skill', 'SKILL.md');
   const expected = readFileSync(skill);
@@ -29,7 +29,7 @@ withWorkspace('cursor is opt-in, copies selected layer skills byte for byte, and
   assert.deepEqual(selectionOf(ctx).runtimes, [...ALL_RUNTIMES, 'cursor'].sort());
   const record = readJson(lockPath(ctx)).owned.find((entry) => entry.path === '.cursor/skills/demo-skill');
   assert.equal(record.runtime, 'cursor');
-  assert.deepEqual(record.layers, ['simpsonm09-org-ai-plugin']);
+  assert.deepEqual(record.layers, ['org-ai-plugin']);
 
   const before = readFileSync(target);
   mustApply(ctx);
@@ -209,13 +209,13 @@ withWorkspace('cursor projects the layer selected by a local source override', (
   renameDuplicate(ctx);
   const alternate = join(ctx.base, 'alternate-org');
   writeLayerStub(alternate, {
-    claudePlugin: 'simpsonm09-org-ai-plugin',
+    claudePlugin: 'org-ai-plugin',
     extra: { 'skills/override-skill/SKILL.md': '---\nname: override-skill\ndescription: fixture\n---\noverride\n' },
   });
-  mustApply(ctx, ['-Runtimes', 'cursor', '-Source', `simpsonm09-org-ai-plugin=local:${alternate}`]);
+  mustApply(ctx, ['-Runtimes', 'cursor', '-Source', `org-ai-plugin=local:${alternate}`]);
   const target = join(ctx.workspace, '.cursor', 'skills', 'override-skill', 'SKILL.md');
   assert.equal(readFileSync(target, 'utf8'), '---\nname: override-skill\ndescription: fixture\n---\noverride\n');
-  assert.deepEqual(readJson(lockPath(ctx)).owned.find((record) => record.path === '.cursor/skills/override-skill').layers, ['simpsonm09-org-ai-plugin']);
+  assert.deepEqual(readJson(lockPath(ctx)).owned.find((record) => record.path === '.cursor/skills/override-skill').layers, ['org-ai-plugin']);
 }, {});
 
 withWorkspace('cursor refuses case-insensitive duplicate skill identities before writing its target', (ctx) => {
