@@ -33,7 +33,7 @@ withWorkspace('the lock records each layer once, with its runtimes and no absolu
   assert.ok(!('primaryModel' in lock), 'the lock records no model');
   assert.match(lock.configSha256, /^[0-9a-fA-F]{64}$/);
   assert.equal(lock.layers.length, 3, 'one record per layer in layers.json');
-  assert.deepEqual(lock.layers.map((record) => record.name), ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']);
+  assert.deepEqual(lock.layers.map((record) => record.name), ['pstack', 'org-ai-plugin', 'personal-ai-plugin']);
   for (const record of lock.layers) {
     assert.equal(typeof record.name, 'string');
     assert.equal(typeof record.kind, 'string');
@@ -58,13 +58,13 @@ withWorkspace('a layer source is recorded but not applied, so each one gets a no
   writeWorkspaceSettings(ctx, {
     version: 1,
     runtimes: { claude: {} },
-    layers: { pstack: { source: 'default' }, 'simpsonm09-personal-ai-plugin': { source: 'local:projects/repos/simpsonm09-personal-ai-plugin' } },
+    layers: { pstack: { source: 'default' }, 'personal-ai-plugin': { source: 'local:projects/repos/personal-ai-plugin' } },
   });
   const applied = mustApply(ctx);
   assert.doesNotMatch(applied.stdout, /layers\.[a-z-]+\.source/, 'an apply does not report a declared source that matches the lock');
   const status = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
   assert.equal(status.status, 0, plainOutput(status));
-  assert.match(status.stdout, /^Settings: layers\.simpsonm09-personal-ai-plugin\.source is declared; a read-only run uses the recorded source, and only an apply uses the declaration\.\r?$/m);
+  assert.match(status.stdout, /^Settings: layers\.personal-ai-plugin\.source is declared; a read-only run uses the recorded source, and only an apply uses the declaration\.\r?$/m);
   assert.doesNotMatch(status.stdout, /layers\.pstack\.source is declared/, 'a default source is not reported as declared');
   assert.doesNotMatch(status.stdout, /recorded but not applied/);
 
@@ -85,7 +85,7 @@ withWorkspace('-Status -Strict fails for an unlisted runtime on its own, with th
 }, {});
 
 withWorkspace('-Status -Strict fails for an unlisted layer on its own, with the note that names it', (ctx) => {
-  const personal = 'simpsonm09-personal-ai-plugin';
+  const personal = 'personal-ai-plugin';
   writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {} }, layers: { pstack: {}, [personal]: {} } });
   mustApply(ctx);
   writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {} }, layers: { pstack: {} } });
@@ -147,13 +147,13 @@ withWorkspace('finding 1: a lock edited to a runtime with a zero width joiner is
 withWorkspace('finding 6: a -Source name with a zero width space is refused, and the recorded override is kept', (ctx) => {
   const extA = localCheckout(ctx, 'ext-a');
   const extB = localCheckout(ctx, 'ext-b');
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${extA}`]);
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${extA}`]);
   const before = lockText(ctx);
   for (const flag of ['-Source', '-LayerSource']) {
-    const value = flag === '-Source' ? `simpsonm09-org-ai-plugin${ZWSP}=local:${extB}` : `simpsonm09-org-ai-plugin${ZWSP}=${extB}`;
+    const value = flag === '-Source' ? `org-ai-plugin${ZWSP}=local:${extB}` : `org-ai-plugin${ZWSP}=${extB}`;
     const run = runInstaller(shell, ctx, [flag, value]);
     assert.notEqual(run.status, 0, `${flag}: ${plainOutput(run)}`);
-    assert.match(plainOutput(run), /-(?:Layer)?Source name 'simpsonm09-org-ai-plugin\\u200B' holds the character \\u200B/, flag);
+    assert.match(plainOutput(run), /-(?:Layer)?Source name 'org-ai-plugin\\u200B' holds the character \\u200B/, flag);
     assert.equal(lockText(ctx), before, `${flag} changed the lock`);
   }
 }, {});
@@ -161,7 +161,7 @@ withWorkspace('finding 6: a -Source name with a zero width space is refused, and
 // Finding 16: a read-only status with an unavailable declared source marks that layer's files skipped, not drifted.
 withWorkspace("finding 16: -Status marks a skipped layer's files skipped, not drifted, and -Strict does not fail on them", (ctx) => {
   mustApply(ctx);
-  writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {}, opencode: {}, copilot: {}, pi: {} }, layers: { pstack: { source: 'local:nope' }, 'simpsonm09-org-ai-plugin': {}, 'simpsonm09-personal-ai-plugin': {} } });
+  writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {}, opencode: {}, copilot: {}, pi: {} }, layers: { pstack: { source: 'local:nope' }, 'org-ai-plugin': {}, 'personal-ai-plugin': {} } });
   const status = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
   assert.equal(status.status, 0, plainOutput(status));
   const rows = statusRows(status).filter((row) => /pstack/.test(row.label));
@@ -193,7 +193,7 @@ withWorkspace('audit reports a config that still sets a model as drift', (ctx) =
 withWorkspace('audit reports drift in every runtime and writes nothing', (ctx) => {
   const before = runInstaller(shell, ctx, [], { apply: false });
   assert.equal(before.status, 0, before.stderr);
-  for (const child of ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin', 'pstack']) {
+  for (const child of ['org-ai-plugin', 'personal-ai-plugin', 'pstack']) {
     assert.match(before.stdout, new RegExp(`plugins\\\\${child}: missing`), `missing drift for ${child}`);
   }
   assert.match(before.stdout, /plugins\\pstack: missing/);
@@ -225,18 +225,18 @@ withWorkspace('apply records an owned entry for every path it wrote, and the rec
   for (const record of owned) {
     assert.ok('runtime' in record && 'layers' in record, `${record.path} names no runtime and layers`);
   }
-  assert.deepEqual(owned.find((record) => record.path === '.opencode/plugins/simpsonm09-org-ai-plugin').layers, ['simpsonm09-org-ai-plugin']);
+  assert.deepEqual(owned.find((record) => record.path === '.opencode/plugins/org-ai-plugin').layers, ['org-ai-plugin']);
   assert.equal(owned.find((record) => record.path === '.maxstack/bin/pi.cmd').runtime, 'pi');
   assert.equal(owned.find((record) => record.path === '.claude/cache/pstack').runtime, null, 'the claude cache belongs to no runtime');
   const find = (path, kind, key) => owned.find((record) => record.path === path && record.kind === kind && (key === undefined || record.key === key));
 
   assert.match(find('opencode.jsonc', 'file').sha256, /^[0-9A-F]{64}$/);
-  for (const plugin of ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']) {
+  for (const plugin of ['org-ai-plugin', 'personal-ai-plugin']) {
     assert.equal(find(`.claude/plugins/${plugin}`, 'link').target, `.opencode/plugins/${plugin}`, `the link of ${plugin}`);
   }
   assert.match(find('.claude/plugins/pstack', 'dir').sha256, /^[0-9A-F]{64}$/);
   assert.match(find('.claude/cache/pstack', 'dir').sha256, /^[0-9A-F]{64}$/);
-  for (const plugin of ['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']) {
+  for (const plugin of ['pstack', 'org-ai-plugin', 'personal-ai-plugin']) {
     assert.match(find(`.opencode/plugins/${plugin}`, 'dir').sha256, /^[0-9A-F]{64}$/, `the OpenCode folder of ${plugin}`);
   }
   for (const agent of ['pstack-agent.md', 'pstack-reviewer.md', 'pstack-comment-sicko.md']) {
@@ -326,10 +326,10 @@ withWorkspace('status reports a removed Pi entry alone, and never reports a key 
 
 withWorkspace('a layer source that changed since the apply is drifted, not modified', (ctx) => {
   mustApply(ctx);
-  writeFile(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin/skills/new-skill/SKILL.md', '---\nname: new-skill\ndescription: fixture\n---\nbody\n');
+  writeFile(ctx.workspace, 'projects/repos/org-ai-plugin/skills/new-skill/SKILL.md', '---\nname: new-skill\ndescription: fixture\n---\nbody\n');
   const run = runStatus(ctx);
   assert.equal(run.status, 0, run.stderr);
-  assert.deepEqual(problemRows(run), [{ state: 'drifted', label: '.opencode/plugins/simpsonm09-org-ai-plugin' }], run.stdout);
+  assert.deepEqual(problemRows(run), [{ state: 'drifted', label: '.opencode/plugins/org-ai-plugin' }], run.stdout);
 
   mustApply(ctx);
   assert.deepEqual(problemRows(runStatus(ctx)), [], 'an apply did not bring the record back to matching');
@@ -337,16 +337,16 @@ withWorkspace('a layer source that changed since the apply is drifted, not modif
 
 withWorkspace('finding audit/status: an OpenCode folder tracks source drift in audit and status, then matches after apply', (ctx) => {
   mustApply(ctx);
-  writeFile(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin/skills/new-skill/SKILL.md', '---\nname: new-skill\ndescription: fixture\n---\nbody\n');
+  writeFile(ctx.workspace, 'projects/repos/org-ai-plugin/skills/new-skill/SKILL.md', '---\nname: new-skill\ndescription: fixture\n---\nbody\n');
   const audit = runInstaller(shell, ctx, [], { apply: false });
   const status = runStatus(ctx);
-  assert.match(audit.stdout, /\.opencode[\\/]+plugins[\\/]+simpsonm09-org-ai-plugin: drifted/, audit.stdout);
-  assert.match(status.stdout, /drifted\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin/, status.stdout);
+  assert.match(audit.stdout, /\.opencode[\\/]+plugins[\\/]+org-ai-plugin: drifted/, audit.stdout);
+  assert.match(status.stdout, /drifted\s+\.opencode\/plugins\/org-ai-plugin/, status.stdout);
   mustApply(ctx);
   const matchingAudit = runInstaller(shell, ctx, [], { apply: false });
   const matchingStatus = runStatus(ctx);
-  assert.match(matchingAudit.stdout, /\.opencode[\\/]+plugins[\\/]+simpsonm09-org-ai-plugin: matching/, matchingAudit.stdout);
-  assert.match(matchingStatus.stdout, /matching\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin/, matchingStatus.stdout);
+  assert.match(matchingAudit.stdout, /\.opencode[\\/]+plugins[\\/]+org-ai-plugin: matching/, matchingAudit.stdout);
+  assert.match(matchingStatus.stdout, /matching\s+\.opencode\/plugins\/org-ai-plugin/, matchingStatus.stdout);
 }, {});
 
 withWorkspace('finding new workspace audit: local sources can be audited before the first lock exists', (ctx) => {
@@ -480,14 +480,14 @@ withWorkspace('the recorded hashes match an independent recomputation, and each 
   const at = (path) => join(ctx.workspace, ...path.split('/'));
 
   assert.equal(ownedRecord(lock, 'opencode.jsonc', 'file').sha256, sha256Upper(readFileSync(at('opencode.jsonc'))));
-  for (const folder of ['.opencode/plugins/pstack', ORG_FOLDER, '.opencode/plugins/simpsonm09-personal-ai-plugin', '.claude/plugins/pstack', '.claude/cache/pstack']) {
+  for (const folder of ['.opencode/plugins/pstack', ORG_FOLDER, '.opencode/plugins/personal-ai-plugin', '.claude/plugins/pstack', '.claude/cache/pstack']) {
     assert.equal(ownedRecord(lock, folder, 'dir').sha256, independentSha(at(folder), 'owned'), `the tree hash of ${folder}`);
   }
   for (const wrapper of ['copilot.cmd', 'copilot.sh', 'pi.cmd', 'pi.sh']) {
     assert.equal(ownedRecord(lock, `.maxstack/bin/${wrapper}`, 'file').sha256, sha256Upper(readFileSync(at(`.maxstack/bin/${wrapper}`))), wrapper);
   }
   assert.equal(ownedRecord(lock, '.opencode/agents/pstack-agent.md', 'file').sha256, sha256Upper(readFileSync(at('.opencode/agents/pstack-agent.md'))));
-  assert.equal(ownedRecord(lock, '.claude/plugins/simpsonm09-org-ai-plugin', 'link').target, ORG_FOLDER);
+  assert.equal(ownedRecord(lock, '.claude/plugins/org-ai-plugin', 'link').target, ORG_FOLDER);
   assert.deepEqual(ownedRecord(lock, '.pi/agent/settings.json', 'json-entries', 'packages').entries, ['../../.claude/cache/pstack']);
   const check = spawnSync(python, [verifyManifestsScript, '--lock', lockPath(ctx)], { windowsHide: true, encoding: 'utf8' });
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
@@ -495,7 +495,7 @@ withWorkspace('the recorded hashes match an independent recomputation, and each 
 
 withWorkspace('status reports a link matching its recorded target as drifted when the planned target changes', (ctx) => {
   mustApply(ctx);
-  const linkPath = '.claude/plugins/simpsonm09-org-ai-plugin';
+  const linkPath = '.claude/plugins/org-ai-plugin';
   const child = join(ctx.workspace, ...linkPath.split('/'));
   const alternate = join(ctx.workspace, '.opencode', 'plugins', 'status-target');
   mkdirSync(alternate);
@@ -629,14 +629,14 @@ withWorkspace('a node_modules folder inside an owned folder is counted in the pl
   writeFile(ctx.workspace, `${ORG_FOLDER}/node_modules/extra/index.js`, 'module.exports = 1;\n');
   const plan = removal(ctx, ['-Uninstall'], { apply: false });
   assertOk(plan);
-  assert.match(plan.stdout, /^DELETE\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+.*node_modules \(\d+ files, \d+ bytes\)/m, plan.stdout);
+  assert.match(plan.stdout, /^DELETE\s+\.opencode\/plugins\/org-ai-plugin\s+.*node_modules \(\d+ files, \d+ bytes\)/m, plan.stdout);
 
   const outside = join(ctx.base, 'outside-modules');
   writeFile(outside, 'keep.txt', 'outside\n');
   symlinkSync(outside, join(ORG_FOLDER_FULL(ctx), 'node_modules', 'linked'), 'junction');
   const refused = removal(ctx, ['-Uninstall']);
   assertOk(refused);
-  assert.match(refused.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+refused: a junction under/m, refused.stdout);
+  assert.match(refused.stdout, /^SKIP\s+\.opencode\/plugins\/org-ai-plugin\s+refused: a junction under/m, refused.stdout);
   assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf8'), 'outside\n', 'the junction target was changed');
   assert.ok(existsSync(ORG_FOLDER_FULL(ctx)), 'the refused folder was deleted');
 }, {});
@@ -660,7 +660,7 @@ withWorkspace('-Source owner/repo@branch installs the branch commit, and the loc
   const pstack = sourceOf(ctx, 'pstack');
   assert.deepEqual(pstack.source, { kind: 'git', url: remoteUrl(ctx, 'simpsonm09', 'pstack-max'), ref: 'feat', commit: featCommit, override: true });
   assert.equal(pstack.commit, featCommit, 'the layer commit is the resolved branch commit');
-  assert.equal(sourceOf(ctx, 'simpsonm09-org-ai-plugin').source.override, false, 'a layer no flag names is not an override');
+  assert.equal(sourceOf(ctx, 'org-ai-plugin').source.override, false, 'a layer no flag names is not an override');
 }, {});
 
 withWorkspace('a recorded override persists across a plain apply, and -Source name=default drops it', (ctx) => {
@@ -679,16 +679,16 @@ withWorkspace('a recorded override persists across a plain apply, and -Source na
 
 withWorkspace('a local source installs the working tree as it is, and the lock records HEAD and the dirty flag', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
   gitRun(checkout, ['commit', '-q', '-m', 'layer']);
   const head = gitRun(checkout, ['rev-parse', 'HEAD']);
   writeFile(checkout, 'index.ts', 'export default { edited: true };\n');
 
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
-  assert.match(readFileSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'index.ts'), 'utf8'), /edited: true/);
-  const org = sourceOf(ctx, 'simpsonm09-org-ai-plugin');
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
+  assert.match(readFileSync(join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin', 'index.ts'), 'utf8'), /edited: true/);
+  const org = sourceOf(ctx, 'org-ai-plugin');
   assert.deepEqual(org.source, { kind: 'local', url: null, ref: null, commit: head, dirty: true, override: true, path: checkout });
   assert.equal(org.commit, head);
 }, {});
@@ -704,7 +704,7 @@ withWorkspace('-Status prints the layer-source block above the state rows, with 
   assert.ok(block.firstState > block.header, 'the block is below a state row');
   const text = block.lines.join('\n');
   assert.match(text, new RegExp(`pstack: override, git \\S+ ref feat at ${featCommit}`), text);
-  assert.match(text, /simpsonm09-org-ai-plugin: local, default /, text);
+  assert.match(text, /org-ai-plugin: local, default /, text);
   assert.doesNotMatch(text, /pstack: .*local/, 'a pinned git layer is listed as local');
 }, {});
 
@@ -715,8 +715,8 @@ withWorkspace('a default workspace lists its local layers in the block and no gi
   const block = sourceBlockOf(status.stdout);
   assert.ok(block, status.stdout);
   const text = block.lines.join('\n');
-  assert.match(text, /simpsonm09-org-ai-plugin: local, default/);
-  assert.match(text, /simpsonm09-personal-ai-plugin: local, default/);
+  assert.match(text, /org-ai-plugin: local, default/);
+  assert.match(text, /personal-ai-plugin: local, default/);
   assert.doesNotMatch(text, /pstack/, 'the pinned pstack layer is listed');
 }, {});
 
@@ -746,29 +746,29 @@ withWorkspace('a lock from before the source block lists its local layers as def
   for (const layer of lock.layers) {
     layer.source = layer.source.url;
   }
-  lock.layers.find((layer) => layer.name === 'simpsonm09-org-ai-plugin').commit = LEGACY_COMMIT;
+  lock.layers.find((layer) => layer.name === 'org-ai-plugin').commit = LEGACY_COMMIT;
   setLock(ctx, lock);
 
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
   assertOk(status);
   const text = sourceBlockOf(status.stdout).lines.join('\n');
-  assert.match(text, new RegExp(`simpsonm09-org-ai-plugin: local, default \\S+ \\(HEAD ${LEGACY_COMMIT}, dirty state not recorded\\)`), text);
+  assert.match(text, new RegExp(`org-ai-plugin: local, default \\S+ \\(HEAD ${LEGACY_COMMIT}, dirty state not recorded\\)`), text);
   assert.doesNotMatch(text, /pstack/, 'the pinned pstack layer is listed');
 }, {});
 
 withWorkspace('a local override the lock holds with a relative path is ignored by -Status, and a plain apply refuses it', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
   const lock = readJson(lockPath(ctx));
-  sourceBlockIn(lock, 'simpsonm09-org-ai-plugin').path = 'relative/checkout';
+  sourceBlockIn(lock, 'org-ai-plugin').path = 'relative/checkout';
   setLock(ctx, lock);
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
   assertOk(status);
-  assert.match(plainOutput(status), /layer 'simpsonm09-org-ai-plugin' has an invalid path/, plainOutput(status));
+  assert.match(plainOutput(status), /layer 'org-ai-plugin' has an invalid path/, plainOutput(status));
   const apply = runInstaller(shell, ctx, []);
   assert.notEqual(apply.status, 0, 'an apply wrote a layer whose recorded path is relative');
-  assert.match(plainOutput(apply), /-Source simpsonm09-org-ai-plugin=default -Apply/, plainOutput(apply));
+  assert.match(plainOutput(apply), /-Source org-ai-plugin=default -Apply/, plainOutput(apply));
 }, {});
 
 // Finding 8: npm runs with --ignore-scripts, and a layer that declares install scripts or a binding.gyp is named when it runs.
@@ -784,31 +784,31 @@ function orgNeedingNpm(ctx, { packageJson, files, extra = {} }) {
 const ORG_FILES = ['index.ts', 'package.json', 'skills', '.claude-plugin'];
 
 withWorkspace('an apply that runs npm names a layer that declares an install script, since its scripts do not run', (ctx) => {
-  orgNeedingNpm(ctx, { packageJson: { name: 'simpsonm09-org-ai-plugin', version: '0.1.0', scripts: { postinstall: 'node build.js' } }, files: ORG_FILES });
+  orgNeedingNpm(ctx, { packageJson: { name: 'org-ai-plugin', version: '0.1.0', scripts: { postinstall: 'node build.js' } }, files: ORG_FILES });
   const run = mustApply(ctx);
-  assert.match(plainOutput(run), /npm ran with --ignore-scripts for layer 'simpsonm09-org-ai-plugin': its scripts\.postinstall did not run/, plainOutput(run));
+  assert.match(plainOutput(run), /npm ran with --ignore-scripts for layer 'org-ai-plugin': its scripts\.postinstall did not run/, plainOutput(run));
   assert.doesNotMatch(plainOutput(run), /ignore-scripts for layer 'pstack'/, 'a layer with no install script is named');
 }, NPM);
 
 withWorkspace('an apply that runs npm names a layer that ships a binding.gyp, since its native build does not run', (ctx) => {
-  orgNeedingNpm(ctx, { packageJson: { name: 'simpsonm09-org-ai-plugin', version: '0.1.0' }, files: [...ORG_FILES, 'binding.gyp'], extra: { 'binding.gyp': '{}\n' } });
+  orgNeedingNpm(ctx, { packageJson: { name: 'org-ai-plugin', version: '0.1.0' }, files: [...ORG_FILES, 'binding.gyp'], extra: { 'binding.gyp': '{}\n' } });
   const run = mustApply(ctx);
-  assert.match(plainOutput(run), /npm ran with --ignore-scripts for layer 'simpsonm09-org-ai-plugin': its binding\.gyp did not run/, plainOutput(run));
+  assert.match(plainOutput(run), /npm ran with --ignore-scripts for layer 'org-ai-plugin': its binding\.gyp did not run/, plainOutput(run));
 }, NPM);
 
 withWorkspace('an apply that runs npm on a layer with no install script or binding.gyp prints no ignore-scripts warning', (ctx) => {
-  orgNeedingNpm(ctx, { packageJson: { name: 'simpsonm09-org-ai-plugin', version: '0.1.0' }, files: ORG_FILES });
+  orgNeedingNpm(ctx, { packageJson: { name: 'org-ai-plugin', version: '0.1.0' }, files: ORG_FILES });
   const run = mustApply(ctx);
   assert.doesNotMatch(plainOutput(run), /npm ran with --ignore-scripts/, plainOutput(run));
 }, NPM);
 
 withWorkspace('a drive root or a share root is refused as a local source, with the reason', (ctx) => {
   const driveRoot = parsePath(tmpdir()).root;
-  const drive = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${driveRoot}`], { apply: false });
+  const drive = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${driveRoot}`], { apply: false });
   assert.notEqual(drive.status, 0, 'a drive root was accepted as a layer source');
   assert.match(plainOutput(drive), /is a drive or share root, which cannot be a layer source/, drive.stdout);
 
-  const share = runInstaller(shell, ctx, ['-Source', 'simpsonm09-org-ai-plugin=local://server/share'], { apply: false });
+  const share = runInstaller(shell, ctx, ['-Source', 'org-ai-plugin=local://server/share'], { apply: false });
   assert.notEqual(share.status, 0, 'a share root was accepted as a layer source');
   assert.match(plainOutput(share), /UNC or device path/, share.stdout);
 }, {});
@@ -837,7 +837,7 @@ withWorkspace('an apply that runs npm counts the installed packages that declare
 // Finding 5: the scan of the packages npm installed is a warning only. A folder it cannot read must not stop an apply after the
 // plugin folder is replaced and before the lock is written.
 withWorkspace('an apply whose npm scan cannot read a scoped folder still writes its lock, with no ignore-scripts warning', (ctx) => {
-  orgNeedingNpm(ctx, { packageJson: { name: 'simpsonm09-org-ai-plugin', version: '0.1.0' }, files: ORG_FILES });
+  orgNeedingNpm(ctx, { packageJson: { name: 'org-ai-plugin', version: '0.1.0' }, files: ORG_FILES });
   const run = mustApply(ctx, [], { env: { ...ctx.env, FAKE_NPM_BROKEN_SCOPE: '1' } });
   assert.doesNotMatch(plainOutput(run), /ignore-scripts/, plainOutput(run));
   assert.ok(existsSync(lockPath(ctx)), 'the apply stopped before the lock was written');
@@ -845,7 +845,7 @@ withWorkspace('an apply whose npm scan cannot read a scoped folder still writes 
 
 // Finding 6: a long-path prefix is dropped only from a drive path. \\?\UNC\server\share names a share, and stays one.
 withWorkspace('a long-path UNC share is refused as a share root, not read as a folder under the current directory', (ctx) => {
-  const run = runInstaller(shell, ctx, ['-Source', 'simpsonm09-org-ai-plugin=local:\\\\?\\UNC\\server\\share'], { apply: false });
+  const run = runInstaller(shell, ctx, ['-Source', 'org-ai-plugin=local:\\\\?\\UNC\\server\\share'], { apply: false });
   assert.notEqual(run.status, 0, 'a long-path UNC share was accepted as a layer source');
   // A device prefix is refused by its text, before any path is read, so the UNC share is not reached.
   assert.match(plainOutput(run), /UNC or device path/, run.stdout);
@@ -854,10 +854,10 @@ withWorkspace('a long-path UNC share is refused as a share root, not read as a f
 // Finding 9: a recorded fault already ends in a period, so the warning and the refusal join it with a space, not a second period.
 withWorkspace('a recorded override with a relative path is warned and refused with one period after the reason', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
   const lock = readJson(lockPath(ctx));
-  sourceBlockIn(lock, 'simpsonm09-org-ai-plugin').path = 'relative/checkout';
+  sourceBlockIn(lock, 'org-ai-plugin').path = 'relative/checkout';
   setLock(ctx, lock);
 
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false });

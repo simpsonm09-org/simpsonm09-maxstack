@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { LOCAL_LAYERS, lockPath, mustApply, plainOutput, readJson, removal, runStatus, selectionOf, statusRows, withWorkspace } from './lib/installer-test-kit.mjs';
 
 const ORG = LOCAL_LAYERS[0];
-const ORG_NAME = 'simpsonm09-org-ai-plugin';
+const ORG_NAME = 'org-ai-plugin';
 
 const CURSOR_DEFINITION = `${JSON.stringify({
   version: 1,

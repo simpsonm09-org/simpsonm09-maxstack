@@ -101,8 +101,8 @@ The alternative is an instance environment entry, `CLAUDE_CODE_PLUGIN_DIRS`, wit
 | Plugin | Folder | Source | Skills appear as |
 | --- | --- | --- | --- |
 | `pstack` | `.claude\plugins\pstack` | a copy of `plugins/pstack` from pstack-max, our fork of pstack-claude, at the commit in `pstack.lock.json` | `pstack:poteto-mode`, and the other `pstack:*` skills |
-| `simpsonm09-org-ai-plugin` | `.claude\plugins\simpsonm09-org-ai-plugin` | a junction to `.opencode\plugins\simpsonm09-org-ai-plugin` | `simpsonm09-org-ai-plugin:repo-standard`, and the other `simpsonm09-org-ai-plugin:*` skills |
-| `simpsonm09-personal-ai-plugin` | `.claude\plugins\simpsonm09-personal-ai-plugin` | a junction to `.opencode\plugins\simpsonm09-personal-ai-plugin` | `simpsonm09-personal-ai-plugin:dev-tools`, and the other `simpsonm09-personal-ai-plugin:*` skills |
+| `org-ai-plugin` | `.claude\plugins\org-ai-plugin` | a junction to `.opencode\plugins\org-ai-plugin` | `org-ai-plugin:repo-standard`, and the other `org-ai-plugin:*` skills |
+| `personal-ai-plugin` | `.claude\plugins\personal-ai-plugin` | a junction to `.opencode\plugins\personal-ai-plugin` | `personal-ai-plugin:dev-tools`, and the other `personal-ai-plugin:*` skills |
 
 The local folders are junctions to the installed OpenCode copies, so there is still one installed copy for both harnesses. One `Install-Workspace.ps1 -Apply` updates both. A junction needs no administrator rights. Each plugin's hooks run only in sessions that load it, and they resolve their files through the junction.
 
@@ -185,7 +185,7 @@ The wrapper cannot take another agent folder, so the check reads the Pi binary t
 
 ### Check Pi with a real local model
 
-Pi reads any OpenAI-compatible endpoint from `.pi\agent\models.json`: a provider with its `baseUrl`, `"api": "openai-completions"`, and the model ids the server serves. The workspace file already has a provider for a local llama.cpp server, `llama-local`. maxstack sets no model. Pick one in the T3 model picker. The optional llama.cpp note in `simpsonm09-dev-setup` covers starting that server, and the note is being added separately. Any local server that speaks the OpenAI chat API works the same way, not only llama.cpp.
+Pi reads any OpenAI-compatible endpoint from `.pi\agent\models.json`: a provider with its `baseUrl`, `"api": "openai-completions"`, and the model ids the server serves. The workspace file already has a provider for a local llama.cpp server, `llama-local`. maxstack sets no model. Pick one in the T3 model picker. The optional llama.cpp note in `dev-setup` covers starting that server, and the note is being added separately. Any local server that speaks the OpenAI chat API works the same way, not only llama.cpp.
 
 If T3 reports that the provider could not start a turn, read the server log for `Model not found: <provider>/<model>`. That message means the picker holds a model that the Pi agent folder does not define, such as a model from an earlier test provider. Pick a model that `models.json` still lists.
 

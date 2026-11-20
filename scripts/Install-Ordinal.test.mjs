@@ -129,7 +129,7 @@ $cases = @(
   @('agentFile', '.opencode/agents/pstack-agent.md'),
   @('piEntry', '.pi/agent/settings.json [packages] "../../.claude/cache/pstack"'),
   @('longerWord', '.claude/plugins/xpstack'),
-  @('otherLayer', '.claude/plugins/simpsonm09-org-ai-plugin'),
+  @('otherLayer', '.claude/plugins/org-ai-plugin'),
   @('prefixOnly', '.claude/plugins/pstackhelper')
 )
 foreach ($case in $cases) { "OUT|$($case[0])|$(Test-SkippedLabel -Label $case[1] -Layers $layers)" }

@@ -39,7 +39,7 @@ pwsh -File scripts/Install-Workspace.ps1 -Status
   },
   "layers": {
     "pstack": {},
-    "simpsonm09-org-ai-plugin": {}
+    "org-ai-plugin": {}
   },
   "t3": {
     "defaults": "leave-alone",

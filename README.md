@@ -2,14 +2,14 @@
 
 Personal AI tooling for OpenCode, Claude Code, GitHub Copilot CLI, and Pi, run from T3 Code, and for OpenAI Codex, which gets the workspace skills and instructions (opt-in). It coordinates the workspace config and the installer, and it pins the PStack plugin. maxstack sets no model: you pick the model in the harness.
 
-This repository lives in `simpsonm09-projects/simpsonm09-maxstack`. Work happens on a branch
+This repository lives in `simpsonm09-projects/maxstack`. Work happens on a branch
 with a pull request into `main`.
 See [`repo-standard`](https://github.com/simpsonm09-projects/simpsonm09-repo-standard)
 for the branch model and the protection rules.
 
 ## What it does
 
-`maxstack` owns AI composition for the `<workspace>` workspace. It holds the workspace config fragment, the ordered layer manifest, and the installer. `simpsonm09-dev-setup` owns the machine and the human tool set, including a self-hosted Infisical Agent Vault that brokers service credentials for the agent. A wrapper is the entry point: `with-secrets [--require NAMES] <tool>` for the human path, and `with-vault --role human <tool>` or `with-vault --role agent <tool>` for the vault path. See [`docs/relationship.md`](docs/relationship.md).
+`maxstack` owns AI composition for the `<workspace>` workspace. It holds the workspace config fragment, the ordered layer manifest, and the installer. `dev-setup` owns the machine and the human tool set, including a self-hosted Infisical Agent Vault that brokers service credentials for the agent. A wrapper is the entry point: `with-secrets [--require NAMES] <tool>` for the human path, and `with-vault --role human <tool>` or `with-vault --role agent <tool>` for the vault path. See [`docs/relationship.md`](docs/relationship.md).
 
 PStack comes from one source: the `plugins/pstack` folder of [pstack-max, our fork of pstack-claude](https://github.com/simpsonm09/pstack-max), at the commit in [`pstack.lock.json`](pstack.lock.json). `layers.json` lists it once, with its runtimes. The installer builds each runtime from that pin:
 
@@ -63,8 +63,8 @@ MIT. See [`LICENSE`](LICENSE).
 ## Related repositories
 
 - [`simpsonm09/pstack-max`](https://github.com/simpsonm09/pstack-max) (fork) owns the PStack plugin in `plugins/pstack`, for all four runtimes.
-- [`org-ai-plugin`](https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin) owns the shared MCP servers and skills.
-- [`personal-ai-plugin`](https://github.com/simpsonm09-projects/simpsonm09-personal-ai-plugin) owns the personal MCP servers and skills.
-- [`simpsonm09-dev-setup`](https://github.com/simpsonm09-projects/simpsonm09-dev-setup) owns the machine and app setup.
+- [`org-ai-plugin`](https://github.com/simpsonm09-projects/org-ai-plugin) owns the shared MCP servers and skills.
+- [`personal-ai-plugin`](https://github.com/simpsonm09-projects/personal-ai-plugin) owns the personal MCP servers and skills.
+- [`dev-setup`](https://github.com/simpsonm09-projects/dev-setup) owns the machine and app setup.
 - [`repo-standard`](https://github.com/simpsonm09-projects/simpsonm09-repo-standard) owns the shared CI, linting, security, and governance.
-- [`repo-template`](https://github.com/simpsonm09-projects/simpsonm09-repo-template) is the generated-repo starting point.
+- [`repo-template`](https://github.com/simpsonm09-projects/repo-template) is the generated-repo starting point.

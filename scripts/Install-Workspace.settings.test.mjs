@@ -137,8 +137,8 @@ withMainCommit('a no-settings local -Source override matches upstream main in ou
   const mainInstaller = exportMainInstaller(ctx.base);
   const layersFile = writeLayers(ctx);
   const checkout = join(ctx.workspace, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
-  const sourceArgs = ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`];
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
+  const sourceArgs = ['-Source', `org-ai-plugin=local:${checkout}`];
   const comparedRuns = (installerPath) => {
     clearInstallOutputs(ctx.workspace);
     return [[sourceArgs, true], [['-Status'], false]].map(([args, apply]) => {
@@ -180,7 +180,7 @@ withWorkspace('invalid settings are rejected before guarded git starts for setti
 
 withWorkspace('an omitted settings dimension keeps the recorded selection without an unlisted status', (ctx) => {
   mustApply(ctx);
-  const layers = Object.fromEntries(['pstack', 'simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin'].map((name) => [name, {}]));
+  const layers = Object.fromEntries(['pstack', 'org-ai-plugin', 'personal-ai-plugin'].map((name) => [name, {}]));
   writeWorkspaceSettings(ctx, { version: 1, layers });
   const runtimeOmitted = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
   assert.equal(runtimeOmitted.status, 0, plainOutput(runtimeOmitted));
@@ -191,7 +191,7 @@ withWorkspace('an omitted settings dimension keeps the recorded selection withou
   const layerOmitted = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
   assert.equal(layerOmitted.status, 0, plainOutput(layerOmitted));
   assert.doesNotMatch(plainOutput(layerOmitted), /Settings: unlisted layer/i);
-  assert.match(plainOutput(layerOmitted), /Selection: runtimes claude, copilot, opencode, pi; layers pstack, simpsonm09-org-ai-plugin, simpsonm09-personal-ai-plugin/);
+  assert.match(plainOutput(layerOmitted), /Selection: runtimes claude, copilot, opencode, pi; layers pstack, org-ai-plugin, personal-ai-plugin/);
 }, {});
 
 withWorkspace('settings dependencies are checked after flags join the additive selection', (ctx) => {
@@ -707,16 +707,16 @@ const SHY = '\u00ad';
 // Finding 7: default with a soft hyphen or a zero width space is refused by flag and by settings, and the override is kept.
 withWorkspace('finding 7: default with a soft hyphen or a zero width space is refused by flag and by settings, and the override is kept', (ctx) => {
   const extA = localCheckout(ctx, 'ext-a');
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${extA}`]);
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${extA}`]);
   const before = lockText(ctx);
   for (const value of [`default${SHY}`, `default${ZWSP}`]) {
-    const flagRun = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=${value}`]);
+    const flagRun = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=${value}`]);
     assert.notEqual(flagRun.status, 0, `flag ${escapedChar(value.slice(7))}: ${plainOutput(flagRun)}`);
     assert.match(plainOutput(flagRun), /holds the character \\u00AD|holds the character \\u200B/);
-    writeWorkspaceSettings(ctx, { version: 1, layers: { 'simpsonm09-org-ai-plugin': { source: value } } });
+    writeWorkspaceSettings(ctx, { version: 1, layers: { 'org-ai-plugin': { source: value } } });
     const settingsRun = runInstaller(shell, ctx);
     assert.notEqual(settingsRun.status, 0, `settings: ${plainOutput(settingsRun)}`);
-    assert.match(plainOutput(settingsRun), /layers\.simpsonm09-org-ai-plugin\.source .*holds the character \\u00AD|layers\.simpsonm09-org-ai-plugin\.source .*holds the character \\u200B/);
+    assert.match(plainOutput(settingsRun), /layers\.org-ai-plugin\.source .*holds the character \\u00AD|layers\.org-ai-plugin\.source .*holds the character \\u200B/);
     assert.equal(lockText(ctx), before, `${value} dropped the recorded override`);
   }
 }, {});
@@ -990,7 +990,7 @@ withWorkspace('remove ignores an invalid settings file and keeps the locked sele
 
 withWorkspace('remove warns about each removed name that the settings file still lists, and never blocks a removal', (ctx) => {
   const settingsPath = join(ctx.workspace, 'maxstack.settings.json');
-  writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {}, pi: {} }, layers: { pstack: {}, 'simpsonm09-personal-ai-plugin': {} } });
+  writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {}, pi: {} }, layers: { pstack: {}, 'personal-ai-plugin': {} } });
   mustApply(ctx);
   const settingsBytes = readFileSync(settingsPath);
 
@@ -1007,9 +1007,9 @@ withWorkspace('remove warns about each removed name that the settings file still
   assert.equal(status.status, 1, 'the listed name that is not selected should fail -Status -Strict as pending');
   assert.match(plainOutput(status), /pending runtime 'pi'/);
 
-  const layerRemoved = runInstaller(shell, ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin'], { apply: true });
+  const layerRemoved = runInstaller(shell, ctx, ['-Remove', '-Layers', 'personal-ai-plugin'], { apply: true });
   assertOk(layerRemoved);
-  assert.match(plainOutput(layerRemoved), /Settings: layer 'simpsonm09-personal-ai-plugin' is still listed in maxstack\.settings\.json/);
+  assert.match(plainOutput(layerRemoved), /Settings: layer 'personal-ai-plugin' is still listed in maxstack\.settings\.json/);
 
   // A settings file that cannot be read is not a reason to refuse a removal: the removal goes ahead, with no warning.
   mustApply(ctx, ['-Runtimes', 'pi']);
@@ -1044,8 +1044,8 @@ withWorkspace('the Pi settings list each package and skills folder, and keep the
   assert.deepEqual(settings.skills, [
     '../../user/own-skills',
     '../../.claude/plugins/pstack/skills',
-    '../../.claude/plugins/simpsonm09-org-ai-plugin/skills',
-    '../../.claude/plugins/simpsonm09-personal-ai-plugin/skills',
+    '../../.claude/plugins/org-ai-plugin/skills',
+    '../../.claude/plugins/personal-ai-plugin/skills',
   ], 'the skills list');
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   assert.deepEqual(lock.pi.packages, ['../../.claude/cache/pstack'], 'the lock records only the entries the installer wrote');
@@ -1068,7 +1068,7 @@ withWorkspace('the Pi settings list each package and skills folder, and keep the
 
 withWorkspace('a pi runtime without claude is rejected, because the Pi settings list the Claude folder skills', (ctx) => {
   const layers = writeLayers(ctx, (manifest) => {
-    layerNamed(manifest, 'simpsonm09-personal-ai-plugin').runtimes = { opencode: {}, pi: {} };
+    layerNamed(manifest, 'personal-ai-plugin').runtimes = { opencode: {}, pi: {} };
   });
   const run = runInstaller(shell, ctx, [], { layersFile: layers });
   assert.notEqual(run.status, 0, 'the installer accepted pi without claude');
@@ -1123,7 +1123,7 @@ withWorkspace('a layer that declares no Pi entries records none, and the apply s
   const layers = writeLayers(ctx, (manifest) => {
     delete layerNamed(manifest, 'pstack').runtimes.pi;
   });
-  for (const name of ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin']) {
+  for (const name of ['org-ai-plugin', 'personal-ai-plugin']) {
     const root = join(ctx.workspace, 'projects', 'repos', name);
     const layer = readJson(join(root, 'layer.json'));
     writeFile(root, 'layer.json', JSON.stringify({ ...layer, files: layer.files.filter((file) => file !== 'skills') }));

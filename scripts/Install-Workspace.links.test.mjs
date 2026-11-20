@@ -8,7 +8,7 @@ import { buildWorkspace, mustApply, plainOutput, runInstaller, shell, skip } fro
 test('a symbolic link retargeted outside the workspace is reported, safely replaced, and never uninstalls its target', { skip }, (t) => {
   const ctx = buildWorkspace();
   const outside = join(tmpdir(), `maxstack-link-escape-${process.pid}-${Date.now()}`);
-  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
+  const child = join(ctx.workspace, '.claude', 'plugins', 'org-ai-plugin');
   try {
     mustApply(ctx);
     mkdirSync(outside);
@@ -26,14 +26,14 @@ test('a symbolic link retargeted outside the workspace is reported, safely repla
 
     const drift = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
     assert.notEqual(drift.status, 0, plainOutput(drift));
-    assert.match(plainOutput(drift), /modified\s+\.claude[\/\\]plugins[\/\\]simpsonm09-org-ai-plugin/);
+    assert.match(plainOutput(drift), /modified\s+\.claude[\/\\]plugins[\/\\]org-ai-plugin/);
     assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf8'), 'outside bytes', 'status changed the escaped target');
 
     const reapplied = runInstaller(shell, ctx, [], { apply: true });
     assert.equal(reapplied.status, 0, plainOutput(reapplied));
     // Node reports a Windows junction as a symbolic link too, so check where the restored link points instead of its kind.
     assert.equal(lstatSync(child).isSymbolicLink(), true, 'apply did not restore a link');
-    assert.equal(realpathSync(child), realpathSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin')), 'apply did not point the link back at the installed layer');
+    assert.equal(realpathSync(child), realpathSync(join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin')), 'apply did not point the link back at the installed layer');
     assert.equal(readFileSync(join(outside, 'keep.txt'), 'utf8'), 'outside bytes', 'replacement changed the escaped target');
 
     const uninstalled = runInstaller(shell, ctx, ['-Uninstall'], { apply: true });

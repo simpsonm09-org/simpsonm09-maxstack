@@ -361,8 +361,8 @@ withWorkspace('the Claude runtime uses a platform directory link for local layer
 
   const plugins = join(ctx.workspace, '.claude', 'plugins');
   for (const [plugin, target] of [
-    ['simpsonm09-org-ai-plugin', '.opencode/plugins/simpsonm09-org-ai-plugin'],
-    ['simpsonm09-personal-ai-plugin', '.opencode/plugins/simpsonm09-personal-ai-plugin'],
+    ['org-ai-plugin', '.opencode/plugins/org-ai-plugin'],
+    ['personal-ai-plugin', '.opencode/plugins/personal-ai-plugin'],
   ]) {
     const child = join(plugins, plugin);
     assert.ok(isLink(child), `${plugin} is a link`);
@@ -379,11 +379,11 @@ withWorkspace('the Claude runtime uses a platform directory link for local layer
 
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   const byName = Object.fromEntries(lock.layers.map((record) => [record.name, record]));
-  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.kind, expectedClaudeLinkKind);
-  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.plugin, 'simpsonm09-org-ai-plugin');
-  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.child, '.claude/plugins/simpsonm09-org-ai-plugin');
-  assert.equal(byName['simpsonm09-org-ai-plugin'].claude.target, '.opencode/plugins/simpsonm09-org-ai-plugin');
-  assert.match(byName['simpsonm09-org-ai-plugin'].claude.treeSha256, /^[0-9A-F]{64}$/);
+  assert.equal(byName['org-ai-plugin'].claude.kind, expectedClaudeLinkKind);
+  assert.equal(byName['org-ai-plugin'].claude.plugin, 'org-ai-plugin');
+  assert.equal(byName['org-ai-plugin'].claude.child, '.claude/plugins/org-ai-plugin');
+  assert.equal(byName['org-ai-plugin'].claude.target, '.opencode/plugins/org-ai-plugin');
+  assert.match(byName['org-ai-plugin'].claude.treeSha256, /^[0-9A-F]{64}$/);
   assert.equal(byName.pstack.claude.kind, 'git');
   assert.equal(byName.pstack.claude.commit, ctx.fixture.commit, 'the pstack record is the pinned commit');
   assert.equal(byName.pstack.claude.repository, ctx.fixture.url);
@@ -421,8 +421,8 @@ withWorkspace('the pstack OpenCode entry and agents land from the one pstack sou
     plugin: './.opencode/plugins/pstack/opencode',
     agents: ['pstack-agent.md', 'pstack-comment-sicko.md', 'pstack-reviewer.md'],
   });
-  assert.equal(byName['simpsonm09-org-ai-plugin'].opencode.loader, 'discovery', 'a root index.ts loads from its folder');
-  assert.equal(byName['simpsonm09-org-ai-plugin'].opencode.plugin, null);
+  assert.equal(byName['org-ai-plugin'].opencode.loader, 'discovery', 'a root index.ts loads from its folder');
+  assert.equal(byName['org-ai-plugin'].opencode.plugin, null);
 }, {});
 
 withWorkspace('copilot.cmd names each Claude folder in layer order, sets the switch, and passes arguments on', (ctx) => {
@@ -434,7 +434,7 @@ withWorkspace('copilot.cmd names each Claude folder in layer order, sets the swi
   const pluginLines = lines.filter((line) => line.includes('--plugin-dir'));
   assert.equal(pluginLines.length, 1, 'one line runs the executable with every plugin folder');
   const dirs = [...pluginLines[0].matchAll(/--plugin-dir "([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(dirs, [join(plugins, 'pstack'), join(plugins, 'simpsonm09-org-ai-plugin'), join(plugins, 'simpsonm09-personal-ai-plugin')], 'folders in layer order');
+  assert.deepEqual(dirs, [join(plugins, 'pstack'), join(plugins, 'org-ai-plugin'), join(plugins, 'personal-ai-plugin')], 'folders in layer order');
 
   const env = lines.indexOf('set "AGENT_ACCESS_COPILOT_ASK=allow"');
   assert.ok(env >= 0, 'the switch is set');
@@ -453,7 +453,7 @@ withWorkspace('copilot.cmd runs the executable with the switch, the plugin folde
   const args = run.stdout.split(/\r?\n/).find((line) => line.startsWith('ARGS='));
   assert.equal(
     args,
-    `ARGS=--plugin-dir "${join(plugins, 'pstack')}" --plugin-dir "${join(plugins, 'simpsonm09-org-ai-plugin')}" --plugin-dir "${join(plugins, 'simpsonm09-personal-ai-plugin')}" --foo "a b"`,
+    `ARGS=--plugin-dir "${join(plugins, 'pstack')}" --plugin-dir "${join(plugins, 'org-ai-plugin')}" --plugin-dir "${join(plugins, 'personal-ai-plugin')}" --foo "a b"`,
   );
   assert.match(run.stdout, /ASK=allow/);
 }, {});
@@ -463,7 +463,7 @@ withWorkspaceNeeding('bash', findBash(), 'copilot.sh runs copilot from PATH with
   renameSync(ctx.workspace, apostropheWorkspace);
   ctx.workspace = apostropheWorkspace;
   const bash = findBash();
-  const orgLayer = join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+  const orgLayer = join(ctx.workspace, 'projects', 'repos', 'org-ai-plugin');
   const orgManifestPath = join(orgLayer, 'layer.json');
   const orgManifest = JSON.parse(readFileSync(orgManifestPath, 'utf8'));
   orgManifest.workspaceInstructions = 'workspace.md';
@@ -472,7 +472,7 @@ withWorkspaceNeeding('bash', findBash(), 'copilot.sh runs copilot from PATH with
   mustApply(ctx);
   const sh = readFileSync(join(ctx.workspace, '.maxstack', 'bin', 'copilot.sh'), 'utf8');
   assert.match(sh, /^export AGENT_ACCESS_COPILOT_ASK=allow$/m, 'the script sets the switch');
-  assert.match(sh, /exec copilot --plugin-dir "[^"]*\/\.claude\/plugins\/pstack" --plugin-dir "[^"]*\/simpsonm09-org-ai-plugin" --plugin-dir "[^"]*\/simpsonm09-personal-ai-plugin" "\$@"$/m);
+  assert.match(sh, /exec copilot --plugin-dir "[^"]*\/\.claude\/plugins\/pstack" --plugin-dir "[^"]*\/org-ai-plugin" --plugin-dir "[^"]*\/personal-ai-plugin" "\$@"$/m);
 
   const fakeBin = join(ctx.base, 'fake-bin');
   mkdirSync(fakeBin);
@@ -490,7 +490,7 @@ withWorkspaceNeeding('bash', findBash(), 'copilot.sh runs copilot from PATH with
 }, {});
 
 withWorkspace('Copilot instruction path rejects comma during planning when CLI is absent', (ctx) => {
-  const layerRoot = join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+  const layerRoot = join(ctx.workspace, 'projects', 'repos', 'org-ai-plugin');
   const manifestPath = join(layerRoot, 'layer.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   manifest.workspaceInstructions = 'workspace.md';
@@ -506,7 +506,7 @@ withWorkspace('Copilot instruction path rejects comma during planning when CLI i
 }, {});
 
 withWorkspace('Copilot instruction path rejects delayed-expansion exclamation before projection writes', (ctx) => {
-  const layerRoot = join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+  const layerRoot = join(ctx.workspace, 'projects', 'repos', 'org-ai-plugin');
   const manifestPath = join(layerRoot, 'layer.json');
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   manifest.workspaceInstructions = 'workspace.md';
@@ -555,7 +555,7 @@ withWorkspace('a second apply is idempotent: the same links, tree hashes, and wr
   const trees = (lock) => lock.layers.map((record) => [record.name, record.claude.treeSha256 ?? null, record.opencode.agents]);
   assert.deepEqual(trees(second), trees(first));
   assert.equal(second.copilot.cmdSha256, first.copilot.cmdSha256);
-  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin')));
+  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'org-ai-plugin')));
 
   const audit = runInstaller(shell, ctx, [], { apply: false });
   assert.equal(audit.status, 0, audit.stderr);
@@ -573,15 +573,15 @@ withWorkspace('a claude runtime without a manifest fails with a clear error', (c
 }, { withManifests: false });
 
 withWorkspace('a claude plugin name that differs from the layer name fails', (ctx) => {
-  writeFile(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), '.claude-plugin/plugin.json', JSON.stringify({ name: 'renamed' }));
+  writeFile(join(ctx.workspace, 'projects/repos/org-ai-plugin'), '.claude-plugin/plugin.json', JSON.stringify({ name: 'renamed' }));
   const run = runInstaller(shell, ctx);
   assert.notEqual(run.status, 0);
-  assert.match(plainOutput(run), /is the Claude plugin 'simpsonm09-org-ai-plugin' but its \.claude-plugin\\plugin\.json names 'renamed'/);
+  assert.match(plainOutput(run), /is the Claude plugin 'org-ai-plugin' but its \.claude-plugin\\plugin\.json names 'renamed'/);
 }, {});
 
 withWorkspace('copilot without claude is rejected, because the wrapper loads the Claude folder', (ctx) => {
   const layers = writeLayers(ctx, (manifest) => {
-    layerNamed(manifest, 'simpsonm09-personal-ai-plugin').runtimes = { opencode: {}, copilot: {} };
+    layerNamed(manifest, 'personal-ai-plugin').runtimes = { opencode: {}, copilot: {} };
   });
   const run = runInstaller(shell, ctx, [], { layersFile: layers });
   assert.notEqual(run.status, 0, 'the installer accepted copilot without claude');
@@ -718,28 +718,28 @@ withWorkspace('the user object entries in the Pi packages survive a merge, in or
 }, {});
 
 withWorkspace('a local layer is a Pi package only when its repository-root package.json names a pi key', (ctx) => {
-  writeLayerStub(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), {
-    claudePlugin: 'simpsonm09-org-ai-plugin',
+  writeLayerStub(join(ctx.workspace, 'projects/repos/org-ai-plugin'), {
+    claudePlugin: 'org-ai-plugin',
     pi: { extensions: ['./pi/index.ts'] },
   });
   mustApply(ctx);
   const settings = readJson(join(ctx.workspace, '.pi', 'agent', 'settings.json'));
-  const orgPackage = relative(join(ctx.workspace, '.pi/agent'), join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin')).replaceAll('\\', '/');
+  const orgPackage = relative(join(ctx.workspace, '.pi/agent'), join(ctx.workspace, 'projects/repos/org-ai-plugin')).replaceAll('\\', '/');
   assert.ok(settings.packages.includes(orgPackage), 'the org repository-root package is not listed');
-  assert.ok(!settings.packages.includes('../../.claude/plugins/simpsonm09-personal-ai-plugin'), 'a layer without a pi key is a package');
-  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'pi', 'index.ts')), 'the pi folder is not installed');
+  assert.ok(!settings.packages.includes('../../.claude/plugins/personal-ai-plugin'), 'a layer without a pi key is a package');
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin', 'pi', 'index.ts')), 'the pi folder is not installed');
 
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   const byName = Object.fromEntries(lock.layers.map((record) => [record.name, record]));
-  assert.deepEqual(byName['simpsonm09-org-ai-plugin'].pi, {
+  assert.deepEqual(byName['org-ai-plugin'].pi, {
     enabled: true,
-    package: 'projects/repos/simpsonm09-org-ai-plugin',
-    skills: '.claude/plugins/simpsonm09-org-ai-plugin/skills',
+    package: 'projects/repos/org-ai-plugin',
+    skills: '.claude/plugins/org-ai-plugin/skills',
   });
-  assert.deepEqual(byName['simpsonm09-personal-ai-plugin'].pi, {
+  assert.deepEqual(byName['personal-ai-plugin'].pi, {
     enabled: true,
     package: null,
-    skills: '.claude/plugins/simpsonm09-personal-ai-plugin/skills',
+    skills: '.claude/plugins/personal-ai-plugin/skills',
   });
 }, {});
 
@@ -761,8 +761,8 @@ withWorkspace('finding F2: a local pstack source installs its root Pi package an
 }, {});
 
 withWorkspace('a local pi key uses the source package.json even when the Claude copy omits it', (ctx) => {
-  const org = join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin');
-  writeLayerStub(org, { claudePlugin: 'simpsonm09-org-ai-plugin', pi: { extensions: ['./pi/index.ts'] } });
+  const org = join(ctx.workspace, 'projects/repos/org-ai-plugin');
+  writeLayerStub(org, { claudePlugin: 'org-ai-plugin', pi: { extensions: ['./pi/index.ts'] } });
   // The source keeps the package.json that names the pi key, but the files list leaves it out,
   // so the installed copy has the pi folder and no package.json for Pi to read.
   const layerPath = join(org, 'layer.json');
@@ -776,8 +776,8 @@ withWorkspace('a local pi key uses the source package.json even when the Claude 
 }, {});
 
 withWorkspace('a pi key that names a file the installed copy lacks is refused', (ctx) => {
-  writeLayerStub(join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin'), {
-    claudePlugin: 'simpsonm09-org-ai-plugin',
+  writeLayerStub(join(ctx.workspace, 'projects/repos/org-ai-plugin'), {
+    claudePlugin: 'org-ai-plugin',
     pi: { extensions: ['./pi/missing.ts'] },
   });
   const run = runInstaller(shell, ctx);
@@ -1058,7 +1058,7 @@ withWorkspaceNeeding('python', python, 'the workspace verifier checks each owned
 
 withWorkspace('a link retargeted by hand is modified, and a file changed in a pinned claude copy is modified', (ctx) => {
   mustApply(ctx);
-  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
+  const child = join(ctx.workspace, '.claude', 'plugins', 'org-ai-plugin');
   rmdirSync(child);
   const other = join(ctx.base, 'other-target');
   mkdirSync(other);
@@ -1068,7 +1068,7 @@ withWorkspace('a link retargeted by hand is modified, and a file changed in a pi
 
   assert.deepEqual(problemRows(runStatus(ctx)), [
     { state: 'modified', label: '.claude/plugins/pstack' },
-    { state: 'modified', label: '.claude/plugins/simpsonm09-org-ai-plugin' },
+    { state: 'modified', label: '.claude/plugins/org-ai-plugin' },
   ]);
   assert.equal(readFileSync(join(other, 'keep.txt'), 'utf8'), 'outside bytes', 'status followed the escaped link');
   mustApply(ctx);
@@ -1082,7 +1082,7 @@ withWorkspace('a lock from before the ownership record reads quietly, and the cl
   writeFile(ctx.workspace, `${ORG_SOURCE}/skills/legacy/node_modules/pkg/index.js`, 'module.exports = {};\n');
   mustApply(ctx);
   const current = readJson(lockPath(ctx));
-  const orgLayer = current.layers.find((record) => record.name === 'simpsonm09-org-ai-plugin');
+  const orgLayer = current.layers.find((record) => record.name === 'org-ai-plugin');
   assert.equal(orgLayer.claude.treeSha256, independentSha(join(ctx.workspace, ...ORG_FOLDER.split('/')), 'legacy'));
 
   const legacy = { ...current };
@@ -1104,7 +1104,7 @@ withWorkspace('a lock from before the ownership record reads quietly, and the cl
 withWorkspace('a Pi entry the user already lists is the user\'s: the record does not hold it, and a second apply keeps it so', (ctx) => {
   writeFile(ctx.workspace, '.pi/agent/settings.json', JSON.stringify({
     packages: ['../../.claude/cache/pstack'],
-    skills: ['../../.claude/plugins/pstack/skills', '../../.claude/plugins/simpsonm09-org-ai-plugin/skills', '../../.claude/plugins/simpsonm09-personal-ai-plugin/skills'],
+    skills: ['../../.claude/plugins/pstack/skills', '../../.claude/plugins/org-ai-plugin/skills', '../../.claude/plugins/personal-ai-plugin/skills'],
   }));
   mustApply(ctx);
   const lock = readJson(lockPath(ctx));
@@ -1145,7 +1145,7 @@ withWorkspace('copilot or pi without claude fails, both when it is named and whe
 withWorkspaceNeeding('python', python, 'the owned list names only selected outputs, and both verifiers accept a partial install', (ctx) => {
   mustApply(ctx, ['-Runtimes', 'claude,copilot']);
   const owned = readJson(lockPath(ctx)).owned.map((record) => record.path);
-  assert.ok(owned.includes('.claude/plugins/simpsonm09-org-ai-plugin'), 'the copy of a local layer is not owned');
+  assert.ok(owned.includes('.claude/plugins/org-ai-plugin'), 'the copy of a local layer is not owned');
   for (const path of owned) {
     assert.doesNotMatch(path, /^(opencode\.jsonc|\.opencode\/|\.pi\/)|pi\.(cmd|sh)$/, `${path} belongs to an unselected runtime`);
   }
@@ -1159,7 +1159,7 @@ withWorkspaceNeeding('python', python, 'the owned list names only selected outpu
 
 // Removal: -Remove and -Uninstall. Each test installs, removes or uninstalls, and reads what is left. The
 // round trip is the proof of the deletion rules: after -Uninstall the tree equals the tree before the install.
-const LOCAL_PLUGINS = ['simpsonm09-org-ai-plugin', 'simpsonm09-personal-ai-plugin'];
+const LOCAL_PLUGINS = ['org-ai-plugin', 'personal-ai-plugin'];
 
 withWorkspace('removing claude is refused while copilot or pi is selected, and writes nothing', (ctx) => {
   mustApply(ctx, ['-Runtimes', 'claude,copilot,pi']);
@@ -1194,7 +1194,7 @@ withWorkspace('a local source reached through a junction is compared by the fold
   const toClaude = join(ctx.base, 'to-claude');
   mkdirSync(join(ctx.workspace, '.claude'), { recursive: true });
   symlinkSync(join(ctx.workspace, '.claude'), toClaude, 'junction');
-  const viaJunction = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${toClaude}`], { apply: false });
+  const viaJunction = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${toClaude}`], { apply: false });
   assert.notEqual(viaJunction.status, 0, 'a junction into .claude was accepted');
   assert.match(plainOutput(viaJunction), /is inside \.claude/, viaJunction.stdout);
 

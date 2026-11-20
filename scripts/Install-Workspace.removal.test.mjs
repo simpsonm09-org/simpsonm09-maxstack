@@ -39,7 +39,7 @@ withWorkspace('-Status -Strict fails for a pending runtime on its own, after -Re
 }, {});
 
 withWorkspace('-Status -Strict fails for a pending layer on its own, after -Remove leaves it listed', (ctx) => {
-  const personal = 'simpsonm09-personal-ai-plugin';
+  const personal = 'personal-ai-plugin';
   writeWorkspaceSettings(ctx, { version: 1, runtimes: { claude: {} }, layers: { pstack: {}, [personal]: {} } });
   mustApply(ctx);
   assertOk(runInstaller(shell, ctx, ['-Remove', '-Layers', personal]));
@@ -54,7 +54,7 @@ withWorkspace('finding 3: a dry -Remove reports an unavailable declared source a
   mustApply(ctx);
   writeWorkspaceSettings(ctx, { version: 1, layers: { pstack: { source: 'local:nope' } } });
   const skipLine = /Settings: layers\.pstack\.source resolves to no folder at .*nope\. This run skips layer pstack and has no fallback\./;
-  const remove = runInstaller(shell, ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin'], { apply: false });
+  const remove = runInstaller(shell, ctx, ['-Remove', '-Layers', 'personal-ai-plugin'], { apply: false });
   assertOk(remove, plainOutput(remove));
   assert.match(plainOutput(remove), skipLine, `dry -Remove: ${plainOutput(remove)}`);
 }, {});
@@ -175,31 +175,31 @@ test('a Copilot run that cannot find Copilot keeps the recorded wrappers, and a 
 
 withWorkspace('removing the claude runtime removes only its link and keeps the installed copy', (ctx) => {
   mustApply(ctx);
-  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
-  const target = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin');
+  const child = join(ctx.workspace, '.claude', 'plugins', 'org-ai-plugin');
+  const target = join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin');
   assert.ok(isLink(child));
   // Not an item in the layer's files list. The folder is wholly the installer's, so the apply removes it.
   writeFile(target, 'keep-me.txt', 'a file the layer does not install\n');
 
   // copilot runs the Claude folder, so the layer loses both runtimes together.
   const layers = writeLayers(ctx, (manifest) => {
-    layerNamed(manifest, 'simpsonm09-org-ai-plugin').runtimes = { opencode: {} };
+    layerNamed(manifest, 'org-ai-plugin').runtimes = { opencode: {} };
   });
   mustApply(ctx, [], { layersFile: layers });
 
   assert.equal(lstatSync(child, { throwIfNoEntry: false }), undefined, 'the link is gone');
   assert.ok(!existsSync(join(target, 'keep-me.txt')), 'the apply left a file the layer does not install');
   assert.ok(existsSync(join(target, 'index.ts')), 'the target lost its entrypoint');
-  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal-ai-plugin')), 'the personal link was disturbed');
+  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'personal-ai-plugin')), 'the personal link was disturbed');
 
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
-  assert.equal(lock.layers.find((record) => record.name === 'simpsonm09-org-ai-plugin').claude.enabled, false);
+  assert.equal(lock.layers.find((record) => record.name === 'org-ai-plugin').claude.enabled, false);
 }, {});
 
 withWorkspace('uninstall refuses an escaped Claude link and leaves its outside target untouched', (ctx) => {
   mustApply(ctx);
   const outside = join(ctx.base, 'outside-link-target');
-  const child = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
+  const child = join(ctx.workspace, '.claude', 'plugins', 'org-ai-plugin');
   writeFile(outside, 'keep.txt', 'outside bytes');
   rmdirSync(child);
   symlinkSync(outside, child, 'junction');
@@ -215,26 +215,26 @@ withWorkspace('uninstall refuses an escaped Claude link and leaves its outside t
 // apply records that folder, so the next apply removes it.
 function withoutPersonalRuntimes(ctx) {
   return writeLayers(ctx, (manifest) => {
-    layerNamed(manifest, 'simpsonm09-personal-ai-plugin').runtimes = {};
+    layerNamed(manifest, 'personal-ai-plugin').runtimes = {};
   });
 }
 
 withWorkspace('a stale plugin folder the previous lock recorded is removed on apply', (ctx) => {
   mustApply(ctx);
-  const stale = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-personal-ai-plugin');
+  const stale = join(ctx.workspace, '.opencode', 'plugins', 'personal-ai-plugin');
   assert.ok(existsSync(join(stale, 'index.ts')), 'the first apply made the folder');
 
   const run = mustApply(ctx, [], { layersFile: withoutPersonalRuntimes(ctx) });
-  assert.match(run.stdout, /Removed the stale plugin folder .*simpsonm09-personal-ai-plugin/);
+  assert.match(run.stdout, /Removed the stale plugin folder .*personal-ai-plugin/);
   assert.ok(!existsSync(stale), 'the stale folder is still there');
-  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'index.ts')), 'the current folder is missing');
-  assert.equal(lstatSync(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal-ai-plugin'), { throwIfNoEntry: false }), undefined, 'the personal link was not removed');
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin', 'index.ts')), 'the current folder is missing');
+  assert.equal(lstatSync(join(ctx.workspace, '.claude', 'plugins', 'personal-ai-plugin'), { throwIfNoEntry: false }), undefined, 'the personal link was not removed');
   assert.deepEqual(readJson(join(ctx.workspace, 'opencode.jsonc')).plugin, ['./.opencode/plugins/pstack/opencode'], 'the config still names pstack');
 }, {});
 
 withWorkspace('audit reports a stale recorded plugin folder and removes nothing', (ctx) => {
   mustApply(ctx);
-  const stale = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-personal-ai-plugin');
+  const stale = join(ctx.workspace, '.opencode', 'plugins', 'personal-ai-plugin');
   const lockPath = join(ctx.workspace, 'stack.lock.json');
   const configPath = join(ctx.workspace, 'opencode.jsonc');
   const lockBefore = readFileSync(lockPath, 'utf8');
@@ -242,7 +242,7 @@ withWorkspace('audit reports a stale recorded plugin folder and removes nothing'
 
   const audit = runInstaller(shell, ctx, [], { apply: false, layersFile: withoutPersonalRuntimes(ctx) });
   assert.equal(audit.status, 0, audit.stderr);
-  assert.match(audit.stdout, /plugins\\simpsonm09-personal-ai-plugin: stale/, audit.stdout);
+  assert.match(audit.stdout, /plugins\\personal-ai-plugin: stale/, audit.stdout);
   assert.doesNotMatch(audit.stdout, /Removed the stale plugin folder/);
   assert.ok(existsSync(join(stale, 'index.ts')), 'audit removed the stale folder');
   assert.equal(readFileSync(lockPath, 'utf8'), lockBefore, 'audit rewrote the lock');
@@ -251,7 +251,7 @@ withWorkspace('audit reports a stale recorded plugin folder and removes nothing'
 
 withWorkspace('a file a user adds to an owned folder is modified, and the next apply removes it', (ctx) => {
   mustApply(ctx);
-  const folder = '.opencode/plugins/simpsonm09-org-ai-plugin';
+  const folder = '.opencode/plugins/org-ai-plugin';
   writeFile(ctx.workspace, `${folder}/notes.txt`, 'mine\n');
   const run = runStatus(ctx);
   assert.equal(run.status, 0, run.stderr);
@@ -265,7 +265,7 @@ withWorkspace('a file a user adds to an owned folder is modified, and the next a
 
 withWorkspace('the package-lock.json that npm writes beside an installed package.json is removed, and reported until then', (ctx) => {
   mustApply(ctx);
-  const folder = '.opencode/plugins/simpsonm09-org-ai-plugin';
+  const folder = '.opencode/plugins/org-ai-plugin';
   writeFile(ctx.workspace, `${folder}/package-lock.json`, '{}\n');
   assert.deepEqual(problemRows(runStatus(ctx)), [{ state: 'modified', label: folder }]);
   const applied = mustApply(ctx);
@@ -322,11 +322,11 @@ withWorkspace('a backup the apply writes is recorded with its hash, and it is re
 
 withWorkspace('a copied local layer reports a hand edit as differs, a user file as modified, and an apply restores it', (ctx) => {
   mustApply(ctx, ['-Runtimes', 'claude']);
-  const copy = join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin');
-  const label = '.claude/plugins/simpsonm09-org-ai-plugin';
+  const copy = join(ctx.workspace, '.claude', 'plugins', 'org-ai-plugin');
+  const label = '.claude/plugins/org-ai-plugin';
   appendFileSync(join(copy, 'index.ts'), '// hand edit\n');
   const audit = runInstaller(shell, ctx, [], { apply: false });
-  assert.match(audit.stdout, /plugins\\simpsonm09-org-ai-plugin: differs/, audit.stdout);
+  assert.match(audit.stdout, /plugins\\org-ai-plugin: differs/, audit.stdout);
   assert.ok(problemRows(runStatus(ctx)).some((row) => row.state === 'modified' && row.label === label), 'the hand edit was not modified');
 
   writeFileSync(join(copy, 'notes.txt'), 'a user file\n');
@@ -341,23 +341,23 @@ withWorkspace('a copied local layer reports a hand edit as differs, a user file 
   assert.deepEqual(problemRows(runStatus(ctx)), [], 'the restored copy still reports a problem');
 }, {});
 
-const PERSONAL_FOLDER = '.opencode/plugins/simpsonm09-personal-ai-plugin';
+const PERSONAL_FOLDER = '.opencode/plugins/personal-ai-plugin';
 
 withWorkspace('removing a layer removes its folders and keeps the others, and the result is a fresh install without it', (ctx) => {
   mustApply(ctx);
-  assertOk(removal(ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin']));
+  assertOk(removal(ctx, ['-Remove', '-Layers', 'personal-ai-plugin']));
   assert.equal(existsSync(join(ctx.workspace, PERSONAL_FOLDER)), false, 'the layer folder remains');
-  assert.equal(existsSync(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal-ai-plugin')), false, 'the Claude link remains');
-  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-org-ai-plugin')), 'a remaining layer lost its link');
+  assert.equal(existsSync(join(ctx.workspace, '.claude', 'plugins', 'personal-ai-plugin')), false, 'the Claude link remains');
+  assert.ok(isLink(join(ctx.workspace, '.claude', 'plugins', 'org-ai-plugin')), 'a remaining layer lost its link');
   assert.deepEqual(danglingLinks(ctx.workspace), []);
 
   const lock = readJson(lockPath(ctx));
-  assert.deepEqual(lock.selection.layers, ['pstack', 'simpsonm09-org-ai-plugin']);
-  assert.ok(!lock.owned.some((record) => record.layers.includes('simpsonm09-personal-ai-plugin')), 'a record of the removed layer remains');
+  assert.deepEqual(lock.selection.layers, ['pstack', 'org-ai-plugin']);
+  assert.ok(!lock.owned.some((record) => record.layers.includes('personal-ai-plugin')), 'a record of the removed layer remains');
 
   const removed = snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true });
   assertOk(removal(ctx, ['-Uninstall']));
-  mustApply(ctx, ['-Layers', 'pstack,simpsonm09-org-ai-plugin']);
+  mustApply(ctx, ['-Layers', 'pstack,org-ai-plugin']);
   assert.deepEqual(snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true }), removed);
 }, {});
 
@@ -391,7 +391,7 @@ withWorkspace('a file a user adds to an owned folder keeps the folder, and a ret
 
   const first = removal(ctx, ['-Uninstall']);
   assertOk(first);
-  assert.match(first.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+modified by hand/m, first.stdout);
+  assert.match(first.stdout, /^SKIP\s+\.opencode\/plugins\/org-ai-plugin\s+modified by hand/m, first.stdout);
   assert.equal(readFileSync(note, 'utf8'), 'mine\n', 'the user file was deleted');
 
   rmSync(note);
@@ -559,7 +559,7 @@ withWorkspace('a folder with a file held open by another process is kept, and a 
   try {
     const first = removal(ctx, ['-Uninstall']);
     assertOk(first);
-    assert.match(first.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+in use/m, first.stdout);
+    assert.match(first.stdout, /^SKIP\s+\.opencode\/plugins\/org-ai-plugin\s+in use/m, first.stdout);
     assert.ok(existsSync(ORG_FOLDER_FULL(ctx)) || existsSync(`${ORG_FOLDER_FULL(ctx)}.maxstack-removing`), 'the folder in use was lost');
   } finally {
     holder.kill();
@@ -788,7 +788,7 @@ withWorkspace('a folder with the quarantine name beside a recorded folder is the
   writeFile(ctx.workspace, `${ORG_FOLDER}.maxstack-removing/user.txt`, 'mine\n');
   const run = removal(ctx, ['-Uninstall']);
   assertOk(run);
-  assert.match(run.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+in the way: a folder named simpsonm09-org-ai-plugin\.maxstack-removing exists/m, run.stdout);
+  assert.match(run.stdout, /^SKIP\s+\.opencode\/plugins\/org-ai-plugin\s+in the way: a folder named org-ai-plugin\.maxstack-removing exists/m, run.stdout);
   assert.equal(readFileSync(join(ctx.workspace, `${ORG_FOLDER}.maxstack-removing`, 'user.txt'), 'utf8'), 'mine\n', 'the user folder was deleted');
   assert.equal(existsSync(lockPath(ctx)), true, 'the lock was removed beside a skipped folder');
 }, {});
@@ -800,11 +800,11 @@ withWorkspace('a journaled quarantine whose files changed since the journal is k
   renameSync(ORG_FOLDER_FULL(ctx), quarantine);
   writeFileSync(join(quarantine, 'skills', 'demo-skill', 'SKILL.md'), 'changed by the user\n');
   const lock = readJson(lockPath(ctx));
-  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'simpsonm09-org-ai-plugin.maxstack-removing';
+  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'org-ai-plugin.maxstack-removing';
   setLock(ctx, lock);
   const run = removal(ctx, ['-Uninstall']);
   assertOk(run);
-  assert.match(run.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+in the way/m, run.stdout);
+  assert.match(run.stdout, /^SKIP\s+\.opencode\/plugins\/org-ai-plugin\s+in the way/m, run.stdout);
   assert.equal(readFileSync(join(quarantine, 'skills', 'demo-skill', 'SKILL.md'), 'utf8'), 'changed by the user\n', 'the changed folder was deleted');
 }, {});
 
@@ -813,11 +813,11 @@ withWorkspace('a journaled quarantine whose files are unchanged is resumed and d
   const quarantine = `${ORG_FOLDER_FULL(ctx)}.maxstack-removing`;
   renameSync(ORG_FOLDER_FULL(ctx), quarantine);
   const lock = readJson(lockPath(ctx));
-  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'simpsonm09-org-ai-plugin.maxstack-removing';
+  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'org-ai-plugin.maxstack-removing';
   setLock(ctx, lock);
   const run = removal(ctx, ['-Uninstall']);
   assertOk(run);
-  assert.match(run.stdout, /^DELETE\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+resumes the removal/m, run.stdout);
+  assert.match(run.stdout, /^DELETE\s+\.opencode\/plugins\/org-ai-plugin\s+resumes the removal/m, run.stdout);
   assert.equal(existsSync(quarantine), false, 'the quarantine was not deleted');
   assert.equal(existsSync(lockPath(ctx)), false, 'the lock remains');
 }, {});
@@ -860,7 +860,7 @@ withWorkspace('a plain apply names a quarantine folder beside a recorded folder,
   const quarantine = `${ORG_FOLDER_FULL(ctx)}.maxstack-removing`;
   writeFile(ctx.workspace, `${ORG_FOLDER}.maxstack-removing/left.txt`, 'left\n');
   const run = mustApply(ctx);
-  assert.match(run.stdout, /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\.maxstack-removing\s+a folder with the removal quarantine name/m, run.stdout);
+  assert.match(run.stdout, /^SKIP\s+\.opencode\/plugins\/org-ai-plugin\.maxstack-removing\s+a folder with the removal quarantine name/m, run.stdout);
   assert.equal(readFileSync(join(quarantine, 'left.txt'), 'utf8'), 'left\n', 'the apply changed the quarantine folder');
 }, {});
 
@@ -899,7 +899,7 @@ withWorkspace('a plain apply finishes a journaled quarantine it left, prints it 
   const quarantine = `${ORG_FOLDER_FULL(ctx)}.maxstack-removing`;
   renameSync(ORG_FOLDER_FULL(ctx), quarantine);
   const lock = readJson(lockPath(ctx));
-  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'simpsonm09-org-ai-plugin.maxstack-removing';
+  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'org-ai-plugin.maxstack-removing';
   setLock(ctx, lock);
   const run = mustApply(ctx);
   assert.equal(existsSync(quarantine), false, 'the journaled quarantine was kept');
@@ -916,25 +916,25 @@ withWorkspace('a plain apply keeps a journaled quarantine whose files changed, n
   renameSync(ORG_FOLDER_FULL(ctx), quarantine);
   writeFileSync(join(quarantine, 'skills', 'demo-skill', 'SKILL.md'), 'changed by the user\n');
   const lock = readJson(lockPath(ctx));
-  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'simpsonm09-org-ai-plugin.maxstack-removing';
+  ownedRecord(lock, ORG_FOLDER, 'dir').quarantine = 'org-ai-plugin.maxstack-removing';
   setLock(ctx, lock);
   const run = mustApply(ctx);
   const lines = run.stdout.split(/\r?\n/).filter((line) => line.includes('maxstack-removing'));
   assert.equal(lines.length, 1, run.stdout);
-  assert.match(lines[0], /^SKIP\s+\.opencode\/plugins\/simpsonm09-org-ai-plugin\s+kept: simpsonm09-org-ai-plugin\.maxstack-removing holds files that changed since its removal began/, lines[0]);
+  assert.match(lines[0], /^SKIP\s+\.opencode\/plugins\/org-ai-plugin\s+kept: org-ai-plugin\.maxstack-removing holds files that changed since its removal began/, lines[0]);
   assert.equal(readFileSync(join(quarantine, 'skills', 'demo-skill', 'SKILL.md'), 'utf8'), 'changed by the user\n', 'the changed folder was deleted');
   const kept = readJson(lockPath(ctx));
-  assert.equal(ownedRecord(kept, ORG_FOLDER, 'dir').quarantine, 'simpsonm09-org-ai-plugin.maxstack-removing', 'the journal was dropped');
+  assert.equal(ownedRecord(kept, ORG_FOLDER, 'dir').quarantine, 'org-ai-plugin.maxstack-removing', 'the journal was dropped');
   assert.doesNotMatch(run.stdout, /Rerun -Uninstall/, run.stdout);
 }, {});
 
 withWorkspace('an overridden layer is removed by -Uninstall like any other', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
   assertOk(removal(ctx, ['-Uninstall']));
   assert.equal(existsSync(lockPath(ctx)), false, 'the lock remains');
-  assert.equal(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin')), false, 'the overridden folder remains');
+  assert.equal(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin')), false, 'the overridden folder remains');
 }, {});
 
 // N7: -Uninstall does not read the settings file, so a dry run names no skipped layer and says the declaration is not used.

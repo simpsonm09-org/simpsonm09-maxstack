@@ -260,9 +260,9 @@ withWorkspace('the cache follows the layer url, even when it was cloned from ano
 
 withWorkspace('LayerSource overrides a local checkout, and now also a git-pinned layer', (ctx) => {
   const alternate = join(ctx.base, 'alternate-org');
-  writeLayerStub(alternate, { claudePlugin: 'simpsonm09-org-ai-plugin', extra: { 'from-override.txt': 'override\n' } });
-  mustApply(ctx, ['-LayerSource', `simpsonm09-org-ai-plugin=${alternate}`]);
-  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'from-override.txt')));
+  writeLayerStub(alternate, { claudePlugin: 'org-ai-plugin', extra: { 'from-override.txt': 'override\n' } });
+  mustApply(ctx, ['-LayerSource', `org-ai-plugin=${alternate}`]);
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin', 'from-override.txt')));
 
   // -LayerSource is the local alias of -Source, so it reads pstack from a checkout of the fork as well.
   const pstackCheckout = join(ctx.base, 'pstack-checkout');
@@ -275,8 +275,8 @@ withWorkspace('audit with the real layers.json needs no network and writes no ru
   // The real manifest points pstack at GitHub; audit must not fetch it.
   const args = [
     '-LayerSource',
-    `simpsonm09-org-ai-plugin=${join(ctx.workspace, 'projects/repos/simpsonm09-org-ai-plugin')},` +
-      `simpsonm09-personal-ai-plugin=${join(ctx.workspace, 'projects/repos/simpsonm09-personal-ai-plugin')}`,
+    `org-ai-plugin=${join(ctx.workspace, 'projects/repos/org-ai-plugin')},` +
+      `personal-ai-plugin=${join(ctx.workspace, 'projects/repos/personal-ai-plugin')}`,
   ];
   const run = runInstaller(shell, ctx, args, { apply: false, layersFile: null });
   assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
@@ -356,12 +356,12 @@ withWorkspace('an unsynced pinned cache reports only the entries it cannot know,
 
 withWorkspace('a selected layer that declares none of the selected runtimes is reported and installs nothing', (ctx) => {
   const layers = writeLayers(ctx, (manifest) => {
-    layerNamed(manifest, 'simpsonm09-personal-ai-plugin').runtimes = { opencode: {} };
+    layerNamed(manifest, 'personal-ai-plugin').runtimes = { opencode: {} };
   });
   const run = mustApply(ctx, ['-Runtimes', 'claude'], { layersFile: layers });
-  assert.match(plainOutput(run), /Layer 'simpsonm09-personal-ai-plugin' declares none of the selected runtimes, so it installs nothing\./);
-  assert.ok(!existsSync(join(ctx.workspace, '.claude', 'plugins', 'simpsonm09-personal-ai-plugin')), 'the personal layer installed');
-  const personal = readJson(lockPath(ctx)).layers.find((layer) => layer.name === 'simpsonm09-personal-ai-plugin');
+  assert.match(plainOutput(run), /Layer 'personal-ai-plugin' declares none of the selected runtimes, so it installs nothing\./);
+  assert.ok(!existsSync(join(ctx.workspace, '.claude', 'plugins', 'personal-ai-plugin')), 'the personal layer installed');
+  const personal = readJson(lockPath(ctx)).layers.find((layer) => layer.name === 'personal-ai-plugin');
   assert.equal(personal.claude.enabled, false);
   assert.equal(personal.opencode.enabled, false);
 }, {});
@@ -421,7 +421,7 @@ withWorkspace('malformed -Source specs and unknown layers are refused before any
 withWorkspace('a local source is refused for the workspace itself and for each folder the installer writes', (ctx) => {
   for (const folder of [ctx.workspace, join(ctx.workspace, '.claude'), join(ctx.workspace, '.claude', 'cache')]) {
     mkdirSync(folder, { recursive: true });
-    const run = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${folder}`]);
+    const run = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${folder}`]);
     assert.notEqual(run.status, 0, `the installer accepted ${folder}`);
     assert.match(plainOutput(run), /cannot be a layer source/, run.stdout);
   }
@@ -495,22 +495,22 @@ withWorkspace('-Update -Check -Strict exits 0 when nothing would change', (ctx) 
 
 withWorkspace('-Update re-reads a local source, and an apply then installs what the checkout holds', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
   gitRun(checkout, ['commit', '-q', '-m', 'layer']);
   writeFile(checkout, 'index.ts', 'export default { edit: 1 };\n');
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
 
   writeFile(checkout, 'index.ts', 'export default { edit: 2 };\n');
-  const installed = join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-org-ai-plugin', 'index.ts');
+  const installed = join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin', 'index.ts');
   const check = runInstaller(shell, ctx, ['-Update', '-Check', '-Strict'], { apply: false });
   assert.equal(check.status, 1, `the edited checkout was not reported:\n${check.stdout}`);
   assert.match(readFileSync(installed, 'utf8'), /edit: 1/, 'the check changed the install');
 
   mustApply(ctx, ['-Update']);
   assert.match(readFileSync(installed, 'utf8'), /edit: 2/, '-Update did not re-read the checkout');
-  assert.equal(sourceOf(ctx, 'simpsonm09-org-ai-plugin').source.dirty, true);
+  assert.equal(sourceOf(ctx, 'org-ai-plugin').source.dirty, true);
 }, {});
 
 withWorkspace('a -Update whose branch cannot be resolved fails with the reason, and leaves the install untouched', (ctx) => {
@@ -554,7 +554,7 @@ withWorkspace('-Source owner/repo@tag resolves an annotated tag to the commit it
 // A config layer served from a local bare repository, pinned to its commit, for a git override of that layer.
 function servedConfigLayer(ctx) {
   const source = join(ctx.base, 'cfg-src');
-  writeLayerStub(source, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(source, { claudePlugin: 'org-ai-plugin' });
   gitRun(source, ['init', '-q']);
   gitRun(source, ['add', '-A']);
   gitRun(source, ['commit', '-q', '-m', 'config layer']);
@@ -566,7 +566,7 @@ function servedConfigLayer(ctx) {
 // Finding 1: a config layer under a git override is read from its cache, and an audit with no cache says so.
 withWorkspace('a config layer under a git override runs -Status and -Update -Check without throwing', (ctx) => {
   const commit = servedConfigLayer(ctx);
-  const override = ['-Source', `simpsonm09-org-ai-plugin=simpsonm09/org-ai-plugin@${commit}`];
+  const override = ['-Source', `org-ai-plugin=simpsonm09/org-ai-plugin@${commit}`];
   mustApply(ctx, override, { env: githubEnv(ctx) });
   assertOk(runInstaller(shell, ctx, ['-Status'], { apply: false, env: githubEnv(ctx) }));
   assertOk(runInstaller(shell, ctx, ['-Update', '-Check'], { apply: false, env: githubEnv(ctx) }));
@@ -574,7 +574,7 @@ withWorkspace('a config layer under a git override runs -Status and -Update -Che
 
 withWorkspace('a config layer pinned by -Source and audited without -Apply names its config as unknown, and does not throw', (ctx) => {
   const commit = servedConfigLayer(ctx);
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=simpsonm09/org-ai-plugin@${commit}`], { apply: false, env: githubEnv(ctx) });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=simpsonm09/org-ai-plugin@${commit}`], { apply: false, env: githubEnv(ctx) });
   assertOk(audit);
   assert.match(audit.stdout, /Drift: .*opencode\.jsonc: unknown until -Apply syncs the layer cache/, audit.stdout);
   assert.equal(existsSync(join(ctx.workspace, '.claude', 'cache')), false, 'an audit fetched the cache');
@@ -583,7 +583,7 @@ withWorkspace('a config layer pinned by -Source and audited without -Apply names
 // Finding 2: a local tree is read with git, and its .git/config may name a program git runs. An audit must run none of it.
 withWorkspace('an audit of a -Source local tree runs no program that its .git/config names', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
   gitRun(checkout, ['commit', '-q', '-m', 'layer']);
@@ -593,7 +593,7 @@ withWorkspace('an audit of a -Source local tree runs no program that its .git/co
   assert.equal(existsSync(marker), true, 'the fixture did not run the command that core.fsmonitor names when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran the command that core.fsmonitor names');
 }, {});
@@ -635,8 +635,8 @@ withWorkspace('finding F1: a linked git worktree is a readable local layer and i
 // Finding 3: a recorded local override whose folder is gone is reported, and only an apply stops on it.
 withWorkspace('a recorded local override whose folder is gone is reported by -Status, -Update -Check, and -Remove, and only -Apply stops', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
   rmSync(checkout, { recursive: true, force: true });
   const missing = `local ${checkout}: folder missing`;
 
@@ -649,16 +649,16 @@ withWorkspace('a recorded local override whose folder is gone is reported by -St
   assert.ok(check.stdout.includes(missing), check.stdout);
 
   assertOk(runInstaller(shell, ctx, ['-Uninstall'], { apply: false }));
-  assertOk(runInstaller(shell, ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin'], { apply: false }));
-  const refused = removal(ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin']);
+  assertOk(runInstaller(shell, ctx, ['-Remove', '-Layers', 'personal-ai-plugin'], { apply: false }));
+  const refused = removal(ctx, ['-Remove', '-Layers', 'personal-ai-plugin']);
   assert.notEqual(refused.status, 0, 'a removal rewrote the config without the missing fragment');
   assert.match(plainOutput(refused), /has no folder at .*Restore the folder/i, plainOutput(refused));
   assert.doesNotMatch(plainOutput(refused), /-Source/, refused.stdout);
-  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-personal-ai-plugin')), 'a refused removal removed the layer');
+  assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'personal-ai-plugin')), 'a refused removal removed the layer');
 
-  mustApply(ctx, ['-Source', 'simpsonm09-org-ai-plugin=default']);
-  assertOk(removal(ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin']));
-  assert.equal(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'simpsonm09-personal-ai-plugin')), false, 'the other layer was not removed');
+  mustApply(ctx, ['-Source', 'org-ai-plugin=default']);
+  assertOk(removal(ctx, ['-Remove', '-Layers', 'personal-ai-plugin']));
+  assert.equal(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'personal-ai-plugin')), false, 'the other layer was not removed');
 }, {});
 
 // Finding 3: -Update resolves only the layers it selects, so a remote the selection leaves out cannot abort it.
@@ -790,7 +790,7 @@ withWorkspace('an invalid recorded override is ignored by -Update, -Remove, and 
   const lock = readJson(lockPath(ctx));
   sourceBlockIn(lock, 'pstack').url = 'ext::sh -c touch x';
   setLock(ctx, lock);
-  for (const args of [['-Update', '-Check'], ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin'], ['-Uninstall']]) {
+  for (const args of [['-Update', '-Check'], ['-Remove', '-Layers', 'personal-ai-plugin'], ['-Uninstall']]) {
     const run = runInstaller(shell, ctx, args, { apply: false, env: githubEnv(ctx) });
     assertOk(run);
     assert.match(run.stdout, /pstack: invalid recorded source, ignored for this run/, `${args.join(' ')}: ${run.stdout}`);
@@ -865,23 +865,23 @@ withWorkspace('a plain folder inside another git repository is not a checkout, s
   gitRun(outer, ['add', '-A']);
   gitRun(outer, ['commit', '-q', '-m', 'outer']);
   const plain = join(outer, 'plain');
-  writeLayerStub(plain, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(plain, { claudePlugin: 'org-ai-plugin' });
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${plain}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${plain}`], { apply: false });
   assertOk(audit);
   const text = sourceBlockOf(audit.stdout).lines.join('\n');
-  assert.match(text, /simpsonm09-org-ai-plugin: override, local .*plain \(not a git checkout\)/, text);
+  assert.match(text, /org-ai-plugin: override, local .*plain \(not a git checkout\)/, text);
   assert.doesNotMatch(text, /HEAD/, 'the enclosing repository was recorded');
 }, {});
 
 withWorkspace('a local source that contains the workspace is refused, since the layer would hold the installer that reads it', (ctx) => {
-  const run = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${ctx.base}`], { apply: false });
+  const run = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${ctx.base}`], { apply: false });
   assert.notEqual(run.status, 0, 'an ancestor of the workspace was accepted');
   assert.match(plainOutput(run), /is an ancestor of the workspace/, run.stdout);
 }, {});
 
 withWorkspace('a device prefix in a -Source path is refused by its text, and is not compared by the folder it names', (ctx) => {
-  const prefixed = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:\\\\?\\${ctx.workspace}`], { apply: false });
+  const prefixed = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:\\\\?\\${ctx.workspace}`], { apply: false });
   assert.notEqual(prefixed.status, 0, 'a long-path prefix hid the workspace');
   assert.match(plainOutput(prefixed), /UNC or device path/, prefixed.stdout);
 }, {});
@@ -889,7 +889,7 @@ withWorkspace('a device prefix in a -Source path is refused by its text, and is 
 withWorkspace('a comma inside a -Source path is refused with the reason, since a comma separates entries', (ctx) => {
   const folder = join(ctx.base, 'a');
   mkdirSync(folder);
-  const run = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${folder},b`], { apply: false });
+  const run = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${folder},b`], { apply: false });
   assert.notEqual(run.status, 0, 'a path with a comma was accepted');
   assert.match(plainOutput(run), /comma separates -Source entries, so a path cannot hold one/i, run.stdout);
 }, {});
@@ -912,20 +912,20 @@ withWorkspace('a recorded override on a drive that is gone is reported as a miss
   const gone = absentDriveLetter();
   if (!gone) return;
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
   const lock = readJson(lockPath(ctx));
-  sourceBlockIn(lock, 'simpsonm09-org-ai-plugin').path = `${gone}:/repo/org`;
+  sourceBlockIn(lock, 'org-ai-plugin').path = `${gone}:/repo/org`;
   setLock(ctx, lock);
 
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
   assertOk(status);
   assert.ok(status.stdout.split('\\').join('/').includes(`${gone}:/repo/org: folder missing`), status.stdout);
   assertOk(runInstaller(shell, ctx, ['-Update', '-Check'], { apply: false }));
-  assertOk(runInstaller(shell, ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin'], { apply: false }));
+  assertOk(runInstaller(shell, ctx, ['-Remove', '-Layers', 'personal-ai-plugin'], { apply: false }));
   assertOk(runInstaller(shell, ctx, ['-Uninstall'], { apply: false }));
 
-  const explicit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${gone}:/nope`], { apply: false });
+  const explicit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${gone}:/nope`], { apply: false });
   assert.notEqual(explicit.status, 0, 'an explicit source on an absent drive was accepted');
   assert.match(plainOutput(explicit), /folder does not exist/, explicit.stdout);
 }, {});
@@ -942,7 +942,7 @@ test('the folder helper keeps a drive root whole, with its backslash', { skip },
 // Round 2, D: a clean filter that .git/config names is a program too. An audit of a local tree must run none of it.
 withWorkspace('an audit of a -Source local tree runs no clean filter that its .git/config names', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
@@ -952,7 +952,7 @@ withWorkspace('an audit of a -Source local tree runs no clean filter that its .g
   gitRun(checkout, ['config', 'filter.mark.clean', `sh -c "touch '${marker.split('\\').join('/')}'; cat"`]);
   writeFile(checkout, 'notes.txt', 'two\n');
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran the clean filter that .git/config names');
 }, {});
@@ -974,31 +974,31 @@ test('the installer under Windows PowerShell 5.1 stops with the PowerShell 7 req
 }, {});
 
 // Round 2, H: the refusal for a missing layer folder names the absolute folder, and the command that fits the mode.
-const ORG_DEFAULT_FOLDER = (ctx) => join(ctx.workspace, 'projects', 'repos', 'simpsonm09-org-ai-plugin');
+const ORG_DEFAULT_FOLDER = (ctx) => join(ctx.workspace, 'projects', 'repos', 'org-ai-plugin');
 
 withWorkspace('finding F4: a missing default layer names the clone URL and first-time source options', (ctx) => {
   rmSync(ORG_DEFAULT_FOLDER(ctx), { recursive: true, force: true });
   const apply = runInstaller(shell, ctx, []);
   assert.notEqual(apply.status, 0, 'an apply wrote past a missing default folder');
-  assert.ok(plainOutput(apply).includes(`Clone https://github.com/simpsonm09-projects/simpsonm09-org-ai-plugin.git to ${ORG_DEFAULT_FOLDER(ctx)}`), plainOutput(apply));
-  assert.match(plainOutput(apply), /-Source simpsonm09-org-ai-plugin=local:<path>/);
-  assert.match(plainOutput(apply), /layers\.simpsonm09-org-ai-plugin\.source in maxstack\.settings\.json/);
+  assert.ok(plainOutput(apply).includes(`Clone https://github.com/simpsonm09-projects/org-ai-plugin.git to ${ORG_DEFAULT_FOLDER(ctx)}`), plainOutput(apply));
+  assert.match(plainOutput(apply), /-Source org-ai-plugin=local:<path>/);
+  assert.match(plainOutput(apply), /layers\.org-ai-plugin\.source in maxstack\.settings\.json/);
 }, {});
 
 withWorkspace('a missing override folder is refused with its absolute path and the -Source repair that applies', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
   rmSync(checkout, { recursive: true, force: true });
   const apply = runInstaller(shell, ctx, []);
   assert.notEqual(apply.status, 0, 'an apply wrote past a missing override folder');
-  assert.match(plainOutput(apply), /has no folder at .*clone the repository|pass -Source simpsonm09-org-ai-plugin=local:<path>/i, plainOutput(apply));
+  assert.match(plainOutput(apply), /has no folder at .*clone the repository|pass -Source org-ai-plugin=local:<path>/i, plainOutput(apply));
 }, {});
 
 withWorkspace('a removal refused for a missing layer folder gives no -Source advice, since -Remove takes no -Source', (ctx) => {
   mustApply(ctx);
   rmSync(ORG_DEFAULT_FOLDER(ctx), { recursive: true, force: true });
-  const removed = removal(ctx, ['-Remove', '-Layers', 'simpsonm09-personal-ai-plugin']);
+  const removed = removal(ctx, ['-Remove', '-Layers', 'personal-ai-plugin']);
   assert.notEqual(removed.status, 0, 'a removal rewrote the config without a missing fragment');
   assert.match(plainOutput(removed), /has no folder at .*Restore the folder/i, plainOutput(removed));
   assert.doesNotMatch(plainOutput(removed), /-Source/, plainOutput(removed));
@@ -1021,7 +1021,7 @@ const touchAndCat = (marker) => `sh -c "touch '${marker.replace(/\\/g, '/')}'; c
 // Finding 1: the name comes from the config key. A clean command whose path has a dot ended the line the old parser read.
 withWorkspace('an audit of a -Source local tree runs no clean filter whose command has a dot in it', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
@@ -1034,7 +1034,7 @@ withWorkspace('an audit of a -Source local tree runs no clean filter whose comma
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran the clean command that .git/config names');
 }, {});
@@ -1043,7 +1043,7 @@ withWorkspace('an audit of a -Source local tree runs no clean filter whose comma
 // guard cannot pass makes the tree unreadable, with no filter run. The checkout's clean command writes the marker.
 withWorkspace('an audit of a -Source local tree runs no clean filter whose name holds an equals sign', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
@@ -1056,14 +1056,14 @@ withWorkspace('an audit of a -Source local tree runs no clean filter whose name 
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command whose filter name holds an equals sign');
 }, {});
 
 withWorkspace('a filter name with a control character makes its tree unreadable, and no filter in it runs', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
@@ -1076,9 +1076,9 @@ withWorkspace('a filter name with a control character makes its tree unreadable,
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
   rmSync(marker);
 
-  const status = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const status = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(status);
-  assert.match(plainOutput(status), /simpsonm09-org-ai-plugin: override, local .*unreadable: .*control character/, plainOutput(status));
+  assert.match(plainOutput(status), /org-ai-plugin: override, local .*unreadable: .*control character/, plainOutput(status));
   assert.equal(existsSync(marker), false, 'a tree with an unpassable filter name was read');
 }, {});
 
@@ -1089,26 +1089,26 @@ function manyFilters(count) {
 
 withWorkspace('a tree that names more than 100 filter drivers is reported as unreadable by -Status, -Update, and an audit', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
   gitRun(checkout, ['commit', '-q', '-m', 'layer']);
-  mustApply(ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  mustApply(ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
   appendFileSync(join(checkout, '.git', 'config'), manyFilters(400));
 
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
   assertOk(status);
-  assert.match(plainOutput(status), /simpsonm09-org-ai-plugin: override, local .*unreadable: too many filter drivers/, plainOutput(status));
+  assert.match(plainOutput(status), /org-ai-plugin: override, local .*unreadable: too many filter drivers/, plainOutput(status));
   assertOk(runInstaller(shell, ctx, ['-Update', '-Check'], { apply: false }));
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /unreadable: too many filter drivers/, plainOutput(audit));
 }, {});
 
 withWorkspace('a tree that names exactly 100 filter drivers is still read', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   gitRun(checkout, ['init', '-q']);
   gitRun(checkout, ['add', '-A']);
@@ -1123,10 +1123,10 @@ withWorkspace('a tree that names exactly 100 filter drivers is still read', (ctx
   const inherited = ['SystemRoot', 'windir', 'SystemDrive', 'PATH', 'PATHEXT', 'ComSpec', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA', 'PSModulePath', 'ProgramFiles', 'ProgramData'];
   const minimal = Object.fromEntries(inherited.filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
   const env = { ...minimal, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, '.config'), GIT_CONFIG_NOSYSTEM: '1' };
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false, env });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false, env });
   assertOk(audit);
   assert.doesNotMatch(plainOutput(audit), /unreadable/, plainOutput(audit));
-  assert.match(plainOutput(audit), /simpsonm09-org-ai-plugin: override, local .*HEAD [0-9a-f]{40}, clean\)/, plainOutput(audit));
+  assert.match(plainOutput(audit), /org-ai-plugin: override, local .*HEAD [0-9a-f]{40}, clean\)/, plainOutput(audit));
 }, {});
 
 // Finding 3: a git failure inside the checkout probe is reported as an unreadable layer. Set-LayerChoice must not throw,
@@ -1166,7 +1166,7 @@ function globalGitEnv(ctx, key, value) {
 // A local checkout with one committed file, and a .gitattributes that names the mark filter on text files.
 function markedCheckoutWithCommit(ctx) {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   runGit(checkout, ['init', '-q']);
   runGit(checkout, ['add', '-A']);
@@ -1204,7 +1204,7 @@ withWorkspace('an audit turns off a filter that the tree reaches through an incl
   assert.equal(existsSync(marker), true, 'the fixture did not run the included clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command that an include in the tree config defines');
 }, {});
@@ -1220,7 +1220,7 @@ withWorkspace('an audit turns off a filter that the tree defines in its per-work
   assert.equal(existsSync(marker), true, 'the fixture did not run the per-worktree clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command from the per-worktree config');
 }, {});
@@ -1235,7 +1235,7 @@ withWorkspace('an audit turns off the filter that .git/info/attributes names whe
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command named by .git/info/attributes');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command named by .git/info/attributes');
 }, {});
@@ -1250,7 +1250,7 @@ withWorkspace('an audit runs no global filter that only the tree attributes name
   assert.equal(existsSync(marker), true, 'the fixture did not run the global clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false, env });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false, env });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a global clean command that only the in-tree attributes name');
 }, {});
@@ -1266,7 +1266,7 @@ function bumpMtime(path) {
 
 function infoAttributesCheckout(ctx, { dir = 'org-checkout', attributes, filters, edit = true, env = undefined }) {
   const checkout = join(ctx.base, ...dir.split('/'));
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   runGit(checkout, ['init', '-q']);
   runGit(checkout, ['add', '-A']);
@@ -1289,7 +1289,7 @@ for (const [label, name] of [['a non-ASCII name', 'é'], ['a CJK name', '日本'
     assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
     rmSync(marker);
 
-    const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+    const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
     assertOk(audit);
     assert.equal(existsSync(marker), false, `the audit ran the clean command of the filter named ${name}`);
   }, {});
@@ -1297,7 +1297,7 @@ for (const [label, name] of [['a non-ASCII name', 'é'], ['a CJK name', '日本'
 
 withWorkspace('a checkout under a non-ASCII folder is read as a checkout, with its HEAD and dirty state', (ctx) => {
   const checkout = infoAttributesCheckout(ctx, { dir: '日本語/org-checkout', attributes: '', filters: [] });
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /override, local .*HEAD [0-9a-f]{40}, uncommitted changes\)/, plainOutput(audit));
 }, {});
@@ -1327,7 +1327,7 @@ withWorkspace('an audit runs no clean filter whose name is empty, which .git/con
   assert.equal(existsSync(marker), true, 'the fixture did not run the empty-named clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran the clean command of the empty-named filter');
 }, {});
@@ -1349,7 +1349,7 @@ withWorkspace('an audit runs no filter that a populated submodule names in its o
   runGit(source, ['add', '-A']);
   runGit(source, ['commit', '-q', '-m', 'sub']);
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   runGit(checkout, ['init', '-q']);
   runGit(checkout, ['add', '-A']);
   runGit(checkout, ['commit', '-q', '-m', 'layer']);
@@ -1366,7 +1366,7 @@ withWorkspace('an audit runs no filter that a populated submodule names in its o
   assert.equal(existsSync(marker), true, 'the fixture did not run the submodule clean command when the status was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command that a populated submodule names in its own config');
 }, {});
@@ -1386,7 +1386,7 @@ withWorkspace('a status runs no global filter that .git/info/attributes names, a
   rmSync(written);
   const before = snapshotTree(checkout);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false, env });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false, env });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a global clean command that the tree attributes name');
   assert.equal(existsSync(written), false, 'the audit wrote a file into the tree');
@@ -1399,7 +1399,7 @@ withWorkspace('a clean tree whose .git/info/attributes names a global filter rep
   const env = globalGitEnv(ctx, 'filter.lfs.clean', touchAndCat(marker));
   const checkout = infoAttributesCheckout(ctx, { attributes: '*.txt filter=lfs\n', filters: [], edit: false, env });
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false, env });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false, env });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a global clean command on a tree with no change');
   assert.match(plainOutput(audit), /HEAD [0-9a-f]{40}, clean\)/, plainOutput(audit));
@@ -1408,14 +1408,14 @@ withWorkspace('a clean tree whose .git/info/attributes names a global filter rep
 withWorkspace('a changed file makes a local tree read as uncommitted changes', (ctx) => {
   const checkout = infoAttributesCheckout(ctx, { attributes: '', filters: [] });
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /HEAD [0-9a-f]{40}, uncommitted changes\)/, plainOutput(audit));
 }, {});
 
 withWorkspace('an eol=crlf file that is unchanged reads as clean, since the status reads the tree attributes', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, '.gitattributes', '*.ps1 text eol=crlf\n');
   writeFile(checkout, 'tool.ps1', 'one\r\ntwo\r\n');
   runGit(checkout, ['init', '-q']);
@@ -1425,7 +1425,7 @@ withWorkspace('an eol=crlf file that is unchanged reads as clean, since the stat
   runGit(checkout, ['commit', '-q', '-m', 'layer']);
   bumpMtime(join(checkout, 'tool.ps1'));
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /HEAD [0-9a-f]{40}, clean\)/, plainOutput(audit));
 }, {});
@@ -1532,7 +1532,7 @@ withWorkspace('an audit runs no core.fsmonitor that the installer environment na
   assert.equal(existsSync(marker), true, 'the fixture did not run the fsmonitor command that GIT_CONFIG_PARAMETERS names');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false, env });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false, env });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran the fsmonitor command that GIT_CONFIG_PARAMETERS names');
 }, {});
@@ -1624,7 +1624,7 @@ withWorkspace('an audit runs no clean filter whose command has a dot in it, when
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command with a dot in it, named by .git/info/attributes');
 }, {});
@@ -1635,7 +1635,7 @@ withWorkspace('an audit runs no clean filter whose name holds an equals sign, wh
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command whose name holds an equals sign, named by .git/info/attributes');
 }, {});
@@ -1652,7 +1652,7 @@ withWorkspace('an audit turns off a filter that the tree reaches through an incl
   assert.equal(existsSync(marker), true, 'the fixture did not run the included clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command that an include in the tree config defines');
 }, {});
@@ -1668,7 +1668,7 @@ withWorkspace('an audit turns off a filter in the per-worktree config, when .git
   assert.equal(existsSync(marker), true, 'the fixture did not run the per-worktree clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a clean command from the per-worktree config, named by .git/info/attributes');
 }, {});
@@ -1708,11 +1708,11 @@ withWorkspace('a tree whose config git cannot parse is reported unreadable, not 
   const fixture = spawnSync('git', ['-C', checkout, 'rev-parse', 'HEAD'], { windowsHide: true, encoding: 'utf8' });
   assert.notEqual(fixture.status, 0, 'the fixture config parsed, so the tree is not broken');
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /override, local .*unreadable: config cannot be read/, plainOutput(audit));
   assert.doesNotMatch(plainOutput(audit), /org-checkout \(not a git checkout\)/, plainOutput(audit));
-  assert.notEqual(runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]).status, 0, 'an apply wrote a layer from a tree whose config it cannot read');
+  assert.notEqual(runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`]).status, 0, 'an apply wrote a layer from a tree whose config it cannot read');
 }, {});
 
 // Finding 9: a filter name the guard cannot pass is refused as too long, with the reason, and never read as "not a checkout".
@@ -1722,7 +1722,7 @@ withWorkspace('a filter name of 33000 characters makes its tree unreadable as to
   const fixture = spawnSync('git', ['-C', checkout, 'status', '--porcelain'], { windowsHide: true, encoding: 'utf8' });
   assert.equal(fixture.status, 0, 'the fixture config does not parse for git, so the case is not the name length');
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /override, local .*unreadable: filter name too long/, plainOutput(audit));
   assert.doesNotMatch(plainOutput(audit), /org-checkout \(not a git checkout\)/, plainOutput(audit));
@@ -1733,7 +1733,7 @@ withWorkspace('filter names that together need more environment than git can tak
   const lines = Array.from({ length: 100 }, (_, index) => `[filter "n${index}-${'x'.repeat(1000)}"]\n\tclean = x\n`).join('');
   appendFileSync(join(checkout, '.git', 'config'), lines);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /override, local .*unreadable: filter name too long/, plainOutput(audit));
   assert.doesNotMatch(plainOutput(audit), /org-checkout \(not a git checkout\)/, plainOutput(audit));
@@ -1758,7 +1758,7 @@ test('the guard turns core.fsmonitor off with the empty string, which no git ver
 // Finding 11: the eol attributes that the status now reads must not hide a real change. A changed eol=crlf file is dirty.
 withWorkspace('a changed eol=crlf file reads as uncommitted changes, so the tree attributes do not hide an edit', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, '.gitattributes', '*.ps1 text eol=crlf\n');
   writeFile(checkout, 'tool.ps1', 'one\r\ntwo\r\n');
   runGit(checkout, ['init', '-q']);
@@ -1768,7 +1768,7 @@ withWorkspace('a changed eol=crlf file reads as uncommitted changes, so the tree
   writeFile(checkout, 'tool.ps1', 'one\r\nthree\r\n');
   bumpMtime(join(checkout, 'tool.ps1'));
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /HEAD [0-9a-f]{40}, uncommitted changes\)/, plainOutput(audit));
 }, {});
@@ -1776,11 +1776,11 @@ withWorkspace('a changed eol=crlf file reads as uncommitted changes, so the tree
 // A SHA-256 repository reads its HEAD and its dirty state like a SHA-1 one: the status names no SHA-1 object.
 withWorkspace('a SHA-256 checkout reads its HEAD and dirty state', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   runGit(checkout, ['init', '-q', '--object-format=sha256']);
   runGit(checkout, ['add', '-A']);
   runGit(checkout, ['commit', '-q', '-m', 'layer']);
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.match(plainOutput(audit), /override, local .*HEAD [0-9a-f]{64}, clean\)/, plainOutput(audit));
 }, {});
@@ -1811,7 +1811,7 @@ function rawFilterSection(nameBytes, command) {
 // .gitattributes is committed before the filter is defined. A same-size edit makes git run the clean command when it reads the file.
 function rawNameCheckout(ctx, { attributesFile, attributes, nameBytes, command }) {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   runGit(checkout, ['init', '-q']);
   writeFile(checkout, 'notes.txt', 'one\n');
   writeFile(checkout, attributesFile, attributes);
@@ -1833,12 +1833,12 @@ withWorkspace('an audit turns off no filter whose name is not valid UTF-8 in .gi
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran the clean command of a filter whose name is not valid UTF-8');
   assert.match(plainOutput(audit), /override, local .*unreadable: a filter driver name is not valid UTF-8/, plainOutput(audit));
 
-  const apply = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`]);
+  const apply = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`]);
   assert.notEqual(apply.status, 0, 'an apply wrote a layer from a tree with a filter name that is not valid UTF-8');
   assert.match(plainOutput(apply), /cannot be read at .*: a filter driver name is not valid UTF-8/, plainOutput(apply));
   assert.equal(existsSync(marker), false, 'the apply ran the clean command of a filter whose name is not valid UTF-8');
@@ -1850,7 +1850,7 @@ withWorkspace('an audit turns off no filter whose name is not valid UTF-8 in a c
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran the clean command of a filter named by a committed .gitattributes');
   assert.match(plainOutput(audit), /override, local .*unreadable: a filter driver name is not valid UTF-8/, plainOutput(audit));
@@ -1887,7 +1887,7 @@ withWorkspace('a global filter name that is not valid UTF-8 makes a local status
   appendFileSync(join(home, '.gitconfig'), rawFilterSection(INVALID_NAME, touchAndCat(marker)));
   const checkout = markedCheckoutWithCommit(ctx);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false, env });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false, env });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran a global clean command whose name is not valid UTF-8');
   assert.match(plainOutput(audit), /override, local .*unreadable: a filter driver name is not valid UTF-8/, plainOutput(audit));
@@ -1901,7 +1901,7 @@ withWorkspace('an audit runs no clean filter named by an astral-plane name in .g
   assert.equal(existsSync(marker), true, 'the fixture did not run the clean command when git was not guarded');
   rmSync(marker);
 
-  const audit = runInstaller(shell, ctx, ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`], { apply: false });
+  const audit = runInstaller(shell, ctx, ['-Source', `org-ai-plugin=local:${checkout}`], { apply: false });
   assertOk(audit);
   assert.equal(existsSync(marker), false, 'the audit ran the clean command of the astral-plane filter');
 }, {});
@@ -1927,7 +1927,7 @@ test('a ref lookup whose ref name is not valid UTF-8 fails with that reason, and
 // the tree's config. GIT_TEST_ASSUME_DIFFERENT_OWNER makes git see a different owner on every folder.
 withWorkspace('a folder git refuses as owned by another user is unreadable for that reason, and an apply names the fix for it', (ctx) => {
   const checkout = join(ctx.base, 'org-checkout');
-  writeLayerStub(checkout, { claudePlugin: 'simpsonm09-org-ai-plugin' });
+  writeLayerStub(checkout, { claudePlugin: 'org-ai-plugin' });
   writeFile(checkout, 'notes.txt', 'one\n');
   runGit(checkout, ['init', '-q']);
   runGit(checkout, ['add', '-A']);
@@ -1937,7 +1937,7 @@ withWorkspace('a folder git refuses as owned by another user is unreadable for t
   const emptyConfig = join(ctx.base, 'empty.gitconfig');
   writeFileSync(emptyConfig, '');
   const env = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_GLOBAL: emptyConfig, GIT_CONFIG_NOSYSTEM: '1' };
-  const source = ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`];
+  const source = ['-Source', `org-ai-plugin=local:${checkout}`];
 
   const audit = runInstaller(shell, ctx, source, { apply: false, env });
   assertOk(audit);
@@ -1959,7 +1959,7 @@ withWorkspace('a global config that git cannot parse is named with git\'s messag
   appendFileSync(join(home, '.gitconfig'), '[broken\n');
   const fixture = spawnSync('git', ['config', '--get', 'user.name'], { windowsHide: true, encoding: 'utf8', env, cwd: checkout });
   assert.notEqual(fixture.status, 0, 'the fixture global config parsed, so git reads it');
-  const source = ['-Source', `simpsonm09-org-ai-plugin=local:${checkout}`];
+  const source = ['-Source', `org-ai-plugin=local:${checkout}`];
 
   const audit = runInstaller(shell, ctx, source, { apply: false, env });
   assertOk(audit);

@@ -8,7 +8,7 @@ This is the OpenCode V2 shape. V2 config uses `mcp.servers`, keeps a configured 
 
 ## Default servers
 
-The workspace is CLI-first. No MCP server is installed by default. Every service is reached through a CLI owner: `gh` for GitHub, `gh search code` and the local `grep` tool for code search, `postman` for the Postman cloud and `newman` for local and CI collection runs, `npx ctx7` for library docs, `@playwright/cli` for browser automation, the `chrome-devtools` CLI for performance and debugging, `kubectl` and `helm` for Kubernetes, `infisical` for the workspace secret source, `mise` for pinned tool versions, `trivy` for scanning, and `just` for repository tasks. The `service-integrations` skill in `simpsonm09-org-ai-plugin` is the general registry. It defers accounts, boards, workspaces, clusters, and personal services such as Discord, email, notifications, and texting to the personal layer.
+The workspace is CLI-first. No MCP server is installed by default. Every service is reached through a CLI owner: `gh` for GitHub, `gh search code` and the local `grep` tool for code search, `postman` for the Postman cloud and `newman` for local and CI collection runs, `npx ctx7` for library docs, `@playwright/cli` for browser automation, the `chrome-devtools` CLI for performance and debugging, `kubectl` and `helm` for Kubernetes, `infisical` for the workspace secret source, `mise` for pinned tool versions, `trivy` for scanning, and `just` for repository tasks. The `service-integrations` skill in `org-ai-plugin` is the general registry. It defers accounts, boards, workspaces, clusters, and personal services such as Discord, email, notifications, and texting to the personal layer.
 
 `mcp.timeout.startup` stays at 120 seconds for the case where a server is added later, because a local server's first run downloads its npm package before the MCP handshake.
 
@@ -36,7 +36,7 @@ The live connection state belongs to the OpenCode server that runs the session. 
 
 - The `github`, `postman`, and `context7` MCP servers were removed in favor of their CLIs. Authenticate the CLI once per runtime.
 - GitHub uses `gh`. Run `gh auth status`, then `gh auth login`.
-- Postman uses `postman`. Install with `npm install -g postman-cli`. Reach the cloud through the vault wrapper, `with-vault --role agent postman <args>` for an agent or `with-vault --role human postman <args>` for the human, so the key is brokered rather than set in the environment. `with-secrets --require POSTMAN_API_KEY postman <args>` is the human alternative, and it does set the key for that one command. A direct `postman login --with-api-key` is the manual fallback. The key lives in Infisical as `POSTMAN_API_KEY`. See [`../../simpsonm09-dev-setup/docs/secrets.md`](../../simpsonm09-dev-setup/docs/secrets.md).
+- Postman uses `postman`. Install with `npm install -g postman-cli`. Reach the cloud through the vault wrapper, `with-vault --role agent postman <args>` for an agent or `with-vault --role human postman <args>` for the human, so the key is brokered rather than set in the environment. `with-secrets --require POSTMAN_API_KEY postman <args>` is the human alternative, and it does set the key for that one command. A direct `postman login --with-api-key` is the manual fallback. The key lives in Infisical as `POSTMAN_API_KEY`. See [`../../dev-setup/docs/secrets.md`](../../dev-setup/docs/secrets.md).
 - Library docs use `npx ctx7`. Anonymous works; `npx ctx7 login` raises the rate limit.
 - If a server is added later and reports `needs_auth`, sign in with `opencode mcp auth <name>`. That is the OAuth flow for a remote server.
 
@@ -68,16 +68,16 @@ Remote secrets use `{env:NAME}`. Never write a secret into the config.
 
 ## Layer plugin entries
 
-A config layer can also register skills through an OpenCode plugin. `simpsonm09-org-ai-plugin` and `simpsonm09-personal-ai-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/simpsonm09-org-ai-plugin` and `.opencode/plugins/simpsonm09-personal-ai-plugin`, and OpenCode loads them next to `pstack`, whose entry is named in `opencode.jsonc`.
+A config layer can also register skills through an OpenCode plugin. `org-ai-plugin` and `personal-ai-plugin` each carry an `index.ts`, a `package.json`, and a `skills/` directory. `Install-Workspace.ps1` copies them into `.opencode/plugins/org-ai-plugin` and `.opencode/plugins/personal-ai-plugin`, and OpenCode loads them next to `pstack`, whose entry is named in `opencode.jsonc`.
 
 | Plugin | Skill | Purpose |
 | --- | --- | --- |
-| `simpsonm09-org-ai-plugin` | `service-integrations` | The general integration registry: which CLI owns each external-service job. It defers personal specifics to the personal layer. |
-| `simpsonm09-org-ai-plugin` | `repo-tasks` | Run, build, test, or verify a repository through its justfile. |
-| `simpsonm09-org-ai-plugin` | `repo-standard` | The gates, the definition of done, and the branch and pull request flow. |
-| `simpsonm09-org-ai-plugin` | `local-services` | The container stack on the machine: Docker, Portainer, Infisical, and DbGate. |
-| `simpsonm09-personal-ai-plugin` | `integrations-personal` | The personal concretes the registry defers to, and the `himalaya`, `ntfy`, and `smsgate` services. |
-| `simpsonm09-personal-ai-plugin` | `dev-tools` | Where each personal tool's settings live and how to apply them. |
-| `simpsonm09-personal-ai-plugin` | `discord` | Discord through the `discli` CLI. |
+| `org-ai-plugin` | `service-integrations` | The general integration registry: which CLI owns each external-service job. It defers personal specifics to the personal layer. |
+| `org-ai-plugin` | `repo-tasks` | Run, build, test, or verify a repository through its justfile. |
+| `org-ai-plugin` | `repo-standard` | The gates, the definition of done, and the branch and pull request flow. |
+| `org-ai-plugin` | `local-services` | The container stack on the machine: Docker, Portainer, Infisical, and DbGate. |
+| `personal-ai-plugin` | `integrations-personal` | The personal concretes the registry defers to, and the `himalaya`, `ntfy`, and `smsgate` services. |
+| `personal-ai-plugin` | `dev-tools` | Where each personal tool's settings live and how to apply them. |
+| `personal-ai-plugin` | `discord` | Discord through the `discli` CLI. |
 
 Add a skill by creating `skills/<id>/SKILL.md` in the layer repository, then rerun `Install-Workspace.ps1 -Apply`, restart the running OpenCode server, and start a new T3 session.
