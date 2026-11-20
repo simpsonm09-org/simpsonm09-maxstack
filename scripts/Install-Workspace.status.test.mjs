@@ -33,7 +33,7 @@ withWorkspace('the lock records each layer once, with its runtimes and no absolu
   assert.ok(!('primaryModel' in lock), 'the lock records no model');
   assert.match(lock.configSha256, /^[0-9a-fA-F]{64}$/);
   assert.equal(lock.layers.length, 3, 'one record per layer in layers.json');
-  assert.deepEqual(lock.layers.map((record) => record.name), ['pstack', 'org-ai-plugin', 'personal-ai-plugin']);
+  assert.deepEqual(lock.layers.map((record) => record.name), ['org-ai-plugin', 'personal-ai-plugin', 'pstack']);
   for (const record of lock.layers) {
     assert.equal(typeof record.name, 'string');
     assert.equal(typeof record.kind, 'string');
@@ -236,7 +236,7 @@ withWorkspace('apply records an owned entry for every path it wrote, and the rec
   }
   assert.match(find('.claude/plugins/pstack', 'dir').sha256, /^[0-9A-F]{64}$/);
   assert.match(find('.claude/cache/pstack', 'dir').sha256, /^[0-9A-F]{64}$/);
-  for (const plugin of ['pstack', 'org-ai-plugin', 'personal-ai-plugin']) {
+  for (const plugin of ['org-ai-plugin', 'personal-ai-plugin', 'pstack']) {
     assert.match(find(`.opencode/plugins/${plugin}`, 'dir').sha256, /^[0-9A-F]{64}$/, `the OpenCode folder of ${plugin}`);
   }
   for (const agent of ['pstack-agent.md', 'pstack-reviewer.md', 'pstack-comment-sicko.md']) {

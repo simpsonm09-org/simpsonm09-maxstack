@@ -415,7 +415,7 @@ withContext('-Remove -Layers removes that layer codex skills and leaves the othe
   assert.equal(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'personal-demo')), null, 'the removed layer skill is gone');
   assert.ok(lstatSafe(join(ctx.workspace, '.agents', 'skills', 'org-demo')), 'the other layer skill stays');
   const lock = readLock(ctx);
-  assert.deepEqual(lock.selection.layers, ['pstack', ORG]);
+  assert.deepEqual(lock.selection.layers, [ORG, 'pstack']);
   assert.ok(!ownedSkillRecords(lock).some((record) => record.path === skillPath('personal-demo')), 'its record is gone');
   assert.ok(ownedSkillRecords(lock).some((record) => record.path === skillPath('org-demo')), 'the other record stays');
 });

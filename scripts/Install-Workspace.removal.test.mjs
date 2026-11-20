@@ -352,7 +352,7 @@ withWorkspace('removing a layer removes its folders and keeps the others, and th
   assert.deepEqual(danglingLinks(ctx.workspace), []);
 
   const lock = readJson(lockPath(ctx));
-  assert.deepEqual(lock.selection.layers, ['pstack', 'org-ai-plugin']);
+  assert.deepEqual(lock.selection.layers, ['org-ai-plugin', 'pstack']);
   assert.ok(!lock.owned.some((record) => record.layers.includes('personal-ai-plugin')), 'a record of the removed layer remains');
 
   const removed = snapshotTree(ctx.workspace, { skipLockBackup: true, skipGit: true });

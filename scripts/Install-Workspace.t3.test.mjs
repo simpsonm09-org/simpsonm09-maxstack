@@ -45,8 +45,8 @@ test('the list writes selected layers and a false gate when the gate hook is abs
     assert.ok(content.endsWith('\n'));
     assert.deepEqual(JSON.parse(content), {
       instances: {
-        [ids[0]]: { layers: ['pstack', 'org-ai-plugin', 'personal-ai-plugin'], gate: false },
-        [ids[1]]: { layers: ['pstack', 'org-ai-plugin', 'personal-ai-plugin'], gate: false },
+        [ids[0]]: { layers: ['org-ai-plugin', 'personal-ai-plugin', 'pstack'], gate: false },
+        [ids[1]]: { layers: ['org-ai-plugin', 'personal-ai-plugin', 'pstack'], gate: false },
       },
     });
     assert.equal(content, `${JSON.stringify(JSON.parse(content), null, 2)}\n`);
@@ -242,7 +242,7 @@ test('the list writes gated entries followed by read-only entries in the fixed s
     const applied = install(ctx);
     assert.equal(applied.status, 0, plainOutput(applied));
     assert.deepEqual(readJson(instancesPath(ctx)).instances, {
-      gated_one: { layers: ['pstack', 'org-ai-plugin', 'personal-ai-plugin'], gate: false },
+      gated_one: { layers: ['org-ai-plugin', 'personal-ai-plugin', 'pstack'], gate: false },
       read_only_one: { layers: [], gate: false, readOnly: true },
     });
   });

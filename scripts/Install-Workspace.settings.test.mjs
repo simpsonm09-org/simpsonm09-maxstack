@@ -180,7 +180,7 @@ withWorkspace('invalid settings are rejected before guarded git starts for setti
 
 withWorkspace('an omitted settings dimension keeps the recorded selection without an unlisted status', (ctx) => {
   mustApply(ctx);
-  const layers = Object.fromEntries(['pstack', 'org-ai-plugin', 'personal-ai-plugin'].map((name) => [name, {}]));
+  const layers = Object.fromEntries(['org-ai-plugin', 'personal-ai-plugin', 'pstack'].map((name) => [name, {}]));
   writeWorkspaceSettings(ctx, { version: 1, layers });
   const runtimeOmitted = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
   assert.equal(runtimeOmitted.status, 0, plainOutput(runtimeOmitted));
@@ -191,7 +191,7 @@ withWorkspace('an omitted settings dimension keeps the recorded selection withou
   const layerOmitted = runInstaller(shell, ctx, ['-Status', '-Strict'], { apply: false });
   assert.equal(layerOmitted.status, 0, plainOutput(layerOmitted));
   assert.doesNotMatch(plainOutput(layerOmitted), /Settings: unlisted layer/i);
-  assert.match(plainOutput(layerOmitted), /Selection: runtimes claude, copilot, opencode, pi; layers pstack, org-ai-plugin, personal-ai-plugin/);
+  assert.match(plainOutput(layerOmitted), /Selection: runtimes claude, copilot, opencode, pi; layers org-ai-plugin, personal-ai-plugin, pstack/);
 }, {});
 
 withWorkspace('settings dependencies are checked after flags join the additive selection', (ctx) => {

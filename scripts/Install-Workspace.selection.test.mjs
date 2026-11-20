@@ -205,12 +205,12 @@ withWorkspace('a recorded selection that names only runtimes and layers layers.j
   writeFileSync(lockPath(ctx), JSON.stringify(lock));
   const status = runInstaller(shell, ctx, ['-Status'], { apply: false });
   assertOk(status, plainOutput(status));
-  assert.match(plainOutput(status), /Selection: runtimes claude, copilot, opencode, pi; layers pstack, org-ai-plugin, personal-ai-plugin/);
+  assert.match(plainOutput(status), /Selection: runtimes claude, copilot, opencode, pi; layers org-ai-plugin, personal-ai-plugin, pstack/);
   // A plain apply after that lock writes every name, so the retired names are not kept in the selection.
   const apply = runInstaller(shell, ctx, []);
   assertOk(apply, plainOutput(apply));
   assert.deepEqual(readJson(lockPath(ctx)).selection.runtimes, ['claude', 'copilot', 'opencode', 'pi']);
-  assert.deepEqual(readJson(lockPath(ctx)).selection.layers, ['pstack', 'org-ai-plugin', 'personal-ai-plugin']);
+  assert.deepEqual(readJson(lockPath(ctx)).selection.layers, ['org-ai-plugin', 'personal-ai-plugin', 'pstack']);
 }, {});
 
 withWorkspace('-InitSettings refuses a lock with no ownedSchema, and never overwrites a settings file made by a hard link', (ctx) => {
@@ -258,7 +258,7 @@ withWorkspace('-InitSettings seeds the migration fixture selection exactly: four
   mustApply(ctx);
   const lock = readJson(join(ctx.workspace, 'stack.lock.json'));
   assert.deepEqual([...lock.selection.runtimes].sort(), ['claude', 'copilot', 'opencode', 'pi']);
-  assert.deepEqual([...lock.selection.layers].sort(), ['pstack', 'org-ai-plugin', 'personal-ai-plugin']);
+  assert.deepEqual([...lock.selection.layers].sort(), ['org-ai-plugin', 'personal-ai-plugin', 'pstack']);
   const seed = runInstaller(shell, ctx, ['-InitSettings'], { apply: false });
   assertOk(seed);
   const value = JSON.parse(seed.stdout.slice(seed.stdout.indexOf('{')));
@@ -361,7 +361,7 @@ withWorkspace('-InitSettings local source seed reapplies in a fresh workspace wi
     assertOk(secondApply);
     const secondLock = readJson(join(fresh.workspace, 'stack.lock.json'));
     assert.deepEqual(secondLock.selection, firstLock.selection);
-    for (const name of ['pstack', 'org-ai-plugin']) {
+    for (const name of ['org-ai-plugin', 'pstack']) {
       const oldSource = firstLock.layers.find((layer) => layer.name === name).source;
       const newSource = secondLock.layers.find((layer) => layer.name === name).source;
       assert.equal(newSource.kind, oldSource.kind);
@@ -424,7 +424,7 @@ withWorkspace('a layer that stops naming a folder leaves no copy of it in the ow
   assert.deepEqual(problemRows(runStatus(ctx)), []);
 }, {});
 
-const ALL_LAYERS = ['pstack', 'org-ai-plugin', 'personal-ai-plugin'];
+const ALL_LAYERS = ['org-ai-plugin', 'personal-ai-plugin', 'pstack'];
 
 withWorkspace('a fresh -Runtimes claude,copilot writes only those runtimes, and records the selection', (ctx) => {
   mustApply(ctx, ['-Runtimes', 'claude,copilot']);
@@ -492,7 +492,7 @@ withWorkspace('-Runtimes opencode -Layers pstack writes one layer, and a later -
   mustApply(ctx, ['-Layers', 'org-ai-plugin']);
   assert.ok(existsSync(at('.opencode/plugins/org-ai-plugin/index.ts')), 'the org layer did not install');
   assert.ok(!existsSync(at('.opencode/plugins/personal-ai-plugin')), 'the personal layer was added');
-  assert.deepEqual(selectionOf(ctx), { runtimes: ['opencode'], layers: ['pstack', 'org-ai-plugin'] });
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['opencode'], layers: ['org-ai-plugin', 'pstack'] });
 }, {});
 
 // The bytes of each output file, as latin1 text so that one character is one byte. Each temporary base
@@ -562,7 +562,7 @@ withWorkspaceNeeding('python', python, 'a lock with no selection reads as all, a
   writeFileSync(lockPath(ctx), JSON.stringify(lock));
 
   const status = runStatus(ctx);
-  assert.match(status.stdout, /^Selection: runtimes claude, copilot, opencode, pi; layers pstack, org-ai-plugin, personal-ai-plugin \(the lock predates the selection, so all\)\r?$/m, status.stdout);
+  assert.match(status.stdout, /^Selection: runtimes claude, copilot, opencode, pi; layers org-ai-plugin, personal-ai-plugin, pstack \(the lock predates the selection, so all\)\r?$/m, status.stdout);
   const home = join(ctx.base, 'home');
   mkdirSync(home);
   const verify = spawnSync(python, [verifyWorkspaceScript, '--workspace', ctx.workspace, '--home', home], { windowsHide: true, encoding: 'utf8' });
@@ -578,7 +578,7 @@ withWorkspace('status prints the selection first, names an unselected file, and 
   assert.equal(run.status, 0, run.stdout);
   // Warnings also print to stdout, and the discovery line names the resolved target, so the first line that is neither must be the selection.
   const [first] = run.stdout.split(/\r?\n/).filter((line) => !line.includes('WARNING:') && !line.startsWith(`Workspace: ${ctx.workspace} (from -Workspace)`));
-  assert.equal(first, 'Selection: runtimes claude, copilot; layers pstack, org-ai-plugin, personal-ai-plugin', 'the selection is not the first line');
+  assert.equal(first, 'Selection: runtimes claude, copilot; layers org-ai-plugin, personal-ai-plugin, pstack', 'the selection is not the first line');
   assert.match(run.stdout, /^not selected +\.maxstack\/bin\/pi\.cmd\r?$/m, run.stdout);
   assert.doesNotMatch(run.stdout, /^(matching|drifted|modified|missing|untracked) .*opencode/m, 'status judged an OpenCode path');
   // The file, plus the two runtimes layers.json names that this selection leaves out.
@@ -621,7 +621,7 @@ withWorkspace('a runtime that is not selected is never looked up, so its CLI is 
 
 withWorkspace('comma-separated -Runtimes and -Layers values bind under pwsh -File, one token each', (ctx) => {
   mustApply(ctx, ['-Runtimes', 'claude,opencode', '-Layers', 'pstack,org-ai-plugin']);
-  assert.deepEqual(selectionOf(ctx), { runtimes: ['claude', 'opencode'], layers: ['pstack', 'org-ai-plugin'] });
+  assert.deepEqual(selectionOf(ctx), { runtimes: ['claude', 'opencode'], layers: ['org-ai-plugin', 'pstack'] });
   assert.ok(existsSync(join(ctx.workspace, '.opencode', 'plugins', 'org-ai-plugin', 'index.ts')), 'the named org layer is missing');
 }, {});
 
@@ -663,7 +663,7 @@ withWorkspace('a layer removed from layers.json is dropped from the selection wi
   assert.match(plainOutput(applied), warning);
   assert.ok(!existsSync(personalFolder), 'the removed layer kept its OpenCode folder');
   assert.ok(!existsSync(personalLink), 'the removed layer kept its Claude folder');
-  assert.deepEqual(selectionOf(ctx), { runtimes: ALL_RUNTIMES, layers: ['pstack', 'org-ai-plugin'] });
+  assert.deepEqual(selectionOf(ctx), { runtimes: ALL_RUNTIMES, layers: ['org-ai-plugin', 'pstack'] });
 
   const after = runInstaller(shell, ctx, ['-Status'], { apply: false, layersFile: withoutPersonal });
   assert.equal(after.status, 0, after.stdout);
@@ -687,7 +687,7 @@ withWorkspace('a layer added to layers.json later is not installed by a plain ap
   mustApply(ctx, [], { layersFile: withoutPersonal });
   const personalFolder = join(ctx.workspace, '.opencode', 'plugins', LAYER_PERSONAL);
   assert.ok(!existsSync(personalFolder));
-  assert.deepEqual(selectionOf(ctx).layers, ['pstack', 'org-ai-plugin']);
+  assert.deepEqual(selectionOf(ctx).layers, ['org-ai-plugin', 'pstack']);
 
   const applied = mustApply(ctx);
   const note = `layer '${LAYER_PERSONAL}' is in layers.json but not selected, so this run does not install it. Add it with -Layers ${LAYER_PERSONAL}.`;
@@ -704,7 +704,7 @@ withWorkspace('a layer added to layers.json later is not installed by a plain ap
 
   const flagged = mustApply(ctx, ['-Layers', LAYER_PERSONAL]);
   assert.ok(existsSync(personalFolder), 'the named layer was not installed');
-  assert.deepEqual(selectionOf(ctx).layers, ['pstack', 'org-ai-plugin', LAYER_PERSONAL]);
+  assert.deepEqual(selectionOf(ctx).layers, ['org-ai-plugin', LAYER_PERSONAL, 'pstack']);
   assert.doesNotMatch(plainOutput(flagged), /is in layers\.json but not selected/);
 }, {});
 
