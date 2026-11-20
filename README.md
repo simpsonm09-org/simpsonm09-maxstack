@@ -4,7 +4,7 @@ Personal AI tooling for OpenCode, Claude Code, GitHub Copilot CLI, and Pi, run f
 
 This repository lives in `simpsonm09-projects/maxstack`. Work happens on a branch
 with a pull request into `main`.
-See [`repo-standard`](https://github.com/simpsonm09-projects/simpsonm09-repo-standard)
+See [`repo-standard`](https://github.com/simpsonm09-projects/repo-standard)
 for the branch model and the protection rules.
 
 ## What it does
@@ -66,5 +66,5 @@ MIT. See [`LICENSE`](LICENSE).
 - [`org-ai-plugin`](https://github.com/simpsonm09-projects/org-ai-plugin) owns the shared MCP servers and skills.
 - [`personal-ai-plugin`](https://github.com/simpsonm09-projects/personal-ai-plugin) owns the personal MCP servers and skills.
 - [`dev-setup`](https://github.com/simpsonm09-projects/dev-setup) owns the machine and app setup.
-- [`repo-standard`](https://github.com/simpsonm09-projects/simpsonm09-repo-standard) owns the shared CI, linting, security, and governance.
+- [`repo-standard`](https://github.com/simpsonm09-projects/repo-standard) owns the shared CI, linting, security, and governance.
 - [`repo-template`](https://github.com/simpsonm09-projects/repo-template) is the generated-repo starting point.
